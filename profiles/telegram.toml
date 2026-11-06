@@ -1,0 +1,34 @@
+# profiles/telegram.toml
+id = "telegram"
+version = 1
+[boundaries]
+candidate = "leaf_dir_with_payload"      # лист с архивом/моделью
+context_levels = 1                       # 1-й уровень под корнем = канал
+[provenance]
+parent_as = "telegram_channel"           # предположение, confirmed=false
+url_files = "suggest"                    # .url → предложение, с фильтром рекламы
+url_ad_patterns = ["(?i)free ?download", "(?i)extra creativity", "(?i)patreon\\.com/join"]
+[nested]
+action = "expand"
+max_depth = 3                             # глубина вложенности; остальные лимиты — [limits]
+[exclusions]
+rules = ["macos.appledouble", "macos.ds_store", "windows.thumbs_db", "windows.desktop_ini", "os.icon_r"]
+[previews]
+primary = ["sibling_image_largest", "archive_top_image_largest", "embedded", "render"]
+[groups]
+hints = ["scale", "presupport", "variant_nsfw"]
+[mode]
+strict = true                             # ТЗ 6.6.1
+[volumes]                                 # ТЗ §13.2.2: правила имён томов задаёт профиль, не ядро
+rar_part = true
+rar_old = true
+split_numeric = true
+zip_split = true
+copy_suffix = true                        # "X (2).rar": Telegram/браузеры переименовывают тома
+copy_suffix_extensions = ["rar", "zip", "7z"]
+[limits]                                  # ТЗ §13.3.5, ADR-0029: превышение = статус incomplete:{limit}
+max_entries = 100000
+max_unpacked_bytes = 214748364800        # 200 ГиБ
+max_ratio = 200                           # коэффициент распаковки (zip-бомбы)
+max_seconds_per_container = 3600
+max_temp_bytes = 107374182400            # 100 ГиБ временного места

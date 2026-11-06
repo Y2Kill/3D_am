@@ -1,0 +1,25 @@
+# Common compile settings applied to every am_* target via am_apply_defaults().
+function(am_apply_defaults target)
+  if(MSVC)
+    target_compile_options(${target} PRIVATE
+      /W4 /permissive- /utf-8 /Zc:__cplusplus /Zc:preprocessor /EHsc /bigobj)
+    target_compile_definitions(${target} PRIVATE
+      UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00)
+    if(AM_WARNINGS_AS_ERRORS)
+      target_compile_options(${target} PRIVATE /WX)
+    endif()
+    if(AM_ENABLE_ASAN)
+      target_compile_options(${target} PRIVATE /fsanitize=address)
+    endif()
+  else()
+    target_compile_options(${target} PRIVATE
+      -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wnon-virtual-dtor)
+    if(AM_WARNINGS_AS_ERRORS)
+      target_compile_options(${target} PRIVATE -Werror)
+    endif()
+    if(AM_ENABLE_ASAN)
+      target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+      target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    endif()
+  endif()
+endfunction()

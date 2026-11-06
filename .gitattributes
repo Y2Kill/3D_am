@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.manifest text eol=crlf
+*.zip binary
+*.png binary
+*.jpg binary
+# Owner materials are stored byte-for-byte (CLAUDE.md: do not modify)
+docs/tz/description.txt -text
+docs/tz/drafts/** -text
+tools/inventory/** -text
+data/** -text

@@ -1,0 +1,255 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/.cache/fetchcontent"
+      }
+    },
+    {
+      "name": "vcpkg",
+      "hidden": true,
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/.cache/vcpkg-installed",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "AM_WITH_CONTAINER": "ON"
+      },
+      "environment": {
+        "VCPKG_BINARY_SOURCES": "clear;files,${sourceDir}/.cache/vcpkg-bin,readwrite",
+        "X_VCPKG_ASSET_SOURCES": "clear;x-azurl,file:///${sourceDir}/.cache/vcpkg-assets,,readwrite"
+      }
+    },
+    {
+      "name": "windows",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "AM_QT_ROOT": "C:/Qt/6.10.2/msvc2022_64"
+      }
+    },
+    {
+      "name": "win-debug-min",
+      "displayName": "Windows Debug — minimal: no vcpkg, no GUI, no AI, no heavy 3D (ТЗ §12.6.6)",
+      "inherits": [
+        "base",
+        "windows"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "win-cli",
+      "displayName": "Windows Debug — CLI without GUI (vcpkg)",
+      "inherits": [
+        "base",
+        "vcpkg",
+        "windows"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AM_BUILD_GUI": "OFF"
+      }
+    },
+    {
+      "name": "win-debug",
+      "displayName": "Windows Debug — GUI + CLI (vcpkg + Qt)",
+      "inherits": [
+        "base",
+        "vcpkg",
+        "windows"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AM_BUILD_GUI": "ON",
+        "AM_WITH_RENDER3D": "ON"
+      }
+    },
+    {
+      "name": "win-release",
+      "displayName": "Windows RelWithDebInfo — GUI + CLI",
+      "inherits": [
+        "base",
+        "vcpkg",
+        "windows"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "AM_BUILD_GUI": "ON",
+        "AM_WITH_RENDER3D": "ON"
+      }
+    },
+    {
+      "name": "win-full-ai",
+      "displayName": "Windows Debug — GUI + CLI + optional AI layer",
+      "inherits": [
+        "base",
+        "vcpkg",
+        "windows"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AM_BUILD_GUI": "ON",
+        "AM_WITH_RENDER3D": "ON",
+        "AM_WITH_AI": "ON"
+      }
+    },
+    {
+      "name": "win-asan",
+      "displayName": "Windows Debug + ASan — minimal",
+      "inherits": [
+        "base",
+        "windows"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AM_ENABLE_ASAN": "ON"
+      }
+    },
+    {
+      "name": "linux-cli",
+      "displayName": "Linux Debug — CLI with cross-platform core, no GUI",
+      "inherits": [
+        "base",
+        "vcpkg"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_TARGET_TRIPLET": "x64-linux"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-min",
+      "displayName": "Linux Debug — minimal, no vcpkg",
+      "inherits": [
+        "base"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "win-debug-min",
+      "configurePreset": "win-debug-min"
+    },
+    {
+      "name": "win-cli",
+      "configurePreset": "win-cli"
+    },
+    {
+      "name": "win-debug",
+      "configurePreset": "win-debug"
+    },
+    {
+      "name": "win-release",
+      "configurePreset": "win-release"
+    },
+    {
+      "name": "win-full-ai",
+      "configurePreset": "win-full-ai"
+    },
+    {
+      "name": "win-asan",
+      "configurePreset": "win-asan"
+    },
+    {
+      "name": "linux-cli",
+      "configurePreset": "linux-cli"
+    },
+    {
+      "name": "linux-min",
+      "configurePreset": "linux-min"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "win-debug-min",
+      "configurePreset": "win-debug-min",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-cli",
+      "configurePreset": "win-cli",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-debug",
+      "configurePreset": "win-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-release",
+      "configurePreset": "win-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-full-ai",
+      "configurePreset": "win-full-ai",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-asan",
+      "configurePreset": "win-asan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-cli",
+      "configurePreset": "linux-cli",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-min",
+      "configurePreset": "linux-min",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

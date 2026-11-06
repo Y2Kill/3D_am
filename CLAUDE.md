@@ -1,0 +1,26 @@
+# Инструкции для сессий реализации
+
+- Язык общения и документации — русский. Код, идентификаторы и комментарии в коде — английский.
+- Источник требований — `docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.6.md` (v1.5 владельца + принятые рекомендации отчёта `docs/reports/03_TZ_v1.3-1.5_vs_prepared.md`).
+- Архитектурные решения — `docs/decisions/ADR_log.md`, см. таблицу статусов в начале. Отклонение от ADR допускается только через новую ADR.
+- Исходные материалы владельца **не изменять**:
+  - `docs/tz/description.txt`;
+  - `docs/tz/drafts/TZ_*.md` — новые версии ТЗ создаются только новыми файлами;
+  - `tools/inventory/inventory_3d_resources.py`;
+  - `data/inventory/3d_Models_inventory_*.zip`.
+- Коллекция `D:\!!!_USER_FOLDERS\Downloads\Telegram Desktop\3d_Models\` — **только чтение**.
+  - Синтетические тестовые данные — в `tests/fixtures/`.
+  - Реальные файлы коллекции используются только через реестр `tests/real/registry.json`: чтение на месте, без копирования (ADR-0029).
+- Изменения за пределами каталога проекта запрещены без явного разрешения владельца. Сборка направляет TMP и кэши в `.cache/` (см. `tools/build_min.cmd`, `CMakePresets.json`).
+- Перед реализацией модуля сверить и дополнить `docs/research/libraries.md` (ТЗ 3.5.1).
+- Уровни (ADR-0024): `foundation` → `contracts` → `domain` → `jobs` / `storage` / `processing` → `services` / `automation` / `plugin_runtime` / `ai` → `application`.
+  - Код лежит в `src/<level>/` и `include/am/<level>/`.
+  - Зависимости — только по матрице ADR-0024; проверяются тестом `arch_check`.
+  - `am_foundation` не имеет внешних зависимостей.
+  - Действующие ZIP меняет только `storage::AssetRepository` (ADR-0025).
+- Ошибки — `am::Result<T>`, без исключений через границы модулей и C ABI плагинов.
+- Сборка и тесты — `tools\build_min.cmd` (MSVC 14.44, Ninja, GoogleTest через FetchContent в `.cache/`).
+- После изменения статуса сценария обновить `docs/plan/coverage_matrix.md`.
+- Текущая веха и порядок работ — `docs/plan/roadmap.md`.
+  - Следующий шаг — M0: базовая линия vcpkg, спайки S1–S6.
+  - Затем — M1: предметная модель, контейнер, `AssetRepository`.

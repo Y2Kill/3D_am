@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "am",
+  "version-semver": "0.1.0",
+  "description": "Catalog and manager for 3D/2D resources (see docs/research/libraries.md)",
+  "builtin-baseline": "TODO-M0-pin-vcpkg-registry-commit",
+  "dependencies": [
+    "nlohmann-json",
+    "tomlplusplus",
+    "spdlog",
+    "cli11",
+    { "name": "sqlite3", "features": ["fts5", "json1"] },
+    "zlib-ng",
+    { "name": "minizip-ng", "default-features": false, "features": ["zlib"] },
+    "openssl",
+    "xxhash",
+    "json-schema-validator",
+    "efsw",
+    "gtest"
+  ],
+  "features": {
+    "archive": {
+      "description": "Input archive reading (ADR-0011)",
+      "dependencies": [ { "name": "libarchive", "default-features": false, "features": ["bzip2", "lzma", "zstd", "crypto"] } ]
+    },
+    "archive-7z": {
+      "description": "7-Zip backend plugin via bit7z (7z.dll not shipped)",
+      "dependencies": ["bit7z"]
+    },
+    "formats3d": {
+      "description": "3D adapters: Assimp, lib3mf, meshoptimizer, Eigen",
+      "dependencies": ["assimp", "lib3mf", "meshoptimizer", "eigen3"]
+    },
+    "images": {
+      "description": "Image decoding in core: stb, libwebp, lunasvg",
+      "dependencies": ["stb", "libwebp", "lunasvg"]
+    },
+    "step": {
+      "description": "STEP/IGES via Open CASCADE (LGPL-2.1 + exception), plugin",
+      "dependencies": ["opencascade"]
+    },
+    "pdf": { "description": "PDFium thumbnails/text, plugin", "dependencies": ["pdfium"] },
+    "ml": {
+      "description": "Embeddings for deep similarity search, plugin",
+      "dependencies": ["onnxruntime", "usearch"]
+    },
+    "llm": {
+      "description": "Local LLM + Lua scenarios, plugin",
+      "dependencies": ["llama-cpp", "lua", "sol2"]
+    },
+    "bench": { "description": "Benchmarks", "dependencies": ["benchmark"] }
+  }
+}
