@@ -63,7 +63,7 @@ int cmd_probe(const std::vector<std::string>& files) {
     std::cout << f << ": " << am::to_string(kind) << "  size=" << size << "\n";
     if (kind == am::FileKind::stl_binary || kind == am::FileKind::stl_ascii) {
       auto s = am::formats::probe_stl_file(f);
-      if (!s) { std::cout << "  stl error: " << s.error().message << "\n"; rc = 1; continue; }
+      if (!s) { std::cout << "  stl error: " << am::to_log_string(s.error()) << "\n"; rc = 1; continue; }
       std::printf("  triangles=%llu bbox=[%.3f %.3f %.3f] area=%.3f volume=%.3f degenerate=%llu header=\"%s\"\n",
                   static_cast<unsigned long long>(s->triangles), s->max[0] - s->min[0], s->max[1] - s->min[1],
                   s->max[2] - s->min[2], s->area, s->volume, static_cast<unsigned long long>(s->degenerate),

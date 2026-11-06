@@ -1,3 +1,3 @@
 # tests/performance — производительность и нагрузка
 
-Бенчмарки по целевым показателям [`docs/architecture/nfr_targets.md`](../../docs/architecture/nfr_targets.md) (Google Benchmark, опционально). Длительные проверки выполняются периодически, с меткой ctest `periodic` (ТЗ §12.9.10).
+Бенчмарки по [плану измерений](../../docs/architecture/nfr_measurement_plan.md) — гипотезы, а не нормативы (ТЗ §14.9.13); генератор библиотек 100…250 000 ассетов `gen_library` (M2); результаты — `results/` (Google Benchmark, опционально). Длительные проверки выполняются периодически, с меткой ctest `periodic` (ТЗ §12.9.10).

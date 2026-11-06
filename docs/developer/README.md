@@ -13,7 +13,8 @@
 - Проверка: ctest-тест `arch_check` (`tools/arch_check/arch_check.py`). Нарушение — архитектурный дефект.
 
 ## Тесты
-- Юнит-тесты: `tests/unit/test_<тема>.cpp`. Требования ТЗ помечаются через `RecordProperty("req", "K-n")` (ADR-0029).
+- Юнит-тесты: `tests/unit/test_<тема>.cpp`. Требования ТЗ помечаются через `RecordProperty("req", "<ID>")`, где ID — `K-n` (критерий §15), `NFR-14.x.y` (нефункциональное требование) или `SC-n` (сценарий импорта); схема — [`acceptance_matrix.md`](../plan/acceptance_matrix.md) (ADR-0029, отчёт 04 Р-8).
+- Ошибки — `am::Error` со стабильным кодом, компонентом и `message_id` (ADR-0032); текст для пользователя не формируется в ядре. Строки UI/CLI — на английском (ADR-0034).
 - Синтетические наборы — `tests/fixtures/`, реальные — реестр `tests/real/registry.json` (только чтение).
 - После изменения статуса сценария обновляется `docs/plan/coverage_matrix.md`.
 

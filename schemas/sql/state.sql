@@ -42,7 +42,7 @@ CREATE TABLE jobs (
   parent_id     TEXT REFERENCES jobs(job_id) ON DELETE CASCADE,   -- пакет → подзадания
   type          TEXT NOT NULL,                    -- import.scan | import.asset | convert | thumbs | verify | reanalyze | bulk.meta | ...
   params_json   TEXT NOT NULL,
-  state         TEXT NOT NULL,                    -- queued | running | paused | needs_decision | succeeded | failed | cancelled
+  state         TEXT NOT NULL,                    -- queued | running | paused | needs_decision | waiting_resources | resource_error | cannot_continue_safely | succeeded | failed | cancelled (ADR-0033)
   priority      INTEGER NOT NULL DEFAULT 0,
   position      INTEGER NOT NULL,
   attempt       INTEGER NOT NULL DEFAULT 0,

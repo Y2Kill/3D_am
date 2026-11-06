@@ -1,7 +1,7 @@
 # AM — каталогизатор и менеджер 3D/2D-ресурсов
 
 Модульная программа на C++20 для каталогизации ресурсов для 3D-печати, ЧПУ и лазерной резки: импорт из архивов в самодостаточные ZIP-ассеты, метаданные и происхождение, поиск дубликатов, просмотр, конвертация.
-Техническое задание: [`docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.6.md`](docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.6.md) (исходное описание — [`docs/tz/description.txt`](docs/tz/description.txt); все черновики v0.1–v1.6 — в `docs/tz/drafts/`).
+Техническое задание: [`docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.7.md`](docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.7.md) (исходное описание — [`docs/tz/description.txt`](docs/tz/description.txt); все черновики v0.1–v1.6 — в `docs/tz/drafts/`).
 
 ## Состояние: подготовка к реализации завершена (M0, частично)
 

@@ -16,6 +16,7 @@ endif()
 include(GoogleTest)
 
 add_executable(am_unit_tests
+  unit/test_error.cpp
   unit/test_uuid.cpp
   unit/test_text_encoding.cpp
   unit/test_signature.cpp
