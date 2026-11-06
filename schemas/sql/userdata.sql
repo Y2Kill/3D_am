@@ -7,8 +7,8 @@ PRAGMA user_version = 1;
 
 -- Реестр межассетных связей и заключений (ТЗ 7.6)
 CREATE TABLE relations (
-  rel_id      TEXT PRIMARY KEY,                   -- UUIDv7
-  a_asset     TEXT NOT NULL, a_rev INTEGER NOT NULL, a_ref TEXT,   -- ref: NULL=ассет | file_id | group_id
+  rel_id      TEXT PRIMARY KEY,                   -- UUIDv7 (вне ZIP, ADR-0035 п. 4)
+  a_asset     TEXT NOT NULL, a_rev INTEGER NOT NULL, a_ref TEXT,   -- ref: NULL=ассет | FileID | GroupID (UUIDv4)
   b_asset     TEXT NOT NULL, b_rev INTEGER NOT NULL, b_ref TEXT,
   kind        TEXT NOT NULL,                      -- duplicate | related | not_duplicate | deferred | scale_of | variant_of | addon_of
   status      TEXT NOT NULL DEFAULT 'current',    -- current | stale (ревизия изменилась)
@@ -77,14 +77,20 @@ CREATE TABLE category_tree (
   sort_order  INTEGER NOT NULL DEFAULT 0
 );
 
--- Определения пользовательских полей (ADR-0013, потеря П-1)
+-- Каталог определений пользовательских полей библиотеки (ADR-0035 п. 9, потеря П-1).
+-- Переносимое определение живёт в ZIP (field_definitions[]); здесь — справочник для GUI.
 CREATE TABLE field_defs (
-  key        TEXT PRIMARY KEY,                    -- user.<key>
-  label      TEXT NOT NULL,
-  type       TEXT NOT NULL,                       -- string | text | int | real | bool | date | enum | url
-  unit       TEXT,
-  enum_json  TEXT,
-  created_at TEXT NOT NULL
+  field_id        TEXT PRIMARY KEY,               -- user:<uuid> | plugin:<id>:<key>
+  schema_revision INTEGER NOT NULL,
+  name            TEXT NOT NULL,
+  type            TEXT NOT NULL,                  -- string | text | integer | decimal | boolean | date | datetime | enum | multi_enum | url | file_ref
+  scopes          TEXT NOT NULL,                  -- JSON: ["asset","group","file"]
+  dimension       TEXT,
+  unit            TEXT,
+  options_json    TEXT,                           -- [{id, label, deprecated?}]
+  definition_json TEXT NOT NULL,                  -- полное определение как в манифесте
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
 );
 
 -- Сохранённое состояние ревью дубликатов (ТЗ 7.7.5)

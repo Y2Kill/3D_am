@@ -2,12 +2,14 @@
 
 - Язык общения и документации разработки (ТЗ, ADR, отчёты, планы) — русский. Код, идентификаторы и комментарии в коде — английский.
 - Интерфейс программы (GUI, сообщения CLI), пользовательская и публичная техническая документация — английский (ТЗ v1.7 §14.8, ADR-0034). Ядро не формирует текст для пользователя: `am::Error` с `message_id` (ADR-0032).
-- Источник требований — `docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.7.md` (версия владельца на базе v1.6; решения по ней — отчёт `docs/reports/04_TZ_v1.7_vs_prepared.md`, принят целиком).
+- Источник требований — `docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.8.md` (v1.7 + §19: этапы P0–P3, формат ZIP MF-01…MF-12). Решения — отчёты `docs/reports/04_TZ_v1.7_vs_prepared.md` и `05_TZ_v1.8_format_vs_prepared.md`, приняты целиком.
+- Формат ZIP-ассета — ТЗ §19.4 и ADR-0035; рабочая формализация `docs/specifications/container_manifest_v1.md`, черновик схемы `schemas/manifest-1.0.draft.schema.json`. Формат 1.0 не опубликован до схемы, валидатора V1–V4 и golden ZIP.
 - Числовые нормативы не назначаются до измерений (ТЗ §14.9.13): `docs/architecture/nfr_measurement_plan.md`. Статусы требований — `docs/plan/acceptance_matrix.md`; версии форматов — `docs/specifications/versioning.md`.
 - Архитектурные решения — `docs/decisions/ADR_log.md`, см. таблицу статусов в начале. Отклонение от ADR допускается только через новую ADR.
 - Исходные материалы владельца **не изменять**:
   - `docs/tz/description.txt`;
   - `docs/tz/drafts/TZ_*.md` — новые версии ТЗ создаются только новыми файлами;
+  - материалы владельца в `docs/tz/`: `AUDIT_REPORT.md`, `asset-format-*.md`, `*.zip`;
   - `tools/inventory/inventory_3d_resources.py`;
   - `data/inventory/3d_Models_inventory_*.zip`.
 - Коллекция `D:\!!!_USER_FOLDERS\Downloads\Telegram Desktop\3d_Models\` — **только чтение**.
@@ -24,5 +26,6 @@
 - Сборка и тесты — `tools\build_min.cmd` (MSVC 14.44, Ninja, GoogleTest через FetchContent в `.cache/`).
 - После изменения статуса сценария или требования обновить `docs/plan/coverage_matrix.md` и/или `docs/plan/acceptance_matrix.md`; в тестах — `RecordProperty("req", "K-n|NFR-14.x.y|SC-n")`.
 - Текущая веха и порядок работ — `docs/plan/roadmap.md`.
-  - Следующий шаг — M0: базовая линия vcpkg, спайки S1–S6.
-  - Затем — M1: предметная модель, контейнер, `AssetRepository`.
+  - Этапы P0–P3 (ТЗ §19.1); текущий — P0.
+  - Следующий шаг — M0: базовая линия vcpkg, CI Windows/Linux CLI, спайки S1–S6.
+  - Затем — M1: приведение готового кода к ADR-0035 (`Uuid::v4`, `Errc::incomplete`, пути `content/<uuid>/`), предметная модель и формат 1.0, `AssetRepository`.

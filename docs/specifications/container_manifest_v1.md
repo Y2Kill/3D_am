@@ -1,132 +1,378 @@
-# Контейнер ассета и манифест — спецификация v1 (черновик для реализации)
+# Контейнер ассета и манифест — формат 1.0 (рабочая формализация, не нормативная)
 
-Связанные решения: ADR-0005, 0006, 0008, 0010–0013. JSON Schema: [`schemas/manifest.v1.schema.json`](../../schemas/manifest.v1.schema.json).
+**Источник:** ТЗ v1.8 §19.4 (MF-01…MF-12). Решение — [ADR-0035](../decisions/ADR_log.md), отчёт [05](../reports/05_TZ_v1.8_format_vs_prepared.md).
 
-## 1. Правила
+**Статус.**
+- Документ формализует согласованные принципы §19.4 для реализации.
+- Формат 1.0 **не опубликован**, пока нет трёх вещей (§19.6.4):
+  - нормативной JSON Schema;
+  - валидатора V1–V4;
+  - положительных и отрицательных golden ZIP.
+- Черновик схемы: [`schemas/manifest-1.0.draft.schema.json`](../../schemas/manifest-1.0.draft.schema.json). Пример: [`schemas/examples/manifest-1.0.example.json`](../../schemas/examples/manifest-1.0.example.json).
 
-1. Первая запись ZIP — `am-asset`: метод STORED, содержимое ровно `application/vnd.am.asset+zip;v=1\n`. Это признак «свой формат» (ТЗ 6.1.3). Если маркер есть, а `manifest.json` повреждён, контейнер считается **своим, но повреждённым** (не чужим ZIP).
-2. Вторая запись — `manifest.json`, UTF-8 без BOM, JSON-объект.
-3. Каждая запись ZIP, кроме `am-asset` и `manifest.json`, **обязана** быть описана в манифесте (`files[]`, `previews[]`, `scenes[]`, `derived[]` или `ext`). Лишняя запись при быстрой проверке даёт предупреждение «unregistered entry», и она не удаляется.
-4. **Неизвестные поля сохраняются** при перезаписи (ТЗ 5.1.3): программа читает манифест в `ordered_json`, изменяет только свои ключи, остальное переносит как есть.
-5. `format.version` — целое число. Если читающая программа видит версию выше поддерживаемой, она открывает ассет **только на чтение** (ТЗ 4.5.4). Секция `format.min_reader` позволяет новым версиям объявить: «старые читатели могут читать».
-6. Время — ISO 8601 UTC с `Z` и миллисекундами. Размеры — целые байты. Хеши — hex в нижнем регистре.
-7. Пути внутри ZIP — `/`, UTF-8, ≤ 200 байт (ADR-0012). Исходные пути — как были, с исходными разделителями, нормализованными к `/`.
+**Как читать документ.**
+- Пункты со ссылкой «§19.x» согласованы владельцем.
+- Пункты с пометкой **[ПРЕДЛОЖЕНИЕ]** — наша детализация того, что §19.5 оставил для формализации. Они меняются без новой ADR, пока формат не опубликован.
 
-## 2. Пример (сокращён)
+Прежний черновик (маркер `am-asset`, короткие ID `i001`/`f00001`, `history[]` массивом) отменён ADR-0035. Его история — в git.
+
+## 1. Носитель
+
+```text
+<AssetID>.zip
+├── manifest.json                       # ровно один, в корне, UTF-8 JSON (§19.4.1.1)
+├── content/<InputID>/<safe-path>       # исходные полезные файлы, байты неизменны
+├── generated/<…>                       # постоянные производные файлы, зарегистрированы в files[]
+└── extensions/<ExtensionID>/<…>        # служебные бинарные данные расширений, зарегистрированы в attachments[]
+```
+
+1. **`manifest.json`** — UTF-8 без BOM, без дублирующихся ключей, с ограничениями глубины и размера при разборе (§19.4.7.2, §19.4.17.8).
+   - **Правило писателя:** `manifest.json` записывается **первой** записью ZIP (ADR-0035 п. 2). Хеши новых данных при этом известны заранее; если нет — манифест пишется последним, контейнер остаётся корректным.
+   - Читатель на этот порядок не полагается.
+2. **Распознавание «своего» ZIP (§19.4.14.2):**
+   - корректный ZIP;
+   - один корневой `manifest.json`;
+   - `format.id` совпадает;
+   - версия совместима или определённо не поддерживается.
+
+   Если JSON повреждён, но в первой записи найден FormatID, результат — «свой, повреждённый» (`Errc::corrupt_data`), а не «чужой ZIP».
+3. **Произвольных файлов в корне нет** (§19.4.14.7). Неизвестные безопасные записи **существующих** контейнеров не удаляются молча:
+   - они переносятся raw-копией (ADR-0006);
+   - если это невозможно — контейнер только для чтения (§19.4.16.5).
+4. **Внешние упаковочные архивы** (ZIP/RAR/7z, из которых шёл импорт) целиком не вкладываются (§19.4.1.5).
+   - Вложенный архив может быть полезным файлом — только по явному решению `preserve` в `inputs[].entries[]`.
+5. **Записи ZIP:**
+   - метод Stored или Deflate; Stored — для заведомо сжатых данных по правилу ADR-0005;
+   - ZIP64 — по необходимости;
+   - бит 11 (UTF-8 имена);
+   - без шифрования (§19.4.17.7);
+   - без data descriptor (ADR-0005).
+6. **Пути** во всех пространствах (`content`, `generated`, `extensions`):
+   - разделитель `/`;
+   - нет absolute, `.`, `..`, пустых компонентов;
+   - правила ADR-0012;
+   - **не более 200 байт UTF-8 на весь путь**, включая `content/<InputID>/`;
+   - коллизия = совпадение после NFC + Unicode simple case folding (ADR-0035 п. 8);
+   - переименование — `~<8hex>`; исходное имя остаётся в `inputs[].entries[]`.
+
+## 2. Корень манифеста (§19.4.19)
+
+| Ключ | Тип | Обязателен | Раздел |
+|---|---|---|---|
+| `format` | object | **да** | §3 |
+| `asset` | object | **да** | §4 |
+| `origin` | object `{sources[]}` | нет | §5 |
+| `inputs` | array | нет | §5 |
+| `files` | array, может быть `[]` | **да** | §6 |
+| `historical_files` | array | нет | §6 |
+| `groups` | array | нет | §7 |
+| `previews` | object `{primary_id?, items[]}` | нет | §7 |
+| `field_definitions` | array | нет | §8 |
+| `extensions` | object, ключ — ExtensionID | нет | §10 |
+| `history` | object `{entries[], compacted_ranges?[]}` | **да** | §11 |
+
+**Общие правила.**
+- **Отсутствие необязательного поля вместо `null`** (§19.4.19.1). Фиктивные значения не создаются.
+- **Порядок ключей** несущественен. Порядок массивов значим только там, где это сказано явно (§19.4.19.13).
+- **Идентификаторы** (§19.4.8):
+  - все ID объектов — UUIDv4 в каноническом нижнем регистре: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`;
+  - ID не зависят от имени, пути, позиции и содержимого;
+  - ID не используются повторно.
+- **Числа** (§19.4.9):
+  - размеры в байтах — строки `uint64` `^(0|[1-9][0-9]*)$`, не больше 18446744073709551615;
+  - `revision` и `format.version.*` — JSON-целые до 2^53−1.
+- **Время** — RFC 3339 в UTC с `Z`.
+  - **[ПРЕДЛОЖЕНИЕ]** Каноническая форма писателя: `YYYY-MM-DDTHH:MM:SS.sssZ` (миллисекунды). Читатель принимает любую дробную часть.
+- **Хеши** — SHA-256, 64 hex в нижнем регистре.
+- **Строгость:**
+  - для известной версии ключи ядра строгие (`additionalProperties: false`);
+  - свободное содержимое допустимо только в `extensions.<id>`;
+  - неизвестные ключи ядра из более новой `minor` читаются с сохранением; запись запрещает матрица возможностей ([`versioning.md`](versioning.md)).
+
+## 3. `format`
 
 ```json
-{
-  "format": { "id": "am-asset", "version": 1, "min_reader": 1 },
-  "asset": {
-    "id": "019a5d2e-7c41-7b3e-9a10-4f2c8e1d0a77",
-    "revision": 3,
-    "created": "2026-11-06T10:15:03.120Z",
-    "modified": "2026-11-06T12:01:44.002Z",
-    "title": "Winry Rockbell + ALT",
-    "description": null,
-    "authors": [ { "name": "Dinamuuu3D", "origin": "inferred", "confirmed": false } ],
-    "publisher": null,
-    "license": { "text": null, "code": null, "file_ref": "f00031", "url": null },
-    "links": [],
-    "dates": { "published": null, "acquired": "2023-07-01" },
-    "flags": { "incomplete": false },
-    "derived_from": null
-  },
-  "provenance": {
-    "sources": [
-      { "id": "s1", "kind": "telegram_channel", "name": "3D Printing Adult", "url": null,
-        "origin": "inferred:parent_folder", "confirmed": false }
-    ]
-  },
-  "inputs": [
-    { "id": "i001", "kind": "archive", "container": "rar5",
-      "original_name": "0722 - Winry Rockbell + ALT - FullMetal Allchemist.rar",
-      "original_path": "3D Printing Adult/0722 - Winry Rockbell - FullMetal Allchemist/",
-      "size": 175815111, "sha256": "…", "mtime": "2026-11-03T09:37:25.603Z",
-      "volumes": null, "parent": null, "encoding": { "names": "utf-16(rar)" },
-      "content_root": "content/i001/" },
-    { "id": "i002", "kind": "file", "original_name": "preview.jpg", "size": 248113, "sha256": "…",
-      "content_root": "content/i002/" }
-  ],
-  "files": [
-    { "id": "f00001", "input": "i001", "status": "included",
-      "src": { "path": "Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl", "size": 25649684,
-               "crc32": "f3c218f0", "mtime": "2021-06-30T02:48:13.327Z" },
-      "zip_path": "content/i001/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
-      "size": 25649684, "sha256": "…", "type": { "id": "mesh.stl.binary", "by": "signature" } },
-    { "id": "f00002", "input": "i001", "status": "excluded",
-      "src": { "path": "__MACOSX/._AN_Winry_Hips.stl", "size": 4096, "crc32": "…" },
-      "exclusion": { "rule": "macos.appledouble", "rules_version": 1, "by": "auto" } },
-    { "id": "f00003", "input": "i001", "status": "included_renamed",
-      "rename": { "reason": "path_too_long" },
-      "src": { "path": "…очень длинный путь….stl", "name_raw_b64": null },
-      "zip_path": "content/i001/Very long folder~3fa2b81c/part~9c01d2aa.stl" }
-  ],
-  "groups": [
-    { "id": "g001", "kind": "scale", "label": "1/6", "files": ["f00001"], "origin": "inferred", "confirmed": false }
-  ],
-  "classification": {
-    "categories": [ ["Фигурки", "Аниме"] ],
-    "tags": { "confirmed": ["anime", "fma"],
-              "suggested": [ { "tag": "nsfw", "status": "suggested", "origin": "inferred:name",
-                               "origin_detail": { "handler": "am.import.name_hints", "handler_version": "1", "basis": "folder name" } } ] }
-  },
-  "characteristics": {
-    "scale": { "type": "string", "value": "1/6", "status": "suggested", "origin": "inferred", "confirmed": false },
-    "presupported": { "type": "bool", "value": true, "origin": "user", "confirmed": true }
-  },
-  "fields": {
-    "user": {
-      "printed": { "def": { "type": "bool", "label": "Напечатано" }, "value": false }
-    }
-  },
-  "previews": [
-    { "id": "pv1", "role": "primary", "file": "f00042" },
-    { "id": "pv2", "role": "extra", "zip_path": "previews/p-019a….png", "generated": true,
-      "render": "previews/p-019a….render.json" }
-  ],
-  "scenes": [],
-  "derived": [
-    { "id": "d001", "zip_path": "derived/019a…/AN_Winry_Hips.obj", "sha256": "…",
-      "inputs": [ { "file": "f00001", "sha256": "…" } ],
-      "converter": { "id": "am.convert.assimp", "version": "6.0.3", "params": { "units": "mm" } },
-      "created": "…" }
-  ],
-  "history": [
-    { "rev": 1, "at": "…", "op": "create", "op_id": "019a…",
-      "app": { "name": "am", "version": "0.1.0", "build": "abc1234" },
-      "import": { "profile": "telegram", "profile_sha256": "…", "rules_version": 1,
-                  "handlers": { "archive": "libarchive 3.8.1" } } },
-    { "rev": 2, "at": "…", "op": "set_preview", "target": "pv1" },
-    { "rev": 3, "at": "…", "op": "add_derived", "target": "d001" }
-  ],
-  "integrity": { "manifest_covers_all_entries": true },
-  "ext": {
-    "x.am.stl": { "f00001": { "triangles": 513000, "bbox_mm": [41.2, 38.0, 77.9], "volume_mm3": 21040.5 } }
+"format": { "id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128", "version": { "major": 1, "minor": 0 } }
+```
+
+- `id` — постоянный FormatID (§19.4.14.1).
+- `version` не зависит от версии приложения, AssetID и ревизии.
+- `major` — несовместимые изменения; `minor` — совместимые. Право записи старым приложением `minor` **не гарантирует** (§19.4.18.1).
+
+## 4. `asset`
+
+| Поле | Тип | Обяз. | Правило |
+|---|---|---|---|
+| `id` | UUIDv4 | да | Не меняется при переносе, переименовании, экспорте, правке, миграции. Независимая копия получает новый ID (§19.4.2.2) |
+| `revision` | integer ≥ 1 | да | +1 за успешную фиксацию с изменением постоянных данных, включая миграцию и компактизацию. No-op, перепаковка, кэш, переиндексация — без изменения (§19.4.2.3, 6) |
+| `created_at` | RFC 3339 | да | Создание логического ассета, а не текущего ZIP. Перепаковка не меняет |
+| `modified_at` | RFC 3339 | да | Время последней фиксации с изменением |
+| `metadata` | object | нет | §9 |
+
+- `LibraryID` в ZIP не входит (§19.4.2.5).
+- Совпадение ID и ревизии не доказывает идентичность содержимого (§19.4.2.4).
+
+## 5. `origin` и `inputs` (§19.4.3)
+
+**`origin.sources[]`** — источники распространения. Авторство из них не выводится.
+
+| Поле | Обяз. | Описание |
+|---|---|---|
+| `id` | да | SourceID, UUIDv4 |
+| `kind` | да | [ПРЕДЛОЖЕНИЕ] расширяемая строка: `website`, `telegram_channel`, `marketplace`, `person`, `local_collection`, `unknown` |
+| `name`, `url`, `published_at`, `retrieved_at` | нет | Описание источника; `url` без сетевых проверок |
+| `claims` | нет | Как установлен источник (§9.3), например `directory_inference` |
+
+**`inputs[]`** — входные комплекты. Каждый комплект — один акт импорта или добавления.
+
+| Поле | Обяз. | Описание |
+|---|---|---|
+| `id` | да | InputID, UUIDv4; имя каталога `content/<InputID>/` |
+| `source_refs` | нет | SourceID, с которыми связан комплект |
+| `imported_at` | да | Время акта |
+| `mode` | да | `strict` (по умолчанию) или `partial` — только с явного разрешения (§19.4.3.6) |
+| `objects[]` | да | Исходные технические объекты |
+| `entries[]` | да | Все обнаруженные записи и их судьба |
+
+**[ПРЕДЛОЖЕНИЕ] `inputs[].objects[]`:**
+
+| Поле | Описание |
+|---|---|
+| `id` | InputObjectID |
+| `kind` | `file`, `directory`, `archive`, `multivolume_archive` |
+| `name` | Исходное имя (§5.1 ниже) |
+| `relative_path` | Путь относительно корня, выбранного при импорте. Абсолютные локальные пути **не пишутся** (§19.4.3.7) |
+| `size_bytes`, `sha256` | Для файлов и архивов |
+| `container` | Тип контейнера по сигнатуре: `zip`, `rar4`, `rar5`, `7z`… (ADR-0011) |
+| `volumes[]` | Для многотомных: `{index, name, size_bytes, sha256}` — все тома, включая отсутствующие (`missing: true`) |
+| `parent_object_id`, `parent_entry_id` | Для вложенных архивов |
+| `nested_action` | `extract`, `preserve` или `exclude` |
+| `name_encoding` | Как декодировались имена записей, например `utf-8(bit11)`, `cp866(heuristic)` (ADR-0012) |
+
+**[ПРЕДЛОЖЕНИЕ] `inputs[].entries[]`:**
+
+| Поле | Описание |
+|---|---|
+| `id` | SourceEntryID |
+| `object_id` | InputObjectID, из которого запись |
+| `path` | Исходный относительный путь внутри объекта, `/` как разделитель (§5.1) |
+| `size_bytes`, `crc32`, `modified_at_raw` | Как в источнике. Время без пояса хранится как есть, без выдуманного UTC (§19.4.11.1) |
+| `result` | `included`, `included_renamed`, `excluded`, `unavailable`, `failed`, `not_processed` |
+| `file_id` | Для `included*` — FileID, получивший содержимое. **Исторический:** не переписывается при замене или удалении файла (§19.4.13.2) |
+| `rename_reason` | Для `included_renamed`: `path_too_long`, `invalid_chars`, `encoding`, `collision`, `reserved_name` |
+| `exclusion` | Для `excluded`: `{rule, rules_version, by: auto\|user\|profile}` |
+| `problem` | Для `unavailable`/`failed`: `{code, message_id}` (ADR-0032) |
+
+### 5.1. Представление исходных имён [ПРЕДЛОЖЕНИЕ]
+
+- Имя или путь, корректно декодированный в Unicode, — строка без нормализации.
+- Если исходные байты не декодировались однозначно, рядом пишется `path_raw: {encoding_guess?, base64}`. Это прежний `name_raw_b64` из ADR-0012.
+
+## 6. `files` и `historical_files` (§19.4.4, §19.4.13)
+
+**`files[]`** — **единственный** реестр текущих полезных файлов.
+
+| Поле | Обяз. | Правило |
+|---|---|---|
+| `id` | да | FileID, UUIDv4. Сохраняется при перемещении и явной замене содержимого. Одинаковые байты → два разных FileID |
+| `storage_path` | да | Уникальный безопасный путь в `content/` или `generated/` |
+| `size_bytes` | да | Точный размер несжатого потока, строка `uint64`, включая `"0"` |
+| `sha256` | да | SHA-256 несжатых байтов |
+| `origin_kind` | да | `imported`, `user_added`, `generated` — способ появления, не тип файла |
+| `type` | нет | [ПРЕДЛОЖЕНИЕ] `{id: "mesh.stl.binary", by: "signature"\|"extension"\|"user"}` |
+| `derived_from` | нет | `[{file_id, sha256}]` — версии источников. Ссылка может указывать на удалённый FileID |
+| `generation` | нет | [ПРЕДЛОЖЕНИЕ] для `generated`: `{tool, tool_version, params}` — параметры конвертации или рендера (§19.4.5.5) |
+| `metadata` | нет | §9 |
+
+- Состояние зависимости производного файла (`current`, `stale`, `unverifiable`, `source_missing`) **вычисляется** и в ZIP не хранится (§19.4.13.5).
+- **Удаление файла** снимает запись из `files[]` и добавляет её в `historical_files[]` (§19.4.19.6). Поля записи:
+  - обязательные: `id`, `removed_at_revision`;
+  - если известны: `last_known_sha256`, `last_known_size_bytes`, `last_known_storage_path`.
+- ID из `historical_files` никогда не совпадает с ID текущего файла.
+- Повторное добавление тех же байтов после удаления даёт **новый** FileID (§19.4.13.6).
+
+## 7. `groups` и `previews` (§19.4.5)
+
+**`groups[]`:**
+- поля: `id` (GroupID), `name`, `type`, `parent_id?`, `file_refs[]`, `metadata?`;
+- `type` — расширяемая строка; [ПРЕДЛОЖЕНИЕ] начальные значения: `variant`, `scale`, `part_set`, `version`, `supports`, `custom`;
+- у группы не больше одного родителя, циклов нет, корневая группа — без `parent_id`;
+- `file_refs` — только непосредственное членство, порядок не значим;
+- один файл может состоять в нескольких группах.
+
+**`previews`:**
+- `{primary_id?, items[{id, file_id, group_refs?[]}]}`;
+- `file_id` — текущий FileID;
+- `primary_id` обязан существовать в `items`;
+- предпросмотра может не быть;
+- оригинальные изображения остаются в `content/`, сгенерированные — `files[]` с `origin_kind=generated` в `generated/`;
+- миниатюры каталога хранятся вне ZIP.
+
+Сцены в формат 1.0 не входят (ADR-0035 п. 13).
+
+## 8. `field_definitions` (§19.4.10, §19.4.11)
+
+| Поле | Обяз. | Правило |
+|---|---|---|
+| `id` | да | FieldID: `user:<UUIDv4>` или `plugin:<plugin-id>:<field-key>`; `core:` зарезервировано |
+| `schema_revision` | да | integer ≥ 1. Растёт при изменении определения |
+| `name` | да | Отображаемое имя; не определяет идентичность |
+| `type` | да | `string`, `text`, `integer`, `decimal`, `boolean`, `date`, `datetime`, `enum`, `multi_enum`, `url`, `file_ref` |
+| `scopes` | да | Подмножество `asset`, `group`, `file` |
+| `description`, `dimension`, `unit`, `constraints`, `options[{id, label, deprecated?}]`, `default` | нет | `unit` в определении — рекомендуемый; `options[].id` — стабильный OptionID |
+
+**Представление значений по типам (§19.4.11):**
+
+| Тип | Значение |
+|---|---|
+| `integer` | Строка int64 |
+| `decimal` | Строка без экспоненты |
+| `date` | `YYYY-MM-DD` |
+| `datetime` | RFC 3339 с `Z` |
+| `enum` | OptionID |
+| `multi_enum` | Массив уникальных OptionID |
+| `file_ref` | Текущий FileID |
+
+- Отсутствие значения, `""`, `"0"`, `false` и `[]` — **разные** состояния.
+- `default` не превращается в подтверждённое значение.
+
+## 9. `metadata` (asset / group / file; §19.4.6, §19.4.19.3)
+
+### 9.1. Стандартные поля
+
+Все поля необязательны:
+- `title`, `description` — строки;
+- `authors[]` — `{name, role?}`; [ПРЕДЛОЖЕНИЕ] `role`: `author`, `sculptor`, `designer`, `photographer`, `other`;
+- `publisher`;
+- `license` — `{name?, spdx?, url?, notice?, file_ref?}`; отсутствие лицензии **не** означает свободного использования;
+- `tags[]` — строки в исходном написании;
+- `categories[]` — `{path: ["Figures", "Anime"]}`;
+- `links[]` — `{url, rel}`;
+- `dates` — [ПРЕДЛОЖЕНИЕ] `{published?, acquired?}`, тип `date`.
+
+### 9.2. `custom_values[]`
+
+- Запись: `{field_id, value, unit?}`; `field_id` должен быть разрешим в `field_definitions`.
+- У числовой физической величины `unit` при значении обязателен (§19.4.11.2).
+- [ПРЕДЛОЖЕНИЕ] Словарь единиц — UCUM-коды (`mm`, `g`, `Cel`). Неизвестная единица сохраняется и не конвертируется.
+
+### 9.3. `claims[]` (§19.4.12, §19.4.19.10)
+
+| Поле | Обяз. | Правило |
+|---|---|---|
+| `id` | да | ClaimID, UUIDv4 |
+| `target` | да | [ПРЕДЛОЖЕНИЕ] JSON Pointer относительно владельца `metadata`: `/title`, `/authors/0`, `/custom_values/<field_id>`; для источника — `/` |
+| `relation` | да | `supports_selected` — подтверждает текущее значение и **не** дублирует его; `alternative` — значение `value` предложено, но не выбрано; `rejected` — отклонено пользователем |
+| `value` | для `alternative`/`rejected` | Значение в представлении типа поля |
+| `method` | да | `user_input`, `file_metadata`, `document_extraction`, `filename_inference`, `directory_inference`, `content_analysis`, `geometric_measurement`, `external_metadata`, `ai_inference`, `imported_metadata`, `unknown` (расширяемо) |
+| `evidence[]` | нет | Ссылки `{file_id?, sha256?, source_entry_id?, input_object_id?, source_id?, note?}` — без копирования объектов |
+| `handler` | нет | `{id, version}` анализатора |
+| `confidence` | нет | Decimal-строка `0..1`; не универсальная вероятность |
+| `review` | нет | `{state: confirmed\|corrected\|rejected, at}`; без имени, email, ОС пользователя (§19.4.12.6) |
+| `created_at` | да | Время утверждения |
+
+- Предложения **последующего** анализа в ZIP не пишутся. Они хранятся в `index.sqlite: suggestions` и ревизию не меняют (ADR-0028 п. 3).
+- В ZIP попадают:
+  - подтверждения;
+  - предположения, сделанные при создании ассета (provenance);
+  - явно сохранённые альтернативы.
+
+## 10. `extensions` (§19.4.14, §19.4.16)
+
+```json
+"extensions": {
+  "org.example.slicer": {
+    "schema_version": "2",
+    "data": { "…": "любой JSON, сохраняется без потерь, включая числа > 2^53" },
+    "attachments": [ { "id": "<UUIDv4>", "path": "extensions/org.example.slicer/cache.bin",
+                       "size_bytes": "1048576", "sha256": "…" } ],
+    "dependencies": { "state": "declared", "refs": [ { "file_id": "<UUIDv4>", "sha256": "…" } ] }
   }
 }
 ```
 
-## 3. Статусы записи `files[]`
+- **ExtensionID** — [ПРЕДЛОЖЕНИЕ] `^[a-z0-9]+(\.[a-z0-9-]+)+$`, обратная доменная нотация. Не доказывает авторство и не даёт доверия.
+- **`attachments[]`:**
+  - у каждого вложения один владелец;
+  - путь только внутри `extensions/<свой ExtensionID>/`;
+  - вложения участвуют в полной проверке.
+- **`dependencies.state`:**
+  - `none`, `declared` или `unknown`;
+  - отсутствие объекта = `unknown`, а не `none` (§19.4.16.3);
+  - при `unknown` разрушительные операции над файлами требуют подтверждения.
+- **Без обработчика** данные расширения сохраняются при записи. Если безопасно сохранить их нельзя — запись запрещена.
 
-| status | Есть содержимое в ZIP | Обязательные поля |
-|---|---|---|
-| `included` | да | `zip_path`, `size`, `sha256`, `src` |
-| `included_renamed` | да | + `rename.reason ∈ {path_too_long, invalid_chars, encoding, collision, reserved_name}` |
-| `excluded` | нет | `src`, `exclusion{rule, by: auto\|user\|profile, rules_version}` |
-| `unreadable` | нет | `src`, `error{code, message}` — только если ассет `flags.incomplete = true` (ТЗ 6.6.2) |
+## 11. `history` (§19.4.15)
 
-## 4. Ревизии и история
+```json
+"history": {
+  "entries": [
+    { "revision": 1, "operation_id": "<UUIDv4>", "timestamp": "…", "operation": "asset_created",
+      "tool": { "application_version": "0.1.0", "profile": { "id": "telegram", "version": 1, "sha256": "…" },
+                "handlers": { "archive": "libarchive 3.8.1" }, "exclusion_rules_version": 1 },
+      "changes": [ { "kind": "file_add", "target": "<FileID>" } ] }
+  ]
+}
+```
 
-- `asset.revision` увеличивается на 1 при **каждой зафиксированной** записи ZIP (ADR-0006).
-- `history[]` — компактная запись: `rev`, `at`, `op`, `target?`, `op_id?`, `note?`. Без снимков данных (ТЗ 4.5.2).
-- Перечень `op`: `create`, `import_ready` (импорт готового ассета не меняет ревизию — запись в журнал библиотеки, а не в ZIP), `edit_meta`, `add_files`, `remove_files`, `replace_file`, `set_preview`, `add_preview`, `add_derived`, `remove_derived`, `reanalyze`, `session_commit`, `classify`, `migrate_format`.
+- **Одна фиксация — одна запись `entries[]`** с `revision` и `operation_id`.
+  - `operation_id` совпадает с `pending_ops.op_id` (ADR-0006, ADR-0015).
+  - Изменения внутри транзакции перечисляются в `changes[]`.
+- **Ревизия 1** содержит `asset_created` и `tool`. В `tool` пишутся только реально применимые версии, без фиктивных значений.
+- **[ПРЕДЛОЖЕНИЕ] Параметры операции** записываются в `details`, например `{"operation": "asset_copied", "details": {"source_asset_id": …, "source_revision": 4}}`.
+- **[ПРЕДЛОЖЕНИЕ] Словарь `operation`:** `asset_created`, `asset_copied{source_asset_id, source_revision}`, `files_changed`, `metadata_changed`, `groups_changed`, `previews_changed`, `provenance_changed`, `field_definitions_changed`, `extension_data_changed`, `format_migrated{from, to, steps[]}`, `history_compacted`, `session_committed`.
+- **[ПРЕДЛОЖЕНИЕ] Словарь `changes[].kind`:** `file_add`, `file_remove`, `file_replace{old_sha256, new_sha256}`, `file_move{old_path}`, `metadata_set`, `group_*`, `preview_*`, `claim_*`.
+- Импорт готового ассета ревизию не меняет: запись идёт в журнал библиотеки, а не в ZIP.
+- **`compacted_ranges[]`** — непересекающиеся диапазоны `{from_revision, to_revision, summary}`.
+  - В P0 компактизация **не выполняется**.
+  - Точная форма открыта (§19.4.15.8).
+- Ошибки и неудачные задания в историю не попадают.
 
-## 5. Минимальный валидный манифест
+## 12. Проверка (§19.4.7)
 
-Обязательны: `format.id`, `format.version`, `asset.id`, `asset.revision`, `asset.created`, `inputs` (может быть `[]`), `files` (может быть `[]`), `history` (≥ 1 запись). Всё остальное необязательно (ТЗ 5.1.1).
+| Уровень | Что проверяется |
+|---|---|
+| V1 | ZIP-структура, один `manifest.json`, синтаксис JSON, лимиты разбора |
+| V2 | JSON Schema версии `format.version` |
+| V3 | Семантика: уникальность ID и путей; разрешимость активных ссылок (`file_refs`, `previews`, `file_ref`, `primary_id`, `custom_values.field_id`); нет циклов групп; связи `inputs`↔`origin`; `historical_files` ∩ `files` = ∅; история: ревизия 1, последняя запись = `asset.revision`, диапазоны не пересекаются |
+| V4 | Физика: каждая запись `files`/`attachments` существует; размер, CRC и SHA-256 совпадают; нет незарегистрированных записей в `content/`, `generated/`, `extensions/` у новых контейнеров |
 
-## Статусы значений и предложения (ADR-0028)
+- Режимы `quick`, `selective` и `full` выбирают объём V4 и не зависят от разбиения V1–V4.
+- **Перед фиксацией** созданного или изменённого ZIP — полный V1–V4 по всем зарегистрированным потокам (ADR-0035 п. 7).
+- Результат проверки указывает фактически пройденный уровень.
+- Коды ошибок:
+  - `invalid` → `Errc::corrupt_data`;
+  - `unsupported` → `Errc::unsupported`;
+  - `incomplete` → `Errc::incomplete`;
+  - детали — `message_id` вида `am.manifest.<code>`.
 
-- У значений с происхождением поле `status ∈ {suggested, computed, confirmed}` (ТЗ §11.2.2) дополняет `origin`/`confirmed`. Соответствие: `measured` → `computed`; `inferred`/`plugin` без подтверждения → `suggested`; `confirmed: true` → `confirmed`. Необязательный `origin_detail{handler, handler_version, basis, analyzed_at, confidence}`; `confidence` — только для методов с осмысленной оценкой.
-- `classification.tags.suggested[]` и неподтверждённые `characteristics`/`groups` в ZIP содержат **только предположения, сделанные при создании ассета** (provenance, ТЗ §5.2.4). Предложения последующего анализа (классификаторы, LLM) хранятся в `index.sqlite: suggestions` и не увеличивают ревизию (ТЗ §11.2.7); при подтверждении значение записывается в ZIP.
+## 13. Минимальный валидный манифест
+
+Соответствует примеру §19.4.19:
+
+```json
+{
+  "format": { "id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128", "version": { "major": 1, "minor": 0 } },
+  "asset": { "id": "550e8400-e29b-41d4-a716-446655440000", "revision": 1,
+             "created_at": "2026-11-06T12:00:00Z", "modified_at": "2026-11-06T12:00:00Z" },
+  "files": [],
+  "history": { "entries": [ { "revision": 1, "operation_id": "550e8400-e29b-41d4-a716-446655440001",
+      "timestamp": "2026-11-06T12:00:00Z", "operation": "asset_created",
+      "tool": { "application_version": "0.1.0-dev" } } ] }
+}
+```
+
+Развёрнутый пример (импорт RAR с исключённой и переименованной записями, группа, сгенерированное превью, пользовательское поле, claim) — [`schemas/examples/manifest-1.0.example.json`](../../schemas/examples/manifest-1.0.example.json).
+
+## 14. Открыто до публикации 1.0 (§19.5)
+
+- Точные regex ExtensionID и FieldID.
+- Исчерпывающая схема `origin`/`inputs` и raw filenames.
+- Контракт `claims.target` и привязка к стандартным полям.
+- Единицы и `constraints`.
+- `attachments.dependencies`.
+- Обязательные события истории и форма `compacted_ranges`.
+- Лимиты разбора и ресурсов (после измерений).
+- Матрица поддерживаемых старых версий.
+
+Всё помеченное [ПРЕДЛОЖЕНИЕ] выносится на согласование вместе со схемой 1.0.

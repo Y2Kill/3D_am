@@ -1,7 +1,7 @@
 # AM — каталогизатор и менеджер 3D/2D-ресурсов
 
 Модульная программа на C++20 для каталогизации ресурсов для 3D-печати, ЧПУ и лазерной резки: импорт из архивов в самодостаточные ZIP-ассеты, метаданные и происхождение, поиск дубликатов, просмотр, конвертация.
-Техническое задание: [`docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.7.md`](docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.7.md) (исходное описание — [`docs/tz/description.txt`](docs/tz/description.txt); все черновики v0.1–v1.6 — в `docs/tz/drafts/`).
+Техническое задание: [`docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.8.md`](docs/tz/drafts/TZ_catalog_3D_2D_draft_v1.8.md) (исходное описание — [`docs/tz/description.txt`](docs/tz/description.txt); все черновики v0.1–v1.7 — в `docs/tz/drafts/`).
 
 ## Состояние: подготовка к реализации завершена (M0, частично)
 
@@ -11,6 +11,8 @@
 | Отчёт о потерях при эволюции ТЗ | [docs/reports/01_TZ_evolution_loss_report.md](docs/reports/01_TZ_evolution_loss_report.md) |
 | Выводы по реальной коллекции | [docs/reports/02_collection_findings.md](docs/reports/02_collection_findings.md) |
 | Сверка ТЗ v1.3–v1.5 с подготовкой (принято владельцем) | [docs/reports/03_TZ_v1.3-1.5_vs_prepared.md](docs/reports/03_TZ_v1.3-1.5_vs_prepared.md) |
+| Сверка ТЗ v1.7 (НФТ §14) и v1.8 (§19, формат ZIP) с подготовкой (приняты владельцем) | [docs/reports/04_TZ_v1.7_vs_prepared.md](docs/reports/04_TZ_v1.7_vs_prepared.md), [docs/reports/05_TZ_v1.8_format_vs_prepared.md](docs/reports/05_TZ_v1.8_format_vs_prepared.md) |
+| Формат ZIP-ассета 1.0 (рабочая формализация) | [docs/specifications/container_manifest_v1.md](docs/specifications/container_manifest_v1.md) |
 | Матрица покрытия сценариев | [docs/plan/coverage_matrix.md](docs/plan/coverage_matrix.md) |
 | Руководство разработчика | [docs/developer/README.md](docs/developer/README.md) |
 | Исследование библиотек (§17 ТЗ) | [docs/research/libraries.md](docs/research/libraries.md) |

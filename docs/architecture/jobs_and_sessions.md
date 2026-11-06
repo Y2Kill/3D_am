@@ -45,13 +45,15 @@ class JobFactory { public: virtual std::unique_ptr<Job> create(std::string_view 
 commit_update(asset, mutate):
   op = journal.insert(prepared, base=stat(asset.zip) + sha256(manifest))
   tmp = lib/.am/.am-tmp/<asset>.<op>.zip
+  m = manifest.clone(); staged = mutate(m)     // SHA-256 и размеры новых данных известны заранее (подготовка/lookup)
+  if m == manifest: journal.drop(op); return    // no-op: ревизия не меняется (ADR-0035 п. 5)
+  m.asset.revision += 1; m.history.entries.push(op, ...)
   w = ZipWriter(tmp)
-  w.add_stored("am-asset", MARKER)
-  m = manifest.clone(); mutate(m, w)          // новые записи пишутся потоково + SHA-256
-  for e in old.entries if e not removed: w.copy_raw(e)
-  m.asset.revision += 1; m.history.push(...)
-  w.add("manifest.json", m.dump()); w.close(); fsync(tmp)
-  verify(tmp, level = changed_entries_full + all_crc)   // при ошибке: delete tmp, journal.drop, error
+  w.add("manifest.json", m.dump())             // первой записью (ADR-0035 п. 2)
+  for s in staged: w.add_stream(s)              // потоковый SHA-256 сверяется с объявленным
+  for e in old.entries if e not removed: w.copy_raw(e)   // в т. ч. неизвестные записи
+  w.close(); fsync(tmp)
+  verify(tmp, level = full)                     // V1–V4: CRC + SHA-256 всех зарегистрированных потоков (ADR-0035 п. 7)
   journal.set(verified)
   if stat(asset.zip) != base: abort("изменён извне")    // ТЗ 8.7.8, внешнее изменение
   replace(asset.zip, tmp, backup)                       // ReplaceFileW / rename

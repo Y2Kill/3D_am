@@ -1,0 +1,550 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128:manifest:1.0:draft",
+  "title": "AM asset manifest 1.0 (DRAFT, not normative)",
+  "description": "Working draft for TZ v1.8 section 19.4 (MF-01..MF-12), ADR-0035. Not a published schema: format 1.0 is published only together with the V1-V4 validator and golden ZIP fixtures (TZ 19.6.4). Semantic rules (reference resolution, group cycles, history consistency) are V3 and not expressible here.",
+  "type": "object",
+  "required": ["format", "asset", "files", "history"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "$ref": "#/$defs/format" },
+    "asset": { "$ref": "#/$defs/asset" },
+    "origin": { "$ref": "#/$defs/origin" },
+    "inputs": { "type": "array", "items": { "$ref": "#/$defs/input" } },
+    "files": { "type": "array", "items": { "$ref": "#/$defs/file" } },
+    "historical_files": { "type": "array", "items": { "$ref": "#/$defs/historicalFile" } },
+    "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } },
+    "previews": { "$ref": "#/$defs/previews" },
+    "field_definitions": { "type": "array", "items": { "$ref": "#/$defs/fieldDefinition" } },
+    "extensions": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/extensionId" },
+      "additionalProperties": { "$ref": "#/$defs/extension" }
+    },
+    "history": { "$ref": "#/$defs/history" }
+  },
+  "$defs": {
+    "uuid4": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "crc32": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "uint64": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "description": "Byte size as canonical decimal string; range 0..18446744073709551615 is checked by V3 (pattern only limits length)."
+    },
+    "safeInt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+    },
+    "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "storagePath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "200-byte UTF-8 limit, NFC/casefold collisions and ADR-0012 character rules are checked by V3.",
+      "pattern": "^(?!.*(^|/)\\.\\.?(/|$))(?!.*//)(content|generated|extensions)/[^\\\\]*[^/\\\\]$"
+    },
+    "extensionId": { "type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$" },
+    "fieldId": {
+      "type": "string",
+      "pattern": "^(user:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|plugin:[a-z0-9]+(\\.[a-z0-9-]+)+:[a-z0-9_.-]+)$"
+    },
+    "rawName": {
+      "type": "object",
+      "required": ["base64"],
+      "additionalProperties": false,
+      "properties": {
+        "encoding_guess": { "type": "string" },
+        "base64": { "type": "string", "pattern": "^[A-Za-z0-9+/]*={0,2}$" }
+      }
+    },
+    "problem": {
+      "type": "object",
+      "required": ["code"],
+      "additionalProperties": false,
+      "properties": { "code": { "type": "string" }, "message_id": { "type": "string" } }
+    },
+
+    "format": {
+      "type": "object",
+      "required": ["id", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "const": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128" },
+        "version": {
+          "type": "object",
+          "required": ["major", "minor"],
+          "additionalProperties": false,
+          "properties": { "major": { "const": 1 }, "minor": { "$ref": "#/$defs/safeInt" } }
+        }
+      }
+    },
+
+    "asset": {
+      "type": "object",
+      "required": ["id", "revision", "created_at", "modified_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid4" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "modified_at": { "$ref": "#/$defs/timestamp" },
+        "metadata": { "$ref": "#/$defs/metadata" }
+      }
+    },
+
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } } }
+    },
+    "source": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid4" },
+        "kind": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "published_at": { "$ref": "#/$defs/timestamp" },
+        "retrieved_at": { "$ref": "#/$defs/timestamp" },
+        "claims": { "type": "array", "items": { "$ref": "#/$defs/claim" } }
+      }
+    },
+
+    "input": {
+      "type": "object",
+      "required": ["id", "imported_at", "mode", "objects", "entries"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid4" },
+        "source_refs": { "type": "array", "items": { "$ref": "#/$defs/uuid4" }, "uniqueItems": true },
+        "imported_at": { "$ref": "#/$defs/timestamp" },
+        "mode": { "enum": ["strict", "partial"] },
+        "objects": { "type": "array", "items": { "$ref": "#/$defs/inputObject" } },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/inputEntry" } }
+      }
+    },
+    "inputObject": {
+      "type": "object",
+      "required": ["id", "kind", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid4" },
+        "kind": { "enum": ["file", "directory", "archive", "multivolume_archive"] },
+        "name": { "type": "string" },
+        "name_raw": { "$ref": "#/$defs/rawName" },
+        "relative_path": { "type": "string" },
+        "size_bytes": { "$ref": "#/$defs/uint64" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "container": { "type": "string" },
+        "volumes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "name"],
+            "additionalProperties": false,
+            "properties": {
+              "index": { "$ref": "#/$defs/safeInt" },
+              "name": { "type": "string" },
+              "size_bytes": { "$ref": "#/$defs/uint64" },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "missing": { "type": "boolean" }
+            }
+          }
+        },
+        "parent_object_id": { "$ref": "#/$defs/uuid4" },
+        "parent_entry_id": { "$ref": "#/$defs/uuid4" },
+        "nested_action": { "enum": ["extract", "preserve", "exclude"] },
+        "name_encoding": { "type": "string" }
+      }
+    },
+    "inputEntry": {
+      "type": "object",
+      "required": ["id", "object_id", "path", "result"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid4" },
+        "object_id": { "$ref": "#/$defs/uuid4" },
+        "path": { "type": "string" },
+        "path_raw": { "$ref": "#/$defs/rawName" },
+        "size_bytes": { "$ref": "#/$defs/uint64" },
+        "crc32": { "$ref": "#/$defs/crc32" },
+        "modified_at_raw": { "type": "string" },
+        "result": { "enum": ["included", "included_renamed", "excluded", "unavailable", "failed", "not_processed"] },
+        "file_id": { "$ref": "#/$defs/uuid4" },
+        "rename_reason": { "enum": ["path_too_long", "invalid_chars", "encoding", "collision", "reserved_name"] },
+        "exclusion": {
+          "type": "object",
+          "required": ["rule", "by"],
+          "additionalProperties": false,
+          "properties": {
+            "rule": { "type": "string" },
+            "rules_version": { "$ref": "#/$defs/safeInt" },
+            "by": { "enum": ["auto", "user", "profile"] }
+          }
+        },
+        "problem": { "$ref": "#/$defs/problem" }
+      },
+      "allOf": [
+        { "if": { "properties": { "result": { "enum": ["included", "included_renamed"] } } },
+          "then": { "required": ["file_id"] } },
+        { "if": { "properties": { "result": { "const": "included_renamed" } } },
+          "then": { "required": ["rename_reason"] } },
+        { "if": { "properties": { "result": { "const": "excluded" } } },
+          "then": { "required": ["exclusion"] } },
+        { "if": { "properties": { "result": { "enum": ["unavailable", "failed"] } } },
+          "then": { "required": ["problem"] } }
+      ]
+    },
+
+    "fileRefWithHash": {
+      "type": "object",
+      "required": ["file_id", "sha256"],
+      "additionalProperties": false,
+      "properties": { "file_id": { "$ref": "#/$defs/uuid4" }, "sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "file": {
+      "type": "object",
+      "required": ["id", "storage_path", "size_bytes", "sha256", "origin_kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid4" },
+        "storage_path": { "$ref": "#/$defs/storagePath" },
+        "size_bytes": { "$ref": "#/$defs/uint64" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "origin_kind": { "enum": ["imported", "user_added", "generated"] },
+        "type": {
+          "type": "object",
+          "required": ["id"],
+          "additionalProperties": false,
+          "properties": { "id": { "type": "string" }, "by": { "enum": ["signature", "extension", "user"] } }
+        },
+        "derived_from": { "type": "array", "items": { "$ref": "#/$defs/fileRefWithHash" } },
+        "generation": {
+          "type": "object",
+          "required": ["tool"],
+          "additionalProperties": false,
+          "properties": {
+            "tool": { "type": "string" },
+            "tool_version": { "type": "string" },
+            "params": { "type": "object" }
+          }
+        },
+        "metadata": { "$ref": "#/$defs/metadata" }
+      }
+    },
+    "historicalFile": {
+      "type": "object",
+      "required": ["id", "removed_at_revision"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid4" },
+        "removed_at_revision": { "$ref": "#/$defs/revision" },
+        "last_known_sha256": { "$ref": "#/$defs/sha256" },
+        "last_known_size_bytes": { "$ref": "#/$defs/uint64" },
+        "last_known_storage_path": { "type": "string" }
+      }
+    },
+
+    "group": {
+      "type": "object",
+      "required": ["id", "name", "type", "file_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid4" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "minLength": 1 },
+        "parent_id": { "$ref": "#/$defs/uuid4" },
+        "file_refs": { "type": "array", "items": { "$ref": "#/$defs/uuid4" }, "uniqueItems": true },
+        "metadata": { "$ref": "#/$defs/metadata" }
+      }
+    },
+    "previews": {
+      "type": "object",
+      "required": ["items"],
+      "additionalProperties": false,
+      "properties": {
+        "primary_id": { "$ref": "#/$defs/uuid4" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "file_id"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "$ref": "#/$defs/uuid4" },
+              "file_id": { "$ref": "#/$defs/uuid4" },
+              "group_refs": { "type": "array", "items": { "$ref": "#/$defs/uuid4" }, "uniqueItems": true }
+            }
+          }
+        }
+      }
+    },
+
+    "fieldDefinition": {
+      "type": "object",
+      "required": ["id", "schema_revision", "name", "type", "scopes"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/fieldId" },
+        "schema_revision": { "$ref": "#/$defs/revision" },
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["string", "text", "integer", "decimal", "boolean", "date", "datetime", "enum", "multi_enum", "url", "file_ref"] },
+        "scopes": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "enum": ["asset", "group", "file"] }
+        },
+        "description": { "type": "string" },
+        "dimension": { "type": "string" },
+        "unit": { "type": "string" },
+        "constraints": { "type": "object" },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "label"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "label": { "type": "string" },
+              "deprecated": { "type": "boolean" }
+            }
+          }
+        },
+        "default": {}
+      }
+    },
+
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": { "name": { "type": "string" }, "role": { "type": "string" } }
+          }
+        },
+        "publisher": { "type": "string" },
+        "license": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "spdx": { "type": "string" },
+            "url": { "type": "string" },
+            "notice": { "type": "string" },
+            "file_ref": { "$ref": "#/$defs/uuid4" }
+          }
+        },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": { "path": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } }
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["url"],
+            "additionalProperties": false,
+            "properties": { "url": { "type": "string" }, "rel": { "type": "string" } }
+          }
+        },
+        "dates": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "published": { "$ref": "#/$defs/date" }, "acquired": { "$ref": "#/$defs/date" } }
+        },
+        "custom_values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["field_id", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "field_id": { "$ref": "#/$defs/fieldId" },
+              "value": {},
+              "unit": { "type": "string" }
+            }
+          }
+        },
+        "claims": { "type": "array", "items": { "$ref": "#/$defs/claim" } }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "required": ["id", "target", "relation", "method", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid4" },
+        "target": { "type": "string", "pattern": "^/" },
+        "relation": { "enum": ["supports_selected", "alternative", "rejected"] },
+        "value": {},
+        "method": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "file_id": { "$ref": "#/$defs/uuid4" },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "source_entry_id": { "$ref": "#/$defs/uuid4" },
+              "input_object_id": { "$ref": "#/$defs/uuid4" },
+              "source_id": { "$ref": "#/$defs/uuid4" },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "handler": {
+          "type": "object",
+          "required": ["id"],
+          "additionalProperties": false,
+          "properties": { "id": { "type": "string" }, "version": { "type": "string" } }
+        },
+        "confidence": { "type": "string", "pattern": "^(0(\\.[0-9]+)?|1(\\.0+)?)$" },
+        "review": {
+          "type": "object",
+          "required": ["state", "at"],
+          "additionalProperties": false,
+          "properties": {
+            "state": { "enum": ["confirmed", "corrected", "rejected"] },
+            "at": { "$ref": "#/$defs/timestamp" }
+          }
+        },
+        "created_at": { "$ref": "#/$defs/timestamp" }
+      },
+      "allOf": [
+        { "if": { "properties": { "relation": { "enum": ["alternative", "rejected"] } } },
+          "then": { "required": ["value"] } },
+        { "if": { "properties": { "relation": { "const": "supports_selected" } } },
+          "then": { "not": { "required": ["value"] } } }
+      ]
+    },
+
+    "extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "type": "string" },
+        "data": {},
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "path", "size_bytes", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "$ref": "#/$defs/uuid4" },
+              "path": { "type": "string", "pattern": "^extensions/" },
+              "size_bytes": { "$ref": "#/$defs/uint64" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        "dependencies": {
+          "type": "object",
+          "required": ["state"],
+          "additionalProperties": false,
+          "properties": {
+            "state": { "enum": ["none", "declared", "unknown"] },
+            "refs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "file_id": { "$ref": "#/$defs/uuid4" },
+                  "sha256": { "$ref": "#/$defs/sha256" },
+                  "group_id": { "$ref": "#/$defs/uuid4" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "history": {
+      "type": "object",
+      "required": ["entries"],
+      "additionalProperties": false,
+      "properties": {
+        "entries": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/revisionRecord" } },
+        "compacted_ranges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from_revision", "to_revision"],
+            "additionalProperties": false,
+            "properties": {
+              "from_revision": { "$ref": "#/$defs/revision" },
+              "to_revision": { "$ref": "#/$defs/revision" },
+              "summary": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "revisionRecord": {
+      "type": "object",
+      "required": ["revision", "operation_id", "timestamp", "operation"],
+      "additionalProperties": false,
+      "properties": {
+        "revision": { "$ref": "#/$defs/revision" },
+        "operation_id": { "$ref": "#/$defs/uuid4" },
+        "timestamp": { "$ref": "#/$defs/timestamp" },
+        "operation": { "type": "string", "minLength": 1 },
+        "details": { "type": "object" },
+        "tool": {
+          "type": "object",
+          "required": ["application_version"],
+          "additionalProperties": false,
+          "properties": {
+            "application_version": { "type": "string" },
+            "profile": {
+              "type": "object",
+              "required": ["id"],
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string" },
+                "version": { "$ref": "#/$defs/safeInt" },
+                "sha256": { "$ref": "#/$defs/sha256" }
+              }
+            },
+            "handlers": { "type": "object", "additionalProperties": { "type": "string" } },
+            "exclusion_rules_version": { "$ref": "#/$defs/safeInt" }
+          }
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind"],
+            "additionalProperties": true,
+            "properties": { "kind": { "type": "string" }, "target": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

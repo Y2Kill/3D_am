@@ -6,7 +6,7 @@ PRAGMA user_version = 1;
 
 -- Журнал незавершённых операций записи ZIP (протокол ADR-0006)
 CREATE TABLE pending_ops (
-  op_id        TEXT PRIMARY KEY,
+  op_id        TEXT PRIMARY KEY,                  -- UUIDv4 = history.entries[].operation_id (ADR-0035 п. 4)
   asset_id     TEXT NOT NULL,
   kind         TEXT NOT NULL,                     -- create | update | trash | restore | purge | import_ready | move (ADR-0025)
   target_path  TEXT NOT NULL,
@@ -84,7 +84,7 @@ CREATE TABLE edit_sessions (
 CREATE TABLE edit_session_files (
   session_id TEXT NOT NULL REFERENCES edit_sessions(session_id) ON DELETE CASCADE,
   rel_path   TEXT NOT NULL,                       -- путь в workdir
-  file_id    TEXT,                                -- NULL для добавленных вручную
+  file_id    TEXT,                                -- FileID (UUIDv4); NULL для добавленных вручную
   size       INTEGER NOT NULL,
   mtime_ns   INTEGER NOT NULL,
   sha256     TEXT NOT NULL,

@@ -8,5 +8,7 @@
 # Owner materials are stored byte-for-byte (CLAUDE.md: do not modify)
 docs/tz/description.txt -text
 docs/tz/drafts/** -text
+docs/tz/AUDIT_REPORT.md -text
+docs/tz/asset-format-*.md -text
 tools/inventory/** -text
 data/** -text
