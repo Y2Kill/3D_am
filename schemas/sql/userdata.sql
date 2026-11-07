@@ -83,7 +83,7 @@ CREATE TABLE field_defs (
   field_id        TEXT PRIMARY KEY,               -- user:<uuid> | plugin:<id>:<key>
   schema_revision INTEGER NOT NULL,
   name            TEXT NOT NULL,
-  type            TEXT NOT NULL,                  -- string | text | integer | decimal | boolean | date | datetime | enum | multi_enum | url | file_ref
+  type            TEXT NOT NULL,                  -- один из 11 базовых типов | plugin:<PluginID>:<TypeKey> (ADR-0036 п. 6)
   scopes          TEXT NOT NULL,                  -- JSON: ["asset","group","file"]
   dimension       TEXT,
   unit            TEXT,
@@ -92,6 +92,29 @@ CREATE TABLE field_defs (
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 );
+
+-- Решения пользователя по предложениям анализаторов (ADR-0036 п. 3, R-06). ЧЕРНОВОЙ КОНТРАКТ.
+-- Источник истины для Dismiss: переживает перестроение index.sqlite и входит в резервную копию.
+-- Не ссылается на index.sqlite (в том числе на suggestions.id — это перестраиваемый rowid).
+-- Алгоритмы candidate_key/basis_key и канонизация значений открыты (O-03, O-04), поэтому
+-- ограничений уникальности по ключам нет; поиск решений — по индексу ниже.
+CREATE TABLE suggestion_decisions (
+  decision_id   TEXT PRIMARY KEY,                 -- UUIDv7 (ID вне ZIP, ADR-0035 п. 4)
+  asset_id      TEXT NOT NULL,                    -- AssetID; решение не удаляется, если ZIP временно недоступен
+  owner_scope   TEXT NOT NULL,                    -- asset | group | file — владелец metadata адресата
+  owner_id      TEXT NOT NULL,                    -- AssetID | GroupID | FileID
+  target_json   TEXT NOT NULL,                    -- типизированный адресат claims.target (ADR-0036 п. 1)
+  value_json    TEXT,                             -- отклонённое типизированное значение (NULL для scope = asset_field_value)
+  candidate_key TEXT NOT NULL,                    -- хеш (AssetID, адресат, значение); алгоритм — O-03
+  basis_key     TEXT,                             -- хеш основания (входные данные); алгоритм — O-03; NULL для asset_field_value
+  decision      TEXT NOT NULL DEFAULT 'dismissed', -- dismissed (иные решения — при расширении модели)
+  scope         TEXT NOT NULL DEFAULT 'current_basis', -- current_basis | asset_field_value
+  handler       TEXT,                             -- анализатор и версия — только для диагностики, не часть ключа
+  handler_version TEXT,
+  created_at    TEXT NOT NULL,
+  note          TEXT
+);
+CREATE INDEX suggestion_decisions_lookup ON suggestion_decisions(asset_id, candidate_key);
 
 -- Сохранённое состояние ревью дубликатов (ТЗ 7.7.5)
 CREATE TABLE dedup_reviews (

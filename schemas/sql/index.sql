@@ -95,7 +95,7 @@ CREATE INDEX sources_name ON sources(name COLLATE NOCASE);
 
 CREATE TABLE asset_tags (
   asset_id  TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-  tag       TEXT NOT NULL,                        -- нормализованная форма; исходное написание — в манифесте
+  tag       TEXT NOT NULL,                        -- поисковый ключ (ADR-0036 п. 5, алгоритм — O-08); написание в ZIP не меняется
   PRIMARY KEY (asset_id, tag)
 );
 CREATE INDEX asset_tags_tag ON asset_tags(tag);
@@ -113,8 +113,9 @@ CREATE TABLE asset_fields (
   scope      TEXT NOT NULL,                       -- asset | group | file
   owner_id   TEXT NOT NULL,                       -- AssetID | GroupID | FileID
   field_id   TEXT NOT NULL,                       -- user:<uuid> | plugin:<id>:<key>
-  num        REAL,                                -- для фильтров; точное значение — txt (строки int64/decimal)
-  txt        TEXT,
+  type_id    TEXT,                                -- тип поля из field_definitions (базовый или plugin TypeID)
+  num        REAL,                                -- для фильтров; точное значение — txt. Для plugin TypeID не заполняется
+  txt        TEXT,                                -- для plugin TypeID — сырой JSON только для отображения (ADR-0036 п. 6)
   unit       TEXT,
   PRIMARY KEY (asset_id, scope, owner_id, field_id)
 );
@@ -168,18 +169,25 @@ CREATE TABLE asset_minhash (
 );
 
 -- Предложения последующего анализа (ADR-0028, ТЗ §11.2.7): воспроизводимые данные,
--- не входят в ZIP и не меняют ревизию. content_key = хеш входных данных обработчика.
+-- не входят в ZIP и не меняют ревизию. id — локальный rowid, снаружи на него не ссылаются.
+-- Решение Dismiss хранится в userdata.sqlite: suggestion_decisions (ADR-0036 п. 3);
+-- state здесь — производный статус, вычисляемый при отображении/переиндексации.
 CREATE TABLE suggestions (
   id              INTEGER PRIMARY KEY,
   asset_id        TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-  target          TEXT NOT NULL,                  -- claim target: "/tags" | "/categories" | "/custom_values/<field_id>" | "/license" | ...
+  owner_scope     TEXT NOT NULL,                  -- asset | group | file
+  owner_id        TEXT NOT NULL,                  -- AssetID | GroupID | FileID
+  target_json     TEXT NOT NULL,                  -- типизированный claims.target: {"kind":"standard","field":"tags"} | {"kind":"custom","field_id":...}
   value_json      TEXT NOT NULL,
   handler         TEXT NOT NULL,
   handler_version TEXT NOT NULL,
   basis           TEXT,
   confidence      TEXT,                           -- decimal-строка 0..1, только для методов с осмысленной оценкой
-  content_key     TEXT NOT NULL,
+  content_key     TEXT NOT NULL,                  -- прообраз basis_key
+  candidate_key   TEXT NOT NULL,                  -- (AssetID, адресат, значение); алгоритм — O-03
+  basis_key       TEXT NOT NULL,                  -- основание; алгоритм — O-03
   created_at      TEXT NOT NULL,
-  state           TEXT NOT NULL DEFAULT 'open'    -- open | dismissed (подтверждённое уходит в ZIP как claim)
+  state           TEXT NOT NULL DEFAULT 'open'    -- open | dismissed — ПРОИЗВОДНЫЙ от userdata.suggestion_decisions
 );
-CREATE INDEX suggestions_asset ON suggestions(asset_id, target);
+CREATE INDEX suggestions_asset ON suggestions(asset_id, owner_scope, owner_id);
+CREATE INDEX suggestions_candidate ON suggestions(asset_id, candidate_key);

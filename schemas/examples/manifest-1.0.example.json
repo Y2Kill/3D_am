@@ -15,6 +15,7 @@
       "title": "Winry Rockbell + ALT",
       "authors": [
         {
+          "id": "28f6868e-402b-4a3a-966f-d2460d4d5d81",
           "name": "Dinamuuu3D",
           "role": "sculptor"
         }
@@ -40,7 +41,11 @@
       "claims": [
         {
           "id": "c78921af-2c79-4619-a3f3-b437075518e3",
-          "target": "/authors/0",
+          "target": {
+            "kind": "standard_item",
+            "field": "authors",
+            "item_id": "28f6868e-402b-4a3a-966f-d2460d4d5d81"
+          },
           "relation": "supports_selected",
           "method": "filename_inference",
           "evidence": [
@@ -63,7 +68,9 @@
         "claims": [
           {
             "id": "0b6f3c8e-2a51-4d7e-9c3a-5e1f7b2d4a60",
-            "target": "/",
+            "target": {
+              "kind": "self"
+            },
             "relation": "supports_selected",
             "method": "directory_inference",
             "created_at": "2026-11-06T10:15:03.120Z"

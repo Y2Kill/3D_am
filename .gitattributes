@@ -12,3 +12,4 @@ docs/tz/AUDIT_REPORT.md -text
 docs/tz/asset-format-*.md -text
 tools/inventory/** -text
 data/** -text
+docs/tz/R01-R09_*.md -text

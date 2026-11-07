@@ -1,6 +1,6 @@
 # Контейнер ассета и манифест — формат 1.0 (рабочая формализация, не нормативная)
 
-**Источник:** ТЗ v1.8 §19.4 (MF-01…MF-12). Решение — [ADR-0035](../decisions/ADR_log.md), отчёт [05](../reports/05_TZ_v1.8_format_vs_prepared.md).
+**Источник:** ТЗ v1.8 §19.4 (MF-01…MF-12) и утверждённые уточнения [R-01…R-09](../tz/R01-R09_approved_handoff.md). Решения — [ADR-0035, ADR-0036](../decisions/ADR_log.md), отчёты [05](../reports/05_TZ_v1.8_format_vs_prepared.md), [06](../reports/06_R01-R09_vs_prepared.md).
 
 **Статус.**
 - Документ формализует согласованные принципы §19.4 для реализации.
@@ -12,6 +12,7 @@
 
 **Как читать документ.**
 - Пункты со ссылкой «§19.x» согласованы владельцем.
+- Пункты со ссылкой «R-n» или «ADR-0036» — утверждённые уточнения после ADR-0035. Пометка **O-n** — открытый вопрос свода R-01…R-09: применена только согласованная часть.
 - Пункты с пометкой **[ПРЕДЛОЖЕНИЕ]** — наша детализация того, что §19.5 оставил для формализации. Они меняются без новой ADR, пока формат не опубликован.
 
 Прежний черновик (маркер `am-asset`, короткие ID `i001`/`f00001`, `history[]` массивом) отменён ADR-0035. Его история — в git.
@@ -195,6 +196,7 @@
 
 **`groups[]`:**
 - поля: `id` (GroupID), `name`, `type`, `parent_id?`, `file_refs[]`, `metadata?`;
+- `file_refs` (ADR-0036 п. 7): читатель допускает отсутствие поля, оно равно `[]`; **писатель всегда пишет массив**, в том числе пустой;
 - `type` — расширяемая строка; [ПРЕДЛОЖЕНИЕ] начальные значения: `variant`, `scale`, `part_set`, `version`, `supports`, `custom`;
 - у группы не больше одного родителя, циклов нет, корневая группа — без `parent_id`;
 - `file_refs` — только непосредственное членство, порядок не значим;
@@ -217,7 +219,7 @@
 | `id` | да | FieldID: `user:<UUIDv4>` или `plugin:<plugin-id>:<field-key>`; `core:` зарезервировано |
 | `schema_revision` | да | integer ≥ 1. Растёт при изменении определения |
 | `name` | да | Отображаемое имя; не определяет идентичность |
-| `type` | да | `string`, `text`, `integer`, `decimal`, `boolean`, `date`, `datetime`, `enum`, `multi_enum`, `url`, `file_ref` |
+| `type` | да | Один из 11 базовых типов: `string`, `text`, `integer`, `decimal`, `boolean`, `date`, `datetime`, `enum`, `multi_enum`, `url`, `file_ref`; **или** TypeID плагина `plugin:<PluginID>:<TypeKey>` (R-09.2). TypeID ≠ FieldID. Тип без пространства имён (`vector3`) в 1.0 — ошибка структуры. Точный regex — O-11 |
 | `scopes` | да | Подмножество `asset`, `group`, `file` |
 | `description`, `dimension`, `unit`, `constraints`, `options[{id, label, deprecated?}]`, `default` | нет | `unit` в определении — рекомендуемый; `options[].id` — стабильный OptionID |
 
@@ -232,9 +234,16 @@
 | `enum` | OptionID |
 | `multi_enum` | Массив уникальных OptionID |
 | `file_ref` | Текущий FileID |
+| plugin TypeID | Любое JSON-значение по контракту расширения (R-09.3). Ядро его не интерпретирует и не приводит к базовому типу |
 
 - Отсутствие значения, `""`, `"0"`, `false` и `[]` — **разные** состояния.
 - `default` не превращается в подтверждённое значение.
+
+**Значения plugin-типов без обработчика (R-09.4, R-09.5):**
+- манифест остаётся валидным для ядра; результат проверки — «семантика плагина не проверена», а не `invalid`;
+- разрешены просмотр, экспорт сырого JSON и сохранение **неизменённого** значения; универсальный редактор не меняет его структуру;
+- изменения соседних данных допускаются с учётом зависимостей значения (§10);
+- числа сохраняются точно (§10, R-09.8).
 
 ## 9. `metadata` (asset / group / file; §19.4.6, §19.4.19.3)
 
@@ -242,12 +251,12 @@
 
 Все поля необязательны:
 - `title`, `description` — строки;
-- `authors[]` — `{name, role?}`; [ПРЕДЛОЖЕНИЕ] `role`: `author`, `sculptor`, `designer`, `photographer`, `other`;
-- `publisher`;
-- `license` — `{name?, spdx?, url?, notice?, file_ref?}`; отсутствие лицензии **не** означает свободного использования;
-- `tags[]` — строки в исходном написании;
+- `authors[]` — `{id?, name, role?}`; [ПРЕДЛОЖЕНИЕ] `role`: `author`, `sculptor`, `designer`, `photographer`, `other`. `id` — UUIDv4 (R-03): необязателен, но **обязателен**, если на автора ссылается claim; перестановка и правка имени ссылку не меняют;
+- `publisher` — `{name, url?}` (ADR-0036 п. 7): `name` — непустая строка, `url` — URL. Новое уточнение контракта: ТЗ v1.8 структуру не задаёт;
+- `license` — `{name?, spdx?, url?, notice?, file_ref?}`, хотя бы одно поле; пустой объект недопустим. Отсутствие лицензии **не** означает свободного использования;
+- `tags[]` — строки ровно в выбранном пользователем написании (R-08.1). Сериализатор не подставляет синонимы и не меняет регистр, Unicode, пробелы, пунктуацию. Точный дубликат строки — ошибка; варианты вроде `PETG`/`petg` допустимы (совпадение поискового ключа — предупреждение V3). Нормализация — только в индексе и словаре библиотеки (ADR-0036 п. 5);
 - `categories[]` — `{path: ["Figures", "Anime"]}`;
-- `links[]` — `{url, rel}`;
+- `links[]` — `{url, rel}`, оба обязательны (§19.4.19.3);
 - `dates` — [ПРЕДЛОЖЕНИЕ] `{published?, acquired?}`, тип `date`.
 
 ### 9.2. `custom_values[]`
@@ -261,17 +270,21 @@
 | Поле | Обяз. | Правило |
 |---|---|---|
 | `id` | да | ClaimID, UUIDv4 |
-| `target` | да | [ПРЕДЛОЖЕНИЕ] JSON Pointer относительно владельца `metadata`: `/title`, `/authors/0`, `/custom_values/<field_id>`; для источника — `/` |
+| `target` | да | Типизированный адресат (R-01, R-02), владелец — `metadata`, где лежит claim:<br>`{kind: "standard", field}` — стандартное поле §9.1;<br>`{kind: "standard_item", field: "authors", item_id}` — конкретный автор (R-03);<br>`{kind: "custom", field_id}` — значение `custom_values[]`;<br>`{kind: "self"}` — владелец целиком (для источника `origin.sources[]` — сам источник).<br>Строки JSON Pointer (`/title`, `/authors/0`) **не используются**. Полный реестр стандартных полей и `standard_item` — O-02 |
 | `relation` | да | `supports_selected` — подтверждает текущее значение и **не** дублирует его; `alternative` — значение `value` предложено, но не выбрано; `rejected` — отклонено пользователем |
-| `value` | для `alternative`/`rejected` | Значение в представлении типа поля |
+| `value` | для `alternative`/`rejected` | Значение в представлении типа **конкретного** поля (§8); при `supports_selected` отсутствует (R-04) |
 | `method` | да | `user_input`, `file_metadata`, `document_extraction`, `filename_inference`, `directory_inference`, `content_analysis`, `geometric_measurement`, `external_metadata`, `ai_inference`, `imported_metadata`, `unknown` (расширяемо) |
 | `evidence[]` | нет | Ссылки `{file_id?, sha256?, source_entry_id?, input_object_id?, source_id?, note?}` — без копирования объектов |
 | `handler` | нет | `{id, version}` анализатора |
 | `confidence` | нет | Decimal-строка `0..1`; не универсальная вероятность |
-| `review` | нет | `{state: confirmed\|corrected\|rejected, at}`; без имени, email, ОС пользователя (§19.4.12.6) |
+| `review` | нет | `{state: confirmed\|corrected\|rejected, at}`; без имени, email, ОС пользователя (§19.4.12.6). Допустимые сочетания с `relation` и `target.kind = self` **не утверждены** (O-01) |
 | `created_at` | да | Время утверждения |
 
+- `claims` — не второе хранилище выбранного значения: единственный его источник — стандартное поле или `custom_values[]` (R-04).
 - Предложения **последующего** анализа в ZIP не пишутся. Они хранятся в `index.sqlite: suggestions` и ревизию не меняют (ADR-0028 п. 3).
+- **Dismiss** (R-06) — локальное решение в `userdata.sqlite: suggestion_decisions`; ZIP и ревизия не меняются.
+- **Record rejection** — явная операция: claim `relation = rejected` с отклонённым значением, новая ревизия, `changes[].kind = claim_add`.
+- **Accept** записывает выбранное значение и применимые подтверждения одной фиксацией.
 - В ZIP попадают:
   - подтверждения;
   - предположения, сделанные при создании ассета (provenance);
@@ -296,11 +309,14 @@
   - у каждого вложения один владелец;
   - путь только внутри `extensions/<свой ExtensionID>/`;
   - вложения участвуют в полной проверке.
+- **Оболочка строгая** (R-09.9): допустимы только `schema_version`, `data`, `attachments`, `dependencies`. Свободный JSON плагина — только в `data`. Неизвестный ключ оболочки в контейнере 1.0 — ошибка структуры; данные более новой minor не удаляются ради схемы 1.0, а обрабатываются матрицей возможностей (R-09.10).
 - **`dependencies.state`:**
   - `none`, `declared` или `unknown`;
   - отсутствие объекта = `unknown`, а не `none` (§19.4.16.3);
-  - при `unknown` разрушительные операции над файлами требуют подтверждения.
+  - при `unknown` разрушительные операции над файлами и независимое копирование ограничиваются.
+- **Зависимости значений plugin-типов** (R-09.11) — та же тройка `none/declared/unknown`; конкретные зависимости — рядом с `custom_values[]` экземпляра. Единый формат с `attachments.dependencies` (имя `state`, состав `refs`) — **O-12**; в черновой схеме у `custom_values` поля зависимостей пока нет.
 - **Без обработчика** данные расширения сохраняются при записи. Если безопасно сохранить их нельзя — запись запрещена.
+- **Точность чисел** (R-09.8): неизвестный JSON (`data`, plugin-значения) не проходит через сериализатор, округляющий числа. Сохраняется исходная числовая лексема при цикле «чтение → правка постороннего поля → запись → чтение». Механизм выбирается спайком **S7**; до его положительного итога запись контейнеров с такими числами запрещена (чтение и экспорт разрешены).
 
 ## 11. `history` (§19.4.15)
 
@@ -319,8 +335,9 @@
   - `operation_id` совпадает с `pending_ops.op_id` (ADR-0006, ADR-0015).
   - Изменения внутри транзакции перечисляются в `changes[]`.
 - **Ревизия 1** содержит `asset_created` и `tool`. В `tool` пишутся только реально применимые версии, без фиктивных значений.
-- **[ПРЕДЛОЖЕНИЕ] Параметры операции** записываются в `details`, например `{"operation": "asset_copied", "details": {"source_asset_id": …, "source_revision": 4}}`.
-- **[ПРЕДЛОЖЕНИЕ] Словарь `operation`:** `asset_created`, `asset_copied{source_asset_id, source_revision}`, `files_changed`, `metadata_changed`, `groups_changed`, `previews_changed`, `provenance_changed`, `field_definitions_changed`, `extension_data_changed`, `format_migrated{from, to, steps[]}`, `history_compacted`, `session_committed`.
+- **[ПРЕДЛОЖЕНИЕ] Параметры операции** записываются в `details`.
+- **Независимая копия** (R-07, ADR-0036 п. 4): ревизия 1 — `asset_created` с `details = {"creation_kind": "independent_copy", "source_asset": {"asset_id": …, "revision": 12}}`. Эта запись не компактизируется; доступность исходного ZIP не требуется. Копирование файла ZIP AssetID и ревизию не меняет.
+- **[ПРЕДЛОЖЕНИЕ] Словарь `operation`:** `asset_created{creation_kind?: import|user|independent_copy, source_asset?}`, `files_changed`, `metadata_changed`, `groups_changed`, `previews_changed`, `provenance_changed`, `field_definitions_changed`, `extension_data_changed`, `format_migrated{from, to, steps[]}`, `history_compacted`, `session_committed`.
 - **[ПРЕДЛОЖЕНИЕ] Словарь `changes[].kind`:** `file_add`, `file_remove`, `file_replace{old_sha256, new_sha256}`, `file_move{old_path}`, `metadata_set`, `group_*`, `preview_*`, `claim_*`.
 - Импорт готового ассета ревизию не меняет: запись идёт в журнал библиотеки, а не в ZIP.
 - **`compacted_ranges[]`** — непересекающиеся диапазоны `{from_revision, to_revision, summary}`.
@@ -328,18 +345,26 @@
   - Точная форма открыта (§19.4.15.8).
 - Ошибки и неудачные задания в историю не попадают.
 
+### 11.1. Независимая копия (R-07)
+
+- Новые UUIDv4 для FileID, GroupID, PreviewID, InputID, InputObjectID, SourceEntryID, SourceID, AttachmentID, ClaimID, OperationID. FieldID и ExtensionID сохраняются.
+- Все нормативные ссылки (`file_refs`, `previews`, `derived_from`, значения `file_ref`, `license.file_ref`, `claims.evidence`, `authors[].id`/`item_id`, ссылки `inputs`, зависимости вложений) переназначаются по отображению `old→new`. Результат проходит полный V1–V4 до регистрации.
+- Переносится текущее состояние: файлы, метаданные, группы, превью, применимое происхождение, безопасно переносимые расширения. Старые `history.entries` не переносятся.
+- **Отказ** вместо фальшивой истории, если `historical_files`/`derived_from` нельзя корректно представить (O-05, O-06), или если безопасное переназначение неизвестных расширений не доказано (O-07). Альтернатива — обычное копирование ZIP.
+- Байты полезных файлов не преобразуются, SHA-256 сохраняется. Источник не изменяется. Данные `userdata.sqlite` (аннотации, коллекции, решения Dismiss) не наследуются.
+
 ## 12. Проверка (§19.4.7)
 
 | Уровень | Что проверяется |
 |---|---|
 | V1 | ZIP-структура, один `manifest.json`, синтаксис JSON, лимиты разбора |
 | V2 | JSON Schema версии `format.version` |
-| V3 | Семантика: уникальность ID и путей; разрешимость активных ссылок (`file_refs`, `previews`, `file_ref`, `primary_id`, `custom_values.field_id`); нет циклов групп; связи `inputs`↔`origin`; `historical_files` ∩ `files` = ∅; история: ревизия 1, последняя запись = `asset.revision`, диапазоны не пересекаются |
+| V3 | Семантика: уникальность ID и путей; разрешимость активных ссылок (`file_refs`, `previews`, `file_ref`, `primary_id`, `custom_values.field_id`); нет циклов групп; связи `inputs`↔`origin`; `historical_files` ∩ `files` = ∅; история: ревизия 1, последняя запись = `asset.revision`, диапазоны не пересекаются. **Claims (R-05):** target разрешим (стандартное поле допустимо для scope, FieldID определён и допускает scope, `item_id` существует в `authors[]`); `value` соответствует типу и единице поля; для `supports_selected` выбранное значение существует. **Теги:** предупреждение о совпадающем поисковом ключе. **Типы:** `custom_values` соответствует определению для базовых типов |
 | V4 | Физика: каждая запись `files`/`attachments` существует; размер, CRC и SHA-256 совпадают; нет незарегистрированных записей в `content/`, `generated/`, `extensions/` у новых контейнеров |
 
 - Режимы `quick`, `selective` и `full` выбирают объём V4 и не зависят от разбиения V1–V4.
 - **Перед фиксацией** созданного или изменённого ZIP — полный V1–V4 по всем зарегистрированным потокам (ADR-0035 п. 7).
-- Результат проверки указывает фактически пройденный уровень.
+- Результат проверки указывает фактически пройденные уровни **раздельно**: V1/V2 (структура), V3 (семантика), V4 (физика) и **plugin-validation** (R-09.7). Без установленного обработчика семантика plugin-типов и расширений не объявляется проверенной.
 - Коды ошибок:
   - `invalid` → `Errc::corrupt_data`;
   - `unsupported` → `Errc::unsupported`;
@@ -368,9 +393,12 @@
 
 - Точные regex ExtensionID и FieldID.
 - Исчерпывающая схема `origin`/`inputs` и raw filenames.
-- Контракт `claims.target` и привязка к стандартным полям.
+- Реестр стандартных полей `claims.target` по scope и реестр `standard_item` (O-02); модель `review` (O-01).
 - Единицы и `constraints`.
-- `attachments.dependencies`.
+- Единый контракт `dependencies` для `attachments` и `custom_values` (O-12).
+- Regex, длина и версионирование PluginID/TypeKey/TypeID (O-11).
+- Механизм точного сохранения чисел — спайк S7 (O-13).
+- Тип `extensions.schema_version`, `generation`, правила `modified_at` (O-14).
 - Обязательные события истории и форма `compacted_ranges`.
 - Лимиты разбора и ресурсов (после измерений).
 - Матрица поддерживаемых старых версий.

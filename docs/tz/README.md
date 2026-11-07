@@ -12,6 +12,12 @@
   - `asset-format-consensus-v0.2.md` — рабочая консолидация формата (= §19.4);
   - `asset-format-working-spec-v0.1.md`, `asset_format_working_v0.1_bundle.zip` — **устаревший** пакет до MF-01…MF-12, не эталон (§19.6.2);
   - `catalog_TZ_v1.8_consistency_audit_2026-11-06.zip` — пакет сверки (все версии, скрипт аудита).
+- Уточнения формата 1.0 после v1.8 (не изменять):
+  - `R01-R09_approved_handoff.md` — свод 44 утверждённых пунктов R-01…R-09 (извлечён из пакета байт в байт);
+  - `3D_am_R01-R09_handoff_review_bundle_2026-11-06.zip` — исходный пакет передачи;
+  - `R01-R09_owner_decisions_2026-11-07.md` — решения владельца по шести вопросам отчёта 06.
+
+  Сверка — отчёт `docs/reports/06_R01-R09_vs_prepared.md`, решение — ADR-0036. В ТЗ уточнения войдут отдельной редакцией (v1.9) только по решению владельца.
 
 Файлы владельца (`description.txt`, черновики, материалы к v1.8) не изменять. Новые версии создаются только как новые файлы.
-Аудит эволюции: `../reports/01_TZ_evolution_loss_report.md`, `../reports/03_TZ_v1.3-1.5_vs_prepared.md`, `../reports/04_TZ_v1.7_vs_prepared.md`, `../reports/05_TZ_v1.8_format_vs_prepared.md`; сравнение версий — `tools/tz_audit/verdiff.py`.
+Аудит эволюции: `../reports/01_TZ_evolution_loss_report.md`, `../reports/03_TZ_v1.3-1.5_vs_prepared.md`, `../reports/04_TZ_v1.7_vs_prepared.md`, `../reports/05_TZ_v1.8_format_vs_prepared.md`, `../reports/06_R01-R09_vs_prepared.md`; сравнение версий — `tools/tz_audit/verdiff.py`.
