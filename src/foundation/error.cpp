@@ -19,6 +19,7 @@ std::string_view errc_name(Errc c) noexcept {
     case Errc::insufficient_space: return "am.insufficient_space";
     case Errc::read_only: return "am.read_only";
     case Errc::locked: return "am.locked";
+    case Errc::incomplete: return "am.incomplete";
   }
   return "am.unknown";
 }

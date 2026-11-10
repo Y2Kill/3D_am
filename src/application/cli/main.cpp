@@ -39,7 +39,7 @@ int usage() {
       "am " "— 3D/2D asset catalog (development build)\n"
       "usage:\n"
       "  am version\n"
-      "  am uuid [count]                       new UUIDv7 ids\n"
+      "  am uuid [--v4] [count]                new UUIDv7 ids (or UUIDv4 with --v4)\n"
       "  am probe <file>...                    content type (+ STL stats), read-only\n"
       "  am volumes <dir>                      multi-volume candidates among files in <dir>\n"
       "  am zip-path <root> <source-path>      asset-internal path mapping (ADR-0012)\n"
@@ -113,8 +113,10 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (verb == "uuid") {
-    int n = args.size() > 1 ? std::stoi(args[1]) : 1;
-    for (int i = 0; i < n; ++i) std::cout << am::Uuid::v7().to_string() << "\n";
+    const bool v4 = args.size() > 1 && args[1] == "--v4";
+    const std::size_t count_index = v4 ? 2 : 1;
+    int n = args.size() > count_index ? std::stoi(args[count_index]) : 1;
+    for (int i = 0; i < n; ++i) std::cout << (v4 ? am::Uuid::v4() : am::Uuid::v7()).to_string() << "\n";
     return 0;
   }
   if (verb == "probe" && args.size() > 1) return cmd_probe({args.begin() + 1, args.end()});

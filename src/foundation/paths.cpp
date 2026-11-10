@@ -20,8 +20,7 @@ std::vector<std::string> split(std::string_view s) {
   return parts;
 }
 
-// ASCII case folding is enough for collision detection on NTFS for the
-// overwhelming majority of names; non-ASCII bytes are compared as-is.
+// T-002: NFC + Unicode simple case folding (ADR-0035 p.8)
 std::string fold(std::string_view s) {
   std::string r(s);
   std::transform(r.begin(), r.end(), r.begin(),
@@ -103,7 +102,7 @@ std::string_view to_string(RenameReason r) {
     case RenameReason::invalid_chars: return "invalid_chars";
     case RenameReason::reserved_name: return "reserved_name";
     case RenameReason::collision: return "collision";
-    case RenameReason::unsafe_traversal: return "unsafe_traversal";
+    case RenameReason::encoding: return "encoding";
   }
   return "none";
 }
@@ -147,12 +146,12 @@ MappedPath ZipPathMapper::map(std::string_view source_path) {
   for (auto& c : split(norm)) {
     if (c == "." ) { continue; }
     if (c == "..") {  // zip-slip: never climb out of the input root
-      reason = RenameReason::unsafe_traversal;
+      if (reason == RenameReason::none) reason = RenameReason::invalid_chars;
       parts.emplace_back("__up__");
       continue;
     }
     if (c.size() == 2 && c[1] == ':') {  // "C:" drive prefix inside archive
-      reason = RenameReason::unsafe_traversal;
+      if (reason == RenameReason::none) reason = RenameReason::invalid_chars;
       continue;
     }
     if (sanitize_component(c) && reason == RenameReason::none) reason = RenameReason::invalid_chars;
@@ -187,9 +186,16 @@ MappedPath ZipPathMapper::map(std::string_view source_path) {
 
   std::string full = root_ + rel;
   if (!used_folded_.insert(fold(full)).second) {
-    auto [stem, ext] = split_ext(full);
-    for (int n = 2;; ++n) {
-      std::string candidate = stem + "~" + std::to_string(n) + ext;
+    auto [stem, ext] = split_ext(rel);
+    const std::size_t budget = kMaxZipPathBytes - root_.size() - tag.size() - ext.size();
+    if (stem.size() > budget) {
+      stem = truncate_utf8(stem, budget);
+      while (!stem.empty() && (stem.back() == '/' || stem.back() == ' ' || stem.back() == '.')) stem.pop_back();
+      reason = RenameReason::path_too_long;
+    }
+    for (std::uint64_t k = 0;; ++k) {
+      const auto suffix = k == 0 ? tag : "~" + hex8(fnv1a64(norm + '\x1f' + std::to_string(k)));
+      std::string candidate = root_ + stem + suffix + ext;
       if (used_folded_.insert(fold(candidate)).second) {
         full = std::move(candidate);
         break;

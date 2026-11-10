@@ -17,18 +17,20 @@ static_assert(static_cast<int>(Errc::resource_exhausted) == 11);
 static_assert(static_cast<int>(Errc::insufficient_space) == 12);
 static_assert(static_cast<int>(Errc::read_only) == 13);
 static_assert(static_cast<int>(Errc::locked) == 14);
+static_assert(static_cast<int>(Errc::incomplete) == 15);
 
 TEST(Error, CodeNamesAreUniqueAndStable) {
-  ::testing::Test::RecordProperty("req", "NFR-14.4.2");
+  ::testing::Test::RecordProperty("req", "NFR-14.4.2|ADR-0035");
   std::set<std::string> names;
-  for (int i = 0; i <= static_cast<int>(Errc::locked); ++i) {
+  for (int i = 0; i <= static_cast<int>(Errc::incomplete); ++i) {
     auto n = std::string(am::errc_name(static_cast<Errc>(i)));
     EXPECT_EQ(n.rfind("am.", 0), 0u) << n;
     EXPECT_NE(n, "am.unknown") << "code " << i << " has no name";
     names.insert(n);
   }
-  EXPECT_EQ(names.size(), static_cast<size_t>(Errc::locked) + 1);
+  EXPECT_EQ(names.size(), static_cast<size_t>(Errc::incomplete) + 1);
   EXPECT_EQ(am::errc_name(Errc::insufficient_space), "am.insufficient_space");
+  EXPECT_EQ(am::errc_name(Errc::incomplete), "am.incomplete");
 }
 
 TEST(Error, LegacyMakeKeepsContext) {

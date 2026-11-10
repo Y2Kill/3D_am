@@ -10,14 +10,14 @@ TEST(Paths, NormalizeSource) {
 }
 
 TEST(Paths, MirrorsCleanPaths) {
-  ZipPathMapper m("content/i001");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3");
   auto r = m.map(R"(Raven\standard version\arm1(version1).stl)");
-  EXPECT_EQ(r.zip_path, "content/i001/Raven/standard version/arm1(version1).stl");
+  EXPECT_EQ(r.zip_path, "content/debdf916-b47c-41db-b4fd-7aa9511396f3/Raven/standard version/arm1(version1).stl");
   EXPECT_EQ(r.reason, RenameReason::none);
 }
 
 TEST(Paths, SameNameDifferentFoldersStayDistinct) {  // ТЗ 4.3.1: scales must not overwrite each other
-  ZipPathMapper m("content/i001/");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
   auto a = m.map("28mm/body.stl");
   auto b = m.map("75mm/body.stl");
   EXPECT_NE(a.zip_path, b.zip_path);
@@ -25,39 +25,119 @@ TEST(Paths, SameNameDifferentFoldersStayDistinct) {  // ТЗ 4.3.1: scales must 
 }
 
 TEST(Paths, CaseInsensitiveCollision) {
-  ZipPathMapper m("content/i001/");
-  auto a = m.map("Part.STL");
-  auto b = m.map("part.stl");
+  RecordProperty("req", "ADR-0035");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
+  auto a = m.map("part.stl");
+  auto b = m.map("Part.stl");
+  auto c = m.map("Part.stl");
+  auto d = m.map("Part.stl");
   EXPECT_EQ(a.reason, RenameReason::none);
   EXPECT_EQ(b.reason, RenameReason::collision);
-  EXPECT_EQ(b.zip_path, "content/i001/part~2.stl");
+  EXPECT_EQ(b.zip_path, m.root() + "Part~f1ba0561.stl");
+  EXPECT_EQ(c.zip_path, m.root() + "Part~b4a5b811.stl");
+  EXPECT_EQ(d.zip_path, m.root() + "Part~b4a5b2f8.stl");
+  EXPECT_EQ(c.reason, RenameReason::collision);
+  EXPECT_EQ(d.reason, RenameReason::collision);
+}
+
+TEST(Paths, CollisionHashUsesNormalizedSourcePath) {
+  RecordProperty("req", "ADR-0035");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
+  m.map("part.stl");
+  EXPECT_EQ(m.map("./Part.stl/").zip_path, m.root() + "Part~f1ba0561.stl");
 }
 
 TEST(Paths, TrailingSpaceAndInvalidChars) {
-  ZipPathMapper m("content/i001/");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
   auto r = m.map("STL Files for 3D Printing /a:b?.stl");  // trailing space dir exists in the collection
-  EXPECT_EQ(r.zip_path, "content/i001/STL Files for 3D Printing/a_b_.stl");
+  EXPECT_EQ(r.zip_path, "content/debdf916-b47c-41db-b4fd-7aa9511396f3/STL Files for 3D Printing/a_b_.stl");
   EXPECT_EQ(r.reason, RenameReason::invalid_chars);
 }
 
 TEST(Paths, ZipSlipIsNeutralised) {
-  ZipPathMapper m("content/i001/");
+  RecordProperty("req", "ADR-0035");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
   auto r = m.map("../../evil.dll");
-  EXPECT_EQ(r.reason, RenameReason::unsafe_traversal);
-  EXPECT_EQ(r.zip_path.rfind("content/i001/", 0), 0u);
+  EXPECT_EQ(r.reason, RenameReason::invalid_chars);
+  EXPECT_EQ(r.zip_path.rfind("content/debdf916-b47c-41db-b4fd-7aa9511396f3/", 0), 0u);
   EXPECT_EQ(r.zip_path.find(".."), std::string::npos);
+  EXPECT_EQ(r.zip_path, m.root() + "__up__/__up__/evil.dll");
+  auto drive = m.map("C:/x/a.stl");
+  EXPECT_EQ(drive.reason, RenameReason::invalid_chars);
+  EXPECT_EQ(drive.zip_path, m.root() + "x/a.stl");
+}
+
+TEST(Paths, RenameReasonStringsMatchFormatDictionary) {
+  RecordProperty("req", "ADR-0035");
+  EXPECT_EQ(to_string(RenameReason::none), "none");
+  EXPECT_EQ(to_string(RenameReason::path_too_long), "path_too_long");
+  EXPECT_EQ(to_string(RenameReason::invalid_chars), "invalid_chars");
+  EXPECT_EQ(to_string(RenameReason::encoding), "encoding");
+  EXPECT_EQ(to_string(RenameReason::collision), "collision");
+  EXPECT_EQ(to_string(RenameReason::reserved_name), "reserved_name");
+}
+
+TEST(Paths, FirstReasonSurvivesTraversalAndCollision) {
+  RecordProperty("req", "ADR-0035");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
+  EXPECT_EQ(m.map("CON/../a.stl").reason, RenameReason::reserved_name);
+  EXPECT_EQ(m.map("CON/../a.stl").reason, RenameReason::reserved_name);
+  EXPECT_EQ(m.map("CON/C:/b.stl").reason, RenameReason::reserved_name);
+  EXPECT_EQ(m.map("a?/CON.stl").reason, RenameReason::invalid_chars);
+  EXPECT_EQ(m.map("CON/" + std::string(200, 'x') + ".stl").reason, RenameReason::path_too_long);
+}
+
+TEST(Paths, CollisionAtByteLimitPreservesRootExtensionAndUtf8) {
+  RecordProperty("req", "ADR-0035");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
+  std::string name;
+  for (int i = 0; i < 75; ++i) name += "я";
+  name += "a.stl";
+  const auto first = m.map(name);
+  ASSERT_EQ(first.zip_path.size(), ZipPathMapper::kMaxZipPathBytes);
+  EXPECT_EQ(first.reason, RenameReason::none);
+  std::string prefix = m.root();
+  for (int i = 0; i < 71; ++i) prefix += "я";
+  const auto second = m.map(name);
+  const auto third = m.map(name);
+  for (const auto& r : {second, third}) {
+    EXPECT_LE(r.zip_path.size(), ZipPathMapper::kMaxZipPathBytes);
+    ASSERT_EQ(r.zip_path.size(), prefix.size() + 9 + 4);
+    EXPECT_EQ(r.zip_path.substr(0, prefix.size()), prefix);
+    EXPECT_EQ(r.zip_path[prefix.size()], '~');
+    EXPECT_EQ(r.zip_path.substr(r.zip_path.size() - 4), ".stl");
+    EXPECT_EQ(r.reason, RenameReason::path_too_long);
+  }
+  EXPECT_NE(second.zip_path, third.zip_path);
+}
+
+TEST(Paths, RepeatedLongPathStaysWithinByteLimit) {
+  RecordProperty("req", "ADR-0035");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
+  const auto source = std::string(200, 'x') + ".stl";
+  const auto first = m.map(source);
+  const auto second = m.map(source);
+  const auto third = m.map(source);
+  for (const auto& r : {first, second, third}) {
+    EXPECT_LE(r.zip_path.size(), ZipPathMapper::kMaxZipPathBytes);
+    EXPECT_EQ(r.zip_path.rfind(m.root(), 0), 0u);
+    EXPECT_EQ(r.zip_path.substr(r.zip_path.size() - 4), ".stl");
+    EXPECT_EQ(r.reason, RenameReason::path_too_long);
+  }
+  EXPECT_NE(first.zip_path, second.zip_path);
+  EXPECT_NE(second.zip_path, third.zip_path);
 }
 
 TEST(Paths, ReservedNames) {
   EXPECT_TRUE(is_reserved_windows_name("CON"));
   EXPECT_TRUE(is_reserved_windows_name("com1.txt"));
   EXPECT_FALSE(is_reserved_windows_name("console.stl"));
-  ZipPathMapper m("content/i001/");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
   EXPECT_EQ(m.map("nul.stl").reason, RenameReason::reserved_name);
 }
 
 TEST(Paths, LongPathIsShortenedKeepingExtensionAndUniqueness) {
-  ZipPathMapper m("content/i001/");
+  ZipPathMapper m("content/debdf916-b47c-41db-b4fd-7aa9511396f3/");
   std::string dir(150, 'd');
   auto a = m.map(dir + "/" + std::string(120, 'x') + "_A.stl");
   auto b = m.map(dir + "/" + std::string(120, 'x') + "_B.stl");

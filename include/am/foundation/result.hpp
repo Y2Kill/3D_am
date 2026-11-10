@@ -36,6 +36,7 @@ enum class Errc : std::uint16_t {
   insufficient_space = 12,  // not enough disk space for a safe transaction (ADR-0033)
   read_only = 13,           // library/medium opened read-only (ADR-0031)
   locked = 14,              // write owner is another process (ADR-0031)
+  incomplete = 15,          // import/validation finished with known gaps (ADR-0035 p.15)
 };
 
 // Stable machine name, e.g. "am.insufficient_space". Not localized.
