@@ -1,5 +1,6 @@
 #pragma once
-// UUIDv7 (RFC 9562) identifiers for assets, libraries, operations (ADR-0008).
+// UUIDv4 for IDs inside ZIP assets (ADR-0035 p.4); UUIDv7 for IDs outside ZIP
+// (libraries, jobs, snapshots). Both follow RFC 9562.
 
 #include <array>
 #include <chrono>
@@ -18,6 +19,9 @@ class Uuid {
   constexpr Uuid() = default;
   explicit constexpr Uuid(const Bytes& b) : bytes_(b) {}
 
+  // New random UUIDv4 with 122 random bits.
+  static Uuid v4();
+
   // New time-ordered UUIDv7. Monotonic within one process: ids created in the
   // same millisecond still sort in creation order.
   static Uuid v7();
@@ -25,6 +29,9 @@ class Uuid {
 
   // Accepts canonical 8-4-4-4-12 form, case-insensitive.
   static std::optional<Uuid> parse(std::string_view text);
+
+  // Accepts only lower-case canonical 8-4-4-4-12 form (manifest IDs).
+  static std::optional<Uuid> parse_canonical(std::string_view text);
 
   std::string to_string() const;   // lower-case canonical form, 36 chars
   int version() const { return bytes_[6] >> 4; }

@@ -23,11 +23,11 @@ std::filesystem::path native(const std::filesystem::path& p);
 // Does NOT resolve ".." — that is a policy decision of the mapper.
 std::string normalize_source_path(std::string_view original);
 
-enum class RenameReason { none, path_too_long, invalid_chars, reserved_name, collision, unsafe_traversal };
+enum class RenameReason { none, path_too_long, invalid_chars, encoding, collision, reserved_name };
 std::string_view to_string(RenameReason r);
 
 struct MappedPath {
-  std::string zip_path;                     // e.g. "content/i001/28mm/body.stl"
+  std::string zip_path;  // e.g. "content/debdf916-b47c-41db-b4fd-7aa9511396f3/28mm/body.stl"
   RenameReason reason = RenameReason::none; // none => zip path mirrors source exactly
 };
 
@@ -35,7 +35,7 @@ class ZipPathMapper {
  public:
   static constexpr std::size_t kMaxZipPathBytes = 200;
 
-  // root: "content/i001/" (must end with '/').
+  // root: "content/debdf916-b47c-41db-b4fd-7aa9511396f3/" (must end with '/').
   explicit ZipPathMapper(std::string root);
 
   // Maps one source path. Collisions are detected case-insensitively because
