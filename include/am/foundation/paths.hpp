@@ -12,6 +12,8 @@
 #include <string_view>
 #include <unordered_set>
 
+#include "am/foundation/result.hpp"
+
 namespace am::paths {
 
 // Windows: absolute paths get the \\?\ (or \\?\UNC\) prefix and backslashes.
@@ -34,9 +36,11 @@ struct MappedPath {
 class ZipPathMapper {
  public:
   static constexpr std::size_t kMaxZipPathBytes = 200;
+  static constexpr std::size_t kCollisionTagBytes = 9;
+  static constexpr std::size_t kMaxRootBytes = kMaxZipPathBytes - kCollisionTagBytes - 1;
 
-  // root: "content/debdf916-b47c-41db-b4fd-7aa9511396f3/" (must end with '/').
-  explicit ZipPathMapper(std::string root);
+  // Nonempty root, at most kMaxRootBytes including an appended trailing '/'.
+  static Result<ZipPathMapper> create(std::string root);
 
   // Maps one source path. Collisions are detected case-insensitively because
   // extracted assets must survive Windows filesystems.
@@ -45,6 +49,7 @@ class ZipPathMapper {
   const std::string& root() const { return root_; }
 
  private:
+  explicit ZipPathMapper(std::string root);
   std::string root_;
   std::unordered_set<std::string> used_folded_;
 };

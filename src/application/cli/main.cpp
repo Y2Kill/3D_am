@@ -122,8 +122,12 @@ int main(int argc, char** argv) {
   if (verb == "probe" && args.size() > 1) return cmd_probe({args.begin() + 1, args.end()});
   if (verb == "volumes" && args.size() == 2) return cmd_volumes(args[1]);
   if (verb == "zip-path" && args.size() == 3) {
-    am::paths::ZipPathMapper m(args[1]);
-    auto r = m.map(args[2]);
+    auto mapper = am::paths::ZipPathMapper::create(args[1]);
+    if (!mapper) {
+      std::cout << "error: " << am::to_log_string(mapper.error()) << "\n";
+      return 1;
+    }
+    auto r = mapper->map(args[2]);
     std::cout << r.zip_path << "  [" << am::paths::to_string(r.reason) << "]\n";
     return 0;
   }
