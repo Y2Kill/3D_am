@@ -21,12 +21,15 @@ add_executable(am_unit_tests
   unit/test_text_encoding.cpp
   unit/test_signature.cpp
   unit/test_paths.cpp
+  unit/test_unicode.cpp
   unit/test_exclusion.cpp
   unit/test_volumes.cpp
   unit/test_stl_probe.cpp
   unit/test_command_registry.cpp
   unit/test_plugin_abi.cpp)
 target_link_libraries(am_unit_tests PRIVATE am::application GTest::gtest_main)
+target_compile_definitions(am_unit_tests PRIVATE
+  AM_UNICODE_DATA_DIR="${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0")
 am_apply_defaults(am_unit_tests)
 gtest_discover_tests(am_unit_tests DISCOVERY_MODE PRE_TEST)
 
@@ -55,6 +58,12 @@ if(AM_PYTHON_TESTS)
     add_test(NAME arch_check
       COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/arch_check/arch_check.py
               --root ${PROJECT_SOURCE_DIR} --build-dir ${PROJECT_BINARY_DIR})
+
+    add_test(NAME unicode_tables_check
+      COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/unicode/gen_unicode_tables.py --check
+              --data-dir ${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0
+              --output ${PROJECT_SOURCE_DIR}/src/foundation/unicode_tables.inc)
+    set_tests_properties(unicode_tables_check PROPERTIES LABELS "req:ADR-0035")
 
     set(_am_schema_args --root ${PROJECT_SOURCE_DIR} --pylib ${AM_PYTHON_EXTRA_PATH})
     if(AM_REQUIRE_PYTHON_TESTS)

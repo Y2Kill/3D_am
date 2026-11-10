@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <new>
 #include <vector>
+
+#include "am/foundation/unicode.hpp"
 
 namespace am::paths {
 namespace {
@@ -20,12 +23,9 @@ std::vector<std::string> split(std::string_view s) {
   return parts;
 }
 
-// T-002: NFC + Unicode simple case folding (ADR-0035 p.8)
+// NFC + Unicode simple case folding for collision comparison (ADR-0035 p.8).
 std::string fold(std::string_view s) {
-  std::string r(s);
-  std::transform(r.begin(), r.end(), r.begin(),
-                 [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; });
-  return r;
+  return unicode::path_collision_key(s);
 }
 
 bool sanitize_component(std::string& c) {
@@ -64,6 +64,22 @@ std::pair<std::string, std::string> split_ext(const std::string& name) {
       (slash != std::string::npos && dot < slash + 2))
     return {name, {}};
   return {name.substr(0, dot), name.substr(dot)};
+}
+
+// create() guarantees room for the tag and at least one byte of stem.
+std::size_t stem_budget(std::size_t root_bytes, std::string& stem, std::string& ext) {
+  const auto available = ZipPathMapper::kMaxZipPathBytes - root_bytes - ZipPathMapper::kCollisionTagBytes;
+  if (ext.size() >= available) {
+    stem += ext;
+    ext.clear();
+  }
+  return available - ext.size();
+}
+
+void shorten_stem(std::string& stem, std::size_t budget) {
+  stem = truncate_utf8(stem, budget);
+  while (!stem.empty() && (stem.back() == '/' || stem.back() == ' ' || stem.back() == '.')) stem.pop_back();
+  if (stem.empty()) stem = "_";
 }
 
 }  // namespace
@@ -134,8 +150,22 @@ std::uint64_t fnv1a64(std::string_view s) {
   return h;
 }
 
-ZipPathMapper::ZipPathMapper(std::string root) : root_(std::move(root)) {
-  if (root_.empty() || root_.back() != '/') root_.push_back('/');
+ZipPathMapper::ZipPathMapper(std::string root) : root_(std::move(root)) {}
+
+Result<ZipPathMapper> ZipPathMapper::create(std::string root) {
+  try {
+    if (root.empty() || root.size() > kMaxRootBytes ||
+        (root.size() == kMaxRootBytes && root.back() != '/')) {
+      return Error::make(Errc::invalid_argument, "Invalid ZIP path root")
+          .in("foundation.paths").id("paths.invalid_root");
+    }
+    if (root.back() != '/') root.push_back('/');
+    return ZipPathMapper(std::move(root));
+  } catch (const std::bad_alloc&) {
+    Error error;
+    error.code = Errc::resource_exhausted;
+    return error;
+  }
 }
 
 MappedPath ZipPathMapper::map(std::string_view source_path) {
@@ -173,24 +203,23 @@ MappedPath ZipPathMapper::map(std::string_view source_path) {
   }
 
   const std::string tag = "~" + hex8(fnv1a64(norm));
-  if (root_.size() + rel.size() > kMaxZipPathBytes) {
+  if (rel.size() > kMaxZipPathBytes - root_.size()) {
     // Keep the file extension and as much of the leading path as fits, then a
     // stable hash of the ORIGINAL path so different long paths stay distinct.
     auto [stem, ext] = split_ext(parts.back());
-    const std::size_t budget = kMaxZipPathBytes - root_.size() - tag.size() - ext.size();
-    rel = truncate_utf8(rel.substr(0, rel.size() - parts.back().size()) + stem, budget);
-    while (!rel.empty() && (rel.back() == '/' || rel.back() == ' ' || rel.back() == '.')) rel.pop_back();
-    rel += tag + ext;
+    stem = rel.substr(0, rel.size() - parts.back().size()) + stem;
+    const auto budget = stem_budget(root_.size(), stem, ext);
+    shorten_stem(stem, budget);
+    rel = stem + tag + ext;
     reason = RenameReason::path_too_long;
   }
 
   std::string full = root_ + rel;
   if (!used_folded_.insert(fold(full)).second) {
     auto [stem, ext] = split_ext(rel);
-    const std::size_t budget = kMaxZipPathBytes - root_.size() - tag.size() - ext.size();
+    const auto budget = stem_budget(root_.size(), stem, ext);
     if (stem.size() > budget) {
-      stem = truncate_utf8(stem, budget);
-      while (!stem.empty() && (stem.back() == '/' || stem.back() == ' ' || stem.back() == '.')) stem.pop_back();
+      shorten_stem(stem, budget);
       reason = RenameReason::path_too_long;
     }
     for (std::uint64_t k = 0;; ++k) {
