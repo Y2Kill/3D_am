@@ -14,3 +14,4 @@ tools/inventory/** -text
 data/** -text
 docs/tz/R01-R09_*.md -text
 docs/tz/RC1_*.md -text
+third_party/** -text
