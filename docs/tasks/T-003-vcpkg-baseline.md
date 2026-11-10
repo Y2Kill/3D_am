@@ -241,3 +241,94 @@ zlib:x64-windows                          1.3.2#2
 
 1. Требуется решение управляющего: оформить правку `tools/arch_check/arch_check.py` отдельной задачей либо явно расширить область T-003 для корректной обработки служебных самоссылок CMake при сохранении проверки архитектурных зависимостей. Сейчас этот файл менять запрещено.
 2. После устранения сбоя `arch_check` необходимо завершить полный онлайн-прогон, затем удалить `build/win-cli` и `.cache/vcpkg-installed` и выполнить офлайн-повтор с `x-block-origin`. Кэши всех 18 пакетов готовы. До успешной проверки обоих прогонов T-003 не считать завершённой.
+
+### Доработка
+
+Дата: 2026-11-10. Выполнена по разделу «Решение управляющего по отчёту от 2026-11-10». **Актуальный итог: все критерии выполнены, онлайн-, офлайн- и минимальный прогоны — PASS, 63/63 каждый. Прежние блокеры и вопросы из отчёта выше сняты.** Статус T-003 в реестре — `review`.
+
+Ветка — `codex/T-003`. Коммит `72fb03c` (`Merge branch 'main' into codex/T-003`) перенёс исправление управляющего из `59807c0`. Предыдущий отчёт о повторе сохранён коммитом `6b43a73`. Завершающий коммит доработки — `Complete T-003 verification and document offline restore`. Rebase, push и слияние задачи в `main` не выполнялись.
+
+`tools/arch_check/arch_check.py` исполнителем не редактировался: `git diff main -- tools/arch_check/arch_check.py` пуст. Скрипты сборки, пресеты и манифест в рамках этой доработки не менялись. Статус задачи на время работы переключался в `in_progress`, при сдаче возвращён в `review`.
+
+**Выполнение критериев после доработки:**
+
+| № | Результат |
+|---|---|
+| 1 | Сохранён релизный тег `2026.10.16` и baseline `9eec002df1cd109f8f104cd966a763daf9751489`. Даты и подтверждение выбора приведены выше. |
+| 2 | `tools\build_cli.cmd` — PASS, 63/63. Число тестов совпадает с минимальным пресетом; `arch_check` теперь проходит. Это инкрементальный онлайн-прогон с уже установленными 18 пакетами; время прежнего наполнения кэшей сохранено выше. |
+| 3 | После фактического удаления `build/win-cli` и `.cache/vcpkg-installed` выполнен `tools\build_cli.cmd --offline` с `read` и `x-block-origin`: PASS, 63/63. Все 18 пакетов восстановлены из бинарного кэша; попыток загрузки нет. |
+| 4 | После офлайн-повтора выполнен `tools\build_min.cmd`: PASS, 63/63, без пропусков. |
+| 5 | Ниже указаны фактические строки прогонов, времена, версии восстановленных пакетов и размеры кэшей. Все этапы успешно выполнены по исходному пути с `!!!`. |
+| 6 | Все переменные скриптов остались локальными процессу (`setlocal`), кэши и временные файлы — внутри проекта. Глобальное окружение, пользовательские настройки и системные установки не менялись. |
+
+**Онлайн-прогон.** Команда `tools\build_cli.cmd`; полный вывод — `.cache/t003_online_rework.log`, измерение времени — `.cache/t003_online_rework_time.txt`:
+
+```text
+61/63 Test #61: arch_check ..........................................................   Passed    7.06 sec
+62/63 Test #62: schema_check ........................................................   Passed    0.88 sec
+63/63 Test #63: sql_check ...........................................................   Passed    0.16 sec
+100% tests passed, 0 tests failed out of 63
+Total Test time (real) =  11.46 sec
+ElapsedSeconds=21.191 ExitCode=0
+```
+
+**Офлайн-повтор.** Перед удалением проверены абсолютные пути обоих каталогов: они находятся внутри папки проекта; reparse points у целей и промежуточных каталогов до корня проекта отсутствуют. Использован `Remove-Item -LiteralPath ... -Recurse -Force` отдельно для каждого проверенного пути. Подтверждено отсутствие обоих каталогов перед запуском. Пути сохранены в `.cache/t003_offline_reset.log`. Кэши `.cache/vcpkg-bin` и `.cache/vcpkg-assets` сохранены.
+
+Команда `tools\build_cli.cmd --offline`; полный вывод — `.cache/t003_offline_rework.log`, время — `.cache/t003_offline_rework_time.txt`:
+
+```text
+VCPKG_BINARY_SOURCES=clear;files,D:\!!!_USER_FOLDERS\General_projects_folder\3D_am/.cache/vcpkg-bin,read
+X_VCPKG_ASSET_SOURCES=clear;x-azurl,file:///D:/!!!_USER_FOLDERS/General_projects_folder/3D_am/.cache/vcpkg-assets,,read;x-block-origin
+Restored 18 package(s) from D:\!!!_USER_FOLDERS\General_projects_folder\3D_am/.cache/vcpkg-bin in 1.4 s. Use --debug to see more details.
+All requested installations completed successfully in: 529 ms
+61/63 Test #61: arch_check ..........................................................   Passed    7.79 sec
+62/63 Test #62: schema_check ........................................................   Passed    0.91 sec
+63/63 Test #63: sql_check ...........................................................   Passed    0.17 sec
+100% tests passed, 0 tests failed out of 63
+Total Test time (real) =  12.74 sec
+ElapsedSeconds=49.779 ExitCode=0
+```
+
+В офлайн-логе отсутствуют попытки загрузки (`Trying to download`, `Asset cache miss`). После восстановления `GTest_DIR` снова указывает на `.cache/vcpkg-installed/x64-windows/share/gtest`, `VCPKG_APPLOCAL_DEPS=ON`: GoogleTest взят из vcpkg, копирование DLL сохранено.
+
+Дополнительно сверены имена, размеры и SHA-256 всех файлов бинарного и asset-кэшей до/после офлайн-прогона. Результат — `.cache/t003_offline_cache_check.txt`; снимки — `.cache/t003_cache_before_offline.json`, `.cache/t003_cache_after_offline.json`:
+
+```text
+Cache integrity: PASS; 45 files unchanged (paths, sizes, SHA256)
+```
+
+Первое вспомогательное сравнение PowerShell ошибочно восприняло десериализованный массив как один объект и выдало ложное сообщение о различии. Сравнение обоих JSON-снимков через Python подтвердило полное совпадение 45 файлов; повторная сборка для этого не потребовалась.
+
+**Минимальный прогон.** Команда `tools\build_min.cmd`, выполнена после офлайн-повтора; полный вывод — `.cache/t003_min_rework.log`, время — `.cache/t003_min_rework_time.txt`:
+
+```text
+61/63 Test #61: arch_check ..........................................................   Passed    1.77 sec
+62/63 Test #62: schema_check ........................................................   Passed    1.02 sec
+63/63 Test #63: sql_check ...........................................................   Passed    0.17 sec
+100% tests passed, 0 tests failed out of 63
+Total Test time (real) =   4.75 sec
+ElapsedSeconds=10.070 ExitCode=0
+```
+
+В `build/win-debug-min/CMakeCache.txt` отсутствуют записи `CMAKE_TOOLCHAIN_FILE` и `VCPKG_INSTALLED_DIR`; `GTest_DIR=GTest_DIR-NOTFOUND`, используется прежний FetchContent-кэш. Минимальная сборка работает без vcpkg. Все три прогона выполнены с доступом к существующему `.cache/pylib`, без ослабления проверок Python.
+
+| Прогон | Полное время, с | Итог |
+|---|---:|---|
+| Онлайн, инкрементальный | 21,191 | PASS, 63/63 |
+| Офлайн после удаления сборки и установки | 49,779 | PASS, 63/63 |
+| Минимальный | 10,070 | PASS, 63/63 |
+
+Время очистки каталогов и вычисления контрольных сумм в длительность офлайн-сборки не включено.
+
+**Пакеты после офлайн-восстановления.** Повторный `.cache\vcpkg\vcpkg.exe list --x-install-root=<project>/.cache/vcpkg-installed` сохранён в `.cache/t003_list_rework.txt`. Все 18 портов и перечисленные выше features сохранили версии: `cli11 2.7.2`, `efsw 1.7.2`, `fmt 12.2.0#1`, `gtest 1.18.0`, `json-schema-validator 2.4.0`, `minizip-ng 4.1.0`, `nlohmann-json 3.12.0#2`, `openssl 3.6.5#2`, `spdlog 1.17.0#1`, `sqlite3 3.53.4#2`, `tomlplusplus 3.4.0#1`, `vcpkg-cmake-config 2026-07-21`, `vcpkg-cmake-get-vars 2025-05-29`, `vcpkg-cmake 2025-08-07`, `vcpkg-tool-meson 1.9.0#10`, `xxhash 0.8.4`, `zlib-ng 2.3.3`, `zlib 1.3.2#2`.
+
+Итоговые размеры (логическая сумма длин файлов), `.cache/t003_sizes_rework.json`:
+
+| Каталог | Байты |
+|---|---:|
+| `.cache/vcpkg` | 4 149 333 751 |
+| `.cache/vcpkg-bin` | 60 593 079 |
+| `.cache/vcpkg-assets` | 566 397 843 |
+| `.cache/vcpkg-installed` | 264 098 721 |
+
+**Отклонения и вопросы:** отклонений от решения управляющего нет, открытых вопросов нет. `git diff --check` — без замечаний. Кэши и сборочные файлы не коммитятся, исходный незарегистрированный `3D_am_open_questions_e2472e9.zip` оставлен без изменений. Изменения исполнителя сохранены коммитами.
