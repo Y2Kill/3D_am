@@ -174,7 +174,7 @@ V3 для вложенности: родитель существует в то�
 | `size_bytes`, `crc32`, `modified_at_raw` | Как в источнике. Время без пояса хранится как есть, без выдуманного UTC (§19.4.11.1) |
 | `result` | `included`, `included_renamed`, `excluded`, `unavailable` (запись или том недоступны), `failed` (доступна, но чтение или декодирование завершилось ошибкой), `not_processed` (операция не выполнялась) |
 | `file_id` | Для `included*` у `entry_kind = file` — FileID, получивший содержимое. **Исторический:** не переписывается при замене или удалении файла (§19.4.13.2); V3 разрешает его через `files ∪ historical_files` |
-| `rename_reason` | Для `included_renamed`: `path_too_long`, `invalid_chars`, `encoding`, `collision`, `reserved_name` |
+| `rename_reason` | Для `included_renamed`: `path_too_long`, `invalid_chars`, `encoding`, `collision`, `reserved_name`. Компоненты `..` и префикс диска (`C:`) в исходном пути дают `invalid_chars`: путь обезвреживается, исходный сохраняется в `path` (решение управляющего 2026-11-10, T-001) |
 | `exclusion` | Для `excluded`: `{rule, rules_version, by: auto\|user\|profile}` |
 | `problem` | Для `unavailable`/`failed`: `{code, message_id}` (ADR-0032) |
 

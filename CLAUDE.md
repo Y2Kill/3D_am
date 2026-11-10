@@ -25,6 +25,7 @@
 - Ошибки — `am::Result<T>`, без исключений через границы модулей и C ABI плагинов.
 - Сборка и тесты — `tools\build_min.cmd` (MSVC 14.44, Ninja, GoogleTest через FetchContent в `.cache/`).
 - После изменения статуса сценария или требования обновить `docs/plan/coverage_matrix.md` и/или `docs/plan/acceptance_matrix.md`; в тестах — `RecordProperty("req", "K-n|NFR-14.x.y|SC-n")`.
+- **Реализация (пауза снята владельцем 2026-11-10).** Исполнитель — Codex (VS Code, та же папка, правила — `AGENTS.md`); управляющий и проектировщик — Claude Code. Задачи, статусы и приёмка — `docs/tasks/README.md`. Пока задача `in_progress`, управляющий файлы не меняет; слияние веток `codex/T-NNN` в `main` — только после собственного прогона тестов.
 - Текущая веха и порядок работ — `docs/plan/roadmap.md`.
   - Этапы P0–P3 (ТЗ §19.1); текущий — P0.
   - Следующий шаг — M0: базовая линия vcpkg, CI Windows/Linux CLI (с `-DAM_REQUIRE_PYTHON_TESTS=ON`), спайки S1–S7.
