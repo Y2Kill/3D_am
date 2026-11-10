@@ -24,10 +24,6 @@
         "VCPKG_INSTALLED_DIR": "${sourceDir}/.cache/vcpkg-installed",
         "VCPKG_TARGET_TRIPLET": "x64-windows",
         "AM_WITH_CONTAINER": "ON"
-      },
-      "environment": {
-        "VCPKG_BINARY_SOURCES": "clear;files,${sourceDir}/.cache/vcpkg-bin,readwrite",
-        "X_VCPKG_ASSET_SOURCES": "clear;x-azurl,file:///${sourceDir}/.cache/vcpkg-assets,,readwrite"
       }
     },
     {
