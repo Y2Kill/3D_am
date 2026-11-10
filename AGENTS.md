@@ -37,7 +37,7 @@
 
 ## Сборка и тесты
 
-- `tools\build_min.cmd` — MSVC 14.44 + Ninja, GoogleTest в `.cache/`. Включает юнит-тесты, `arch_check`, `schema_check`, `sql_check`.
+- `tools\build_min.cmd` — MSVC 14.44 + Ninja, GoogleTest в `.cache/`. Включает юнит-тесты, `arch_check`, `schema_check`, `sql_check`. `schema_check` читает модуль `jsonschema` из `.cache/pylib`: песочнице нужен доступ на чтение к этой папке, иначе тест падает с `AttributeError`.
 - Стиль C++: C++20, `/W4 /permissive- /utf-8`, без предупреждений в новом коде; исходники UTF-8 без BOM.
 
 ## С чего начать чтение
