@@ -3,7 +3,7 @@
   "name": "am",
   "version-semver": "0.1.0",
   "description": "Catalog and manager for 3D/2D resources (see docs/research/libraries.md)",
-  "builtin-baseline": "TODO-M0-pin-vcpkg-registry-commit",
+  "builtin-baseline": "9eec002df1cd109f8f104cd966a763daf9751489",
   "dependencies": [
     "nlohmann-json",
     "tomlplusplus",
