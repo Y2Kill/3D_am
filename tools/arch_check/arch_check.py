@@ -90,6 +90,11 @@ def check_cmake_graph(build_dir):
         raise RuntimeError("no am_* targets found in graphviz output (format changed?)")
     edges = {}
     for a, b in re.findall(r'"(node\d+)"\s*->\s*"(node\d+)"', text):
+        # A self-edge is not a dependency between targets: CMake cannot link a
+        # target to itself. It appears when a POST_BUILD command refers to
+        # $<TARGET_FILE:self>, e.g. vcpkg's z-applocal DLL copy step.
+        if labels[a] == labels[b]:
+            continue
         edges.setdefault(labels[a], set()).add(labels[b])
 
     errors = []
