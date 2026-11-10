@@ -35,7 +35,13 @@ tools\build_min.cmd
 cmake --preset win-debug-min && cmake --build --preset win-debug-min && ctest --preset win-debug-min
 ```
 
-Минимальная сборка включает тесты `arch_check` (проверка уровней ADR-0024), `schema_check` (черновая JSON Schema манифеста, ADR-0036/0037) и `sql_check` (SQL-контракты, точный `uint64` в `index.sql`, ADR-0037); нужен Python 3, для `schema_check` — модуль `jsonschema` (ищется также в `.cache/pylib`). Без модуля тест **проваливается**; явный локальный отказ — `-DAM_ALLOW_PYTHON_SKIP=ON` (тест получает SKIP); в CI `-DAM_REQUIRE_PYTHON_TESTS=ON` делает отсутствие ошибкой конфигурации. Конфигурации ТЗ §12.6.6 с vcpkg (`win-cli`, `win-debug`, `win-release`, `win-full-ai`, `linux-cli`) станут доступны после фиксации `builtin-baseline` vcpkg (задача M0, см. roadmap).
+Минимальная сборка включает тесты `arch_check` (проверка уровней ADR-0024), `schema_check` (черновая JSON Schema манифеста, ADR-0036/0037) и `sql_check` (SQL-контракты, точный `uint64` в `index.sql`, ADR-0037); нужен Python 3, для `schema_check` — модуль `jsonschema` (ищется также в `.cache/pylib`). Без модуля тест **проваливается**; явный локальный отказ — `-DAM_ALLOW_PYTHON_SKIP=ON` (тест получает SKIP); в CI `-DAM_REQUIRE_PYTHON_TESTS=ON` делает отсутствие ошибкой конфигурации. Сборка с зависимостями vcpkg (пресет `win-cli`, baseline — релиз vcpkg `2026.10.16`):
+
+```bash
+tools\build_cli.cmd
+```
+
+Скрипт ожидает клон vcpkg в `.cache/vcpkg` на теге `2026.10.16` (`bootstrap-vcpkg.bat -disableMetrics`) и держит загрузки, бинарный и asset-кэш в `.cache/`. Ключ `--offline` собирает только из кэшей проекта: загрузки из сети запрещены (`x-block-origin`). Пресеты на основе `vcpkg` запускайте **только через скрипт**: сами пресеты кэши не задают, и без скрипта vcpkg положит кэш в профиль пользователя. Пресеты `win-debug`, `win-release`, `win-full-ai`, `linux-cli` ещё не проверялись.
 
 ## CLI (диагностика, этап M0)
 

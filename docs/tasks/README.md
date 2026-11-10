@@ -35,8 +35,8 @@
 | ID | Задача | Статус | Зависит от | Веха |
 |---|---|---|---|---|
 | [T-001](T-001-foundation-adr0035.md) | Foundation по ADR-0035: `Uuid::v4`, `Errc::incomplete`, пути `content/<uuid>/`, причины переименования и суффикс коллизии по формату | done | — | M1, шаг 0 |
-| [T-002](T-002-unicode-foundation.md) | Unicode в foundation: NFC и simple case folding (Unicode 17.0.0, данные UCD в репозитории); коллизии путей по ADR-0035 п. 8; защита бюджета длины пути от переполнения | ready (после T-003) | загрузка UCD разрешена 2026-11-10 | M1, шаг 0 |
-| [T-003](T-003-vcpkg-baseline.md) | Базовая линия vcpkg: клон реестра в `.cache/vcpkg`, `builtin-baseline`, сборка `win-cli`, офлайн-повтор с `x-block-origin` | review | загрузка разрешена 2026-11-10 | M0 |
+| [T-002](T-002-unicode-foundation.md) | Unicode в foundation: NFC и simple case folding (Unicode 17.0.0, данные UCD в репозитории); коллизии путей по ADR-0035 п. 8; защита бюджета длины пути от переполнения | ready — **брать следующей** | загрузка UCD разрешена 2026-11-10 | M1, шаг 0 |
+| [T-003](T-003-vcpkg-baseline.md) | Базовая линия vcpkg: клон реестра в `.cache/vcpkg`, `builtin-baseline`, сборка `win-cli`, офлайн-повтор с `x-block-origin` | done | загрузка разрешена 2026-11-10 | M0 |
 | T-004 | Спайк S7: точные числа неизвестного JSON (каталог `spikes/s7/`) | draft | T-003 | M0 |
 | T-005 | Каркас CI: Windows + Linux, `-DAM_REQUIRE_PYTHON_TESTS=ON` (только конфигурация до появления удалённого репозитория) | draft | T-003; выбор GitHub/GitLab владельцем (отложен) | M0 |
 
