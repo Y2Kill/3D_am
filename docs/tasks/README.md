@@ -34,7 +34,7 @@
 
 | ID | Задача | Статус | Зависит от | Веха |
 |---|---|---|---|---|
-| [T-001](T-001-foundation-adr0035.md) | Foundation по ADR-0035: `Uuid::v4`, `Errc::incomplete`, пути `content/<uuid>/`, причины переименования и суффикс коллизии по формату | ready | — | M1, шаг 0 |
+| [T-001](T-001-foundation-adr0035.md) | Foundation по ADR-0035: `Uuid::v4`, `Errc::incomplete`, пути `content/<uuid>/`, причины переименования и суффикс коллизии по формату | review | — | M1, шаг 0 |
 | T-002 | Unicode в foundation: NFC и simple case folding по зафиксированной версии UCD; коллизии путей по ADR-0035 п. 8 | draft | разрешение на загрузку данных Unicode (UCD) | M1, шаг 0 |
 | T-003 | Базовая линия vcpkg: `builtin-baseline`, офлайн-повтор сборки | draft | разрешение на загрузку зависимостей | M0 |
 | T-004 | Спайк S7: точные числа неизвестного JSON (каталог `spikes/s7/`) | draft | T-003 | M0 |
