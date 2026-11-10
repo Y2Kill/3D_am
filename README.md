@@ -13,6 +13,7 @@
 | Сверка ТЗ v1.3–v1.5 с подготовкой (принято владельцем) | [docs/reports/03_TZ_v1.3-1.5_vs_prepared.md](docs/reports/03_TZ_v1.3-1.5_vs_prepared.md) |
 | Сверка ТЗ v1.7 (НФТ §14) и v1.8 (§19, формат ZIP) с подготовкой (приняты владельцем) | [docs/reports/04_TZ_v1.7_vs_prepared.md](docs/reports/04_TZ_v1.7_vs_prepared.md), [docs/reports/05_TZ_v1.8_format_vs_prepared.md](docs/reports/05_TZ_v1.8_format_vs_prepared.md) |
 | Сверка уточнений формата R-01…R-09 (приняты владельцем, ADR-0036) | [docs/reports/06_R01-R09_vs_prepared.md](docs/reports/06_R01-R09_vs_prepared.md) |
+| Проверка журнала решений v0.11, 108 принципов (приняты владельцем, ADR-0037) | [docs/reports/07_RC1_v0.11_vs_prepared.md](docs/reports/07_RC1_v0.11_vs_prepared.md) |
 | Формат ZIP-ассета 1.0 (рабочая формализация, не опубликован) | [docs/specifications/container_manifest_v1.md](docs/specifications/container_manifest_v1.md) |
 | Матрица покрытия сценариев | [docs/plan/coverage_matrix.md](docs/plan/coverage_matrix.md) |
 | Руководство разработчика | [docs/developer/README.md](docs/developer/README.md) |
@@ -34,7 +35,7 @@ tools\build_min.cmd
 cmake --preset win-debug-min && cmake --build --preset win-debug-min && ctest --preset win-debug-min
 ```
 
-Минимальная сборка включает тесты `arch_check` (проверка уровней ADR-0024) и `schema_check` (черновая JSON Schema манифеста, ADR-0036); нужен Python 3, для `schema_check` — модуль `jsonschema` (ищется также в `.cache/pylib`). Без модуля тест **проваливается**; явный локальный отказ — `-DAM_ALLOW_PYTHON_SKIP=ON` (тест получает SKIP); в CI `-DAM_REQUIRE_PYTHON_TESTS=ON` делает отсутствие ошибкой конфигурации. Конфигурации ТЗ §12.6.6 с vcpkg (`win-cli`, `win-debug`, `win-release`, `win-full-ai`, `linux-cli`) станут доступны после фиксации `builtin-baseline` vcpkg (задача M0, см. roadmap).
+Минимальная сборка включает тесты `arch_check` (проверка уровней ADR-0024), `schema_check` (черновая JSON Schema манифеста, ADR-0036/0037) и `sql_check` (SQL-контракты, точный `uint64` в `index.sql`, ADR-0037); нужен Python 3, для `schema_check` — модуль `jsonschema` (ищется также в `.cache/pylib`). Без модуля тест **проваливается**; явный локальный отказ — `-DAM_ALLOW_PYTHON_SKIP=ON` (тест получает SKIP); в CI `-DAM_REQUIRE_PYTHON_TESTS=ON` делает отсутствие ошибкой конфигурации. Конфигурации ТЗ §12.6.6 с vcpkg (`win-cli`, `win-debug`, `win-release`, `win-full-ai`, `linux-cli`) станут доступны после фиксации `builtin-baseline` vcpkg (задача M0, см. roadmap).
 
 ## CLI (диагностика, этап M0)
 

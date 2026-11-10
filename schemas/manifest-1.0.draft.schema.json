@@ -2,51 +2,64 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128:manifest:1.0:draft",
   "title": "AM asset manifest 1.0 (DRAFT, not normative)",
-  "description": "Working draft for TZ v1.8 section 19.4 (MF-01..MF-12), ADR-0035 and the R-01..R-09 refinements (ADR-0036). Not a published schema: format 1.0 is published only together with the V1-V4 validator and golden ZIP fixtures (TZ 19.6.4). Semantic rules (reference resolution, group cycles, history consistency) are V3 and not expressible here.",
+  "description": "Working draft for TZ v1.8 section 19.4 (MF-01..MF-12), ADR-0035, ADR-0036 (R-01..R-09) and ADR-0037 (decision log v0.11, 108 principles). Not a published schema: format 1.0 is published only together with a positive S7, the V1-V4 validator and golden ZIP fixtures. Semantic rules (reference resolution, history coverage, units) are V3 and not expressible here.",
   "type": "object",
   "required": ["format", "asset", "files", "history"],
   "additionalProperties": false,
   "properties": {
-    "format": { "$ref": "#/$defs/format" },
-    "asset": { "$ref": "#/$defs/asset" },
-    "origin": { "$ref": "#/$defs/origin" },
-    "inputs": { "type": "array", "items": { "$ref": "#/$defs/input" } },
-    "files": { "type": "array", "items": { "$ref": "#/$defs/file" } },
-    "historical_files": { "type": "array", "items": { "$ref": "#/$defs/historicalFile" } },
-    "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } },
-    "previews": { "$ref": "#/$defs/previews" },
-    "field_definitions": { "type": "array", "items": { "$ref": "#/$defs/fieldDefinition" } },
+    "format": {"$ref": "#/$defs/format"},
+    "asset": {"$ref": "#/$defs/asset"},
+    "origin": {"$ref": "#/$defs/origin"},
+    "inputs": {"type": "array", "items": {"$ref": "#/$defs/input"}},
+    "files": {"type": "array", "items": {"$ref": "#/$defs/file"}},
+    "historical_files": {"type": "array", "items": {"$ref": "#/$defs/historicalFile"}},
+    "groups": {"type": "array", "items": {"$ref": "#/$defs/group"}},
+    "previews": {"$ref": "#/$defs/previews"},
+    "field_definitions": {"type": "array", "items": {"$ref": "#/$defs/fieldDefinition"}},
     "extensions": {
       "type": "object",
-      "propertyNames": { "$ref": "#/$defs/extensionId" },
-      "additionalProperties": { "$ref": "#/$defs/extension" }
+      "propertyNames": {"$ref": "#/$defs/extensionId"},
+      "additionalProperties": {"$ref": "#/$defs/extension"}
     },
-    "history": { "$ref": "#/$defs/history" }
+    "history": {"$ref": "#/$defs/history"}
   },
   "$defs": {
-    "uuid4": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-    },
-    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "crc32": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "uuid4": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "crc32": {"type": "string", "pattern": "^[0-9a-f]{8}$"},
     "uint64": {
       "type": "string",
       "pattern": "^(0|[1-9][0-9]{0,19})$",
       "description": "Byte size as canonical decimal string; range 0..18446744073709551615 is checked by V3 (pattern only limits length)."
     },
-    "safeInt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-    "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
-    "timestamp": {
+    "int64String": {
       "type": "string",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      "pattern": "^-?(0|[1-9][0-9]{0,18})$",
+      "description": "Field value of type integer; int64 range is checked by V3."
     },
-    "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "decimalString": {
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+      "description": "Field value of type decimal: no exponent, trailing zeros preserved."
+    },
+    "safeInt": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "revision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"},
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "YYYY-MM-DD; calendar validity is a V3 check."
+    },
     "url": {
       "type": "string",
       "format": "uri",
       "description": "Absolute URI: scheme followed by a non-empty, whitespace-free remainder. Full RFC 3986 parsing is a V3 check.",
       "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+$"
+    },
+    "unit": {
+      "type": "string",
+      "minLength": 1,
+      "description": "UCUM code for known units; unknown units are kept verbatim (X-02). The UCUM engine is OPEN."
     },
     "storagePath": {
       "type": "string",
@@ -54,16 +67,49 @@
       "description": "200-byte UTF-8 limit, NFC/casefold collisions and ADR-0012 character rules are checked by V3.",
       "pattern": "^(?!.*(^|/)\\.\\.?(/|$))(?!.*//)(content|generated|extensions)/[^\\\\]*[^/\\\\]$"
     },
-    "extensionId": { "type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$" },
+    "pluginId": {
+      "type": "string",
+      "pattern": "^(?=.{3,96}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
+      "description": "O-11: lowercase ASCII reverse-domain, labels 1..63 without leading/trailing hyphen, 3..96 bytes. ExtensionID = PluginID."
+    },
+    "extensionId": {"$ref": "#/$defs/pluginId"},
     "fieldId": {
       "type": "string",
-      "pattern": "^(user:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|plugin:[a-z0-9]+(\\.[a-z0-9-]+)+:[a-z0-9_.-]+)$"
+      "pattern": "^(?:user:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*)$",
+      "description": "user:<UUIDv4> or plugin:<PluginID>:<FieldKey> (O-11); core: is reserved and therefore rejected."
     },
     "typeId": {
-      "description": "One of the 11 core field types, or a plugin TypeID plugin:<PluginID>:<TypeKey> (R-09.2). Exact regex, length and versioning are open (O-11); the plugin part reuses the FieldID pattern.",
+      "description": "One of the 11 core types or plugin:<PluginID>:<TypeKey> (O-11). TypeID and FieldID are different roles.",
       "anyOf": [
-        { "enum": ["string", "text", "integer", "decimal", "boolean", "date", "datetime", "enum", "multi_enum", "url", "file_ref"] },
-        { "type": "string", "pattern": "^plugin:[a-z0-9]+(\\.[a-z0-9-]+)+:[a-z0-9_.-]+$" }
+        {
+          "enum": [
+            "string",
+            "text",
+            "integer",
+            "decimal",
+            "boolean",
+            "date",
+            "datetime",
+            "enum",
+            "multi_enum",
+            "url",
+            "file_ref"
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$"
+        }
+      ]
+    },
+    "relKey": {
+      "description": "links[].rel (O-14 item 4, K-7): simple name or plugin:<PluginID>:<RelKey>. Open vocabulary, exact match.",
+      "anyOf": [
+        {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+        {
+          "type": "string",
+          "pattern": "^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$"
+        }
       ]
     },
     "rawName": {
@@ -71,77 +117,82 @@
       "required": ["base64"],
       "additionalProperties": false,
       "properties": {
-        "encoding_guess": { "type": "string" },
-        "base64": { "type": "string", "pattern": "^[A-Za-z0-9+/]*={0,2}$" }
+        "encoding_guess": {"type": "string", "minLength": 1},
+        "base64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+          "description": "Strict RFC 4648 Base64 without line breaks (X-01 item 9). Size limit is O-17."
+        }
       }
     },
     "problem": {
       "type": "object",
       "required": ["code"],
       "additionalProperties": false,
-      "properties": { "code": { "type": "string" }, "message_id": { "type": "string" } }
+      "properties": {"code": {"type": "string"}, "message_id": {"type": "string"}}
     },
-
     "format": {
       "type": "object",
       "required": ["id", "version"],
       "additionalProperties": false,
       "properties": {
-        "id": { "const": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128" },
+        "id": {"const": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128"},
         "version": {
           "type": "object",
           "required": ["major", "minor"],
           "additionalProperties": false,
-          "description": "Schema 1.0 accepts exactly 1.0. Newer minor versions go through the capability matrix (versioning.md), not through this schema (R-09.10).",
-          "properties": { "major": { "const": 1 }, "minor": { "const": 0 } }
+          "properties": {"major": {"const": 1}, "minor": {"const": 0}},
+          "description": "Schema 1.0 accepts exactly 1.0. Newer minor versions go through the capability matrix (versioning.md), not through this schema (R-09.10)."
         }
       }
     },
-
     "asset": {
       "type": "object",
       "required": ["id", "revision", "created_at", "modified_at"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/uuid4" },
-        "revision": { "$ref": "#/$defs/revision" },
-        "created_at": { "$ref": "#/$defs/timestamp" },
-        "modified_at": { "$ref": "#/$defs/timestamp" },
-        "metadata": { "$ref": "#/$defs/metadata" }
-      }
+        "id": {"$ref": "#/$defs/uuid4"},
+        "revision": {"$ref": "#/$defs/revision"},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "modified_at": {"$ref": "#/$defs/timestamp"},
+        "metadata": {"$ref": "#/$defs/metadata"}
+      },
+      "description": "V3 (O-14): created_at = timestamp of revision 1, modified_at = timestamp of the last history entry."
     },
-
     "origin": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } } }
+      "properties": {"sources": {"type": "array", "items": {"$ref": "#/$defs/source"}}}
     },
     "source": {
       "type": "object",
       "required": ["id", "kind"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/uuid4" },
-        "kind": { "type": "string", "minLength": 1 },
-        "name": { "type": "string" },
-        "url": { "type": "string" },
-        "published_at": { "$ref": "#/$defs/timestamp" },
-        "retrieved_at": { "$ref": "#/$defs/timestamp" },
-        "claims": { "type": "array", "items": { "$ref": "#/$defs/claim" } }
+        "id": {"$ref": "#/$defs/uuid4"},
+        "kind": {"type": "string", "minLength": 1},
+        "name": {"type": "string"},
+        "url": {"$ref": "#/$defs/url"},
+        "published_at": {"$ref": "#/$defs/timestamp"},
+        "retrieved_at": {"$ref": "#/$defs/timestamp"},
+        "claims": {"type": "array", "items": {"$ref": "#/$defs/sourceClaim"}}
       }
     },
-
     "input": {
       "type": "object",
-      "required": ["id", "imported_at", "mode", "objects", "entries"],
+      "required": ["id", "imported_at", "mode", "completeness", "objects", "entries"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/uuid4" },
-        "source_refs": { "type": "array", "items": { "$ref": "#/$defs/uuid4" }, "uniqueItems": true },
-        "imported_at": { "$ref": "#/$defs/timestamp" },
-        "mode": { "enum": ["strict", "partial"] },
-        "objects": { "type": "array", "items": { "$ref": "#/$defs/inputObject" } },
-        "entries": { "type": "array", "items": { "$ref": "#/$defs/inputEntry" } }
+        "id": {"$ref": "#/$defs/uuid4"},
+        "source_refs": {"type": "array", "items": {"$ref": "#/$defs/uuid4"}, "uniqueItems": true},
+        "imported_at": {"$ref": "#/$defs/timestamp"},
+        "mode": {"enum": ["strict", "partial"]},
+        "completeness": {
+          "enum": ["complete", "incomplete", "unknown"],
+          "description": "Actual completeness of the import act (X-01 item 2, K-5); independent of mode."
+        },
+        "objects": {"type": "array", "items": {"$ref": "#/$defs/inputObject"}},
+        "entries": {"type": "array", "items": {"$ref": "#/$defs/inputEntry"}}
       }
     },
     "inputObject": {
@@ -149,14 +200,18 @@
       "required": ["id", "kind", "name"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/uuid4" },
-        "kind": { "enum": ["file", "directory", "archive", "multivolume_archive"] },
-        "name": { "type": "string" },
-        "name_raw": { "$ref": "#/$defs/rawName" },
-        "relative_path": { "type": "string" },
-        "size_bytes": { "$ref": "#/$defs/uint64" },
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "container": { "type": "string" },
+        "id": {"$ref": "#/$defs/uuid4"},
+        "kind": {"enum": ["file", "directory", "archive", "multivolume_archive"]},
+        "name": {"type": "string"},
+        "name_raw": {"$ref": "#/$defs/rawName"},
+        "relative_path": {"type": "string"},
+        "size_bytes": {"$ref": "#/$defs/uint64"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "container": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Archive type detected by signature (zip, rar4, rar5, 7z, ...; ADR-0011). Only for archive kinds; not a nesting link (K-6)."
+        },
         "volumes": {
           "type": "array",
           "items": {
@@ -164,128 +219,164 @@
             "required": ["index", "name"],
             "additionalProperties": false,
             "properties": {
-              "index": { "$ref": "#/$defs/safeInt" },
-              "name": { "type": "string" },
-              "size_bytes": { "$ref": "#/$defs/uint64" },
-              "sha256": { "$ref": "#/$defs/sha256" },
-              "missing": { "type": "boolean" }
-            }
+              "index": {"$ref": "#/$defs/safeInt"},
+              "name": {"type": "string"},
+              "size_bytes": {"$ref": "#/$defs/uint64"},
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "missing": {"type": "boolean"}
+            },
+            "description": "index: unique, 0-based position of the volume in the set (X-01 item 4); uniqueness is V3."
           }
         },
-        "parent_object_id": { "$ref": "#/$defs/uuid4" },
-        "parent_entry_id": { "$ref": "#/$defs/uuid4" },
-        "nested_action": { "enum": ["extract", "preserve", "exclude"] },
-        "name_encoding": { "type": "string" }
-      }
+        "parent_object_id": {"$ref": "#/$defs/uuid4"},
+        "parent_entry_id": {"$ref": "#/$defs/uuid4"},
+        "nested_action": {"enum": ["extract", "preserve", "exclude"]},
+        "name_encoding": {
+          "type": "string",
+          "minLength": 1,
+          "description": "How entry names inside this object were decoded, e.g. utf-8(bit11), cp866(heuristic) (ADR-0012, K-6)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"enum": ["file", "directory"]}}, "required": ["kind"]},
+          "then": {"not": {"required": ["container"]}}
+        }
+      ]
     },
     "inputEntry": {
       "type": "object",
-      "required": ["id", "object_id", "path", "result"],
+      "required": ["id", "object_id", "entry_kind", "path", "result"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/uuid4" },
-        "object_id": { "$ref": "#/$defs/uuid4" },
-        "path": { "type": "string" },
-        "path_raw": { "$ref": "#/$defs/rawName" },
-        "size_bytes": { "$ref": "#/$defs/uint64" },
-        "crc32": { "$ref": "#/$defs/crc32" },
-        "modified_at_raw": { "type": "string" },
-        "result": { "enum": ["included", "included_renamed", "excluded", "unavailable", "failed", "not_processed"] },
-        "file_id": { "$ref": "#/$defs/uuid4" },
-        "rename_reason": { "enum": ["path_too_long", "invalid_chars", "encoding", "collision", "reserved_name"] },
+        "id": {"$ref": "#/$defs/uuid4"},
+        "object_id": {"$ref": "#/$defs/uuid4"},
+        "entry_kind": {"enum": ["file", "directory"], "description": "X-01 item 6, K-5."},
+        "path": {"type": "string"},
+        "path_raw": {"$ref": "#/$defs/rawName"},
+        "size_bytes": {"$ref": "#/$defs/uint64"},
+        "crc32": {"$ref": "#/$defs/crc32"},
+        "modified_at_raw": {"type": "string"},
+        "result": {"enum": ["included", "included_renamed", "excluded", "unavailable", "failed", "not_processed"]},
+        "file_id": {"$ref": "#/$defs/uuid4"},
+        "rename_reason": {"enum": ["path_too_long", "invalid_chars", "encoding", "collision", "reserved_name"]},
         "exclusion": {
           "type": "object",
           "required": ["rule", "by"],
           "additionalProperties": false,
           "properties": {
-            "rule": { "type": "string" },
-            "rules_version": { "$ref": "#/$defs/safeInt" },
-            "by": { "enum": ["auto", "user", "profile"] }
+            "rule": {"type": "string"},
+            "rules_version": {"$ref": "#/$defs/safeInt"},
+            "by": {"enum": ["auto", "user", "profile"]}
           }
         },
-        "problem": { "$ref": "#/$defs/problem" }
+        "problem": {"$ref": "#/$defs/problem"}
       },
       "allOf": [
-        { "if": { "properties": { "result": { "enum": ["included", "included_renamed"] } } },
-          "then": { "required": ["file_id"] } },
-        { "if": { "properties": { "result": { "const": "included_renamed" } } },
-          "then": { "required": ["rename_reason"] } },
-        { "if": { "properties": { "result": { "const": "excluded" } } },
-          "then": { "required": ["exclusion"] } },
-        { "if": { "properties": { "result": { "enum": ["unavailable", "failed"] } } },
-          "then": { "required": ["problem"] } }
+        {
+          "if": {
+            "properties": {"entry_kind": {"const": "file"}, "result": {"enum": ["included", "included_renamed"]}},
+            "required": ["entry_kind", "result"]
+          },
+          "then": {"required": ["file_id"]}
+        },
+        {
+          "if": {"properties": {"entry_kind": {"const": "directory"}}, "required": ["entry_kind"]},
+          "then": {"not": {"required": ["file_id"]}}
+        },
+        {
+          "if": {"properties": {"result": {"const": "included_renamed"}}, "required": ["result"]},
+          "then": {"required": ["rename_reason"]}
+        },
+        {
+          "if": {"properties": {"result": {"const": "excluded"}}, "required": ["result"]},
+          "then": {"required": ["exclusion"]}
+        },
+        {
+          "if": {"properties": {"result": {"enum": ["unavailable", "failed"]}}, "required": ["result"]},
+          "then": {"required": ["problem"]}
+        }
       ]
     },
-
     "fileRefWithHash": {
       "type": "object",
       "required": ["file_id", "sha256"],
       "additionalProperties": false,
-      "properties": { "file_id": { "$ref": "#/$defs/uuid4" }, "sha256": { "$ref": "#/$defs/sha256" } }
+      "properties": {"file_id": {"$ref": "#/$defs/uuid4"}, "sha256": {"$ref": "#/$defs/sha256"}}
     },
     "file": {
       "type": "object",
       "required": ["id", "storage_path", "size_bytes", "sha256", "origin_kind"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/uuid4" },
-        "storage_path": { "$ref": "#/$defs/storagePath" },
-        "size_bytes": { "$ref": "#/$defs/uint64" },
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "origin_kind": { "enum": ["imported", "user_added", "generated"] },
+        "id": {"$ref": "#/$defs/uuid4"},
+        "storage_path": {"$ref": "#/$defs/storagePath"},
+        "size_bytes": {"$ref": "#/$defs/uint64"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "origin_kind": {"enum": ["imported", "user_added", "generated"]},
         "type": {
           "type": "object",
           "required": ["id"],
           "additionalProperties": false,
-          "properties": { "id": { "type": "string" }, "by": { "enum": ["signature", "extension", "user"] } }
+          "properties": {"id": {"type": "string"}, "by": {"enum": ["signature", "extension", "user"]}}
         },
-        "derived_from": { "type": "array", "items": { "$ref": "#/$defs/fileRefWithHash" } },
+        "derived_from": {"type": "array", "items": {"$ref": "#/$defs/fileRefWithHash"}},
         "generation": {
           "type": "object",
           "required": ["tool"],
           "additionalProperties": false,
           "properties": {
-            "tool": { "type": "string" },
-            "tool_version": { "type": "string" },
-            "params": { "type": "object" }
+            "tool": {"type": "string", "minLength": 1, "description": "Stable handler ID; grammar is OPEN (O-14)."},
+            "tool_version": {"type": "string"},
+            "params": {
+              "type": "object",
+              "description": "Persistent operation parameters; opaque numbers are covered by the exact-number guarantee (O-13)."
+            }
           }
         },
-        "metadata": { "$ref": "#/$defs/metadata" }
-      }
+        "metadata": {"$ref": "#/$defs/metadata"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"origin_kind": {"const": "generated"}}, "required": ["origin_kind"]},
+          "then": {"required": ["generation"]},
+          "else": {"not": {"required": ["generation"]}}
+        }
+      ],
+      "description": "O-14 item 5: generation is required for generated files and absent otherwise."
     },
     "historicalFile": {
       "type": "object",
       "required": ["id", "removed_at_revision"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/uuid4" },
-        "removed_at_revision": { "$ref": "#/$defs/revision" },
-        "last_known_sha256": { "$ref": "#/$defs/sha256" },
-        "last_known_size_bytes": { "$ref": "#/$defs/uint64" },
-        "last_known_storage_path": { "type": "string" }
+        "id": {"$ref": "#/$defs/uuid4"},
+        "removed_at_revision": {"$ref": "#/$defs/revision"},
+        "last_known_sha256": {"$ref": "#/$defs/sha256"},
+        "last_known_size_bytes": {"$ref": "#/$defs/uint64"},
+        "last_known_storage_path": {"type": "string"}
       }
     },
-
     "group": {
       "type": "object",
       "required": ["id", "name", "type"],
-      "description": "Readers treat a missing file_refs as []; writers always emit the array (ADR-0036 item 7).",
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/uuid4" },
-        "name": { "type": "string" },
-        "type": { "type": "string", "minLength": 1 },
-        "parent_id": { "$ref": "#/$defs/uuid4" },
-        "file_refs": { "type": "array", "items": { "$ref": "#/$defs/uuid4" }, "uniqueItems": true },
-        "metadata": { "$ref": "#/$defs/metadata" }
-      }
+        "id": {"$ref": "#/$defs/uuid4"},
+        "name": {"type": "string"},
+        "type": {"type": "string", "minLength": 1},
+        "parent_id": {"$ref": "#/$defs/uuid4"},
+        "file_refs": {"type": "array", "items": {"$ref": "#/$defs/uuid4"}, "uniqueItems": true},
+        "metadata": {"$ref": "#/$defs/metadata"}
+      },
+      "description": "Readers treat a missing file_refs as []; writers always emit the array (ADR-0036 item 7)."
     },
     "previews": {
       "type": "object",
       "required": ["items"],
       "additionalProperties": false,
       "properties": {
-        "primary_id": { "$ref": "#/$defs/uuid4" },
+        "primary_id": {"$ref": "#/$defs/uuid4"},
         "items": {
           "type": "array",
           "items": {
@@ -293,32 +384,32 @@
             "required": ["id", "file_id"],
             "additionalProperties": false,
             "properties": {
-              "id": { "$ref": "#/$defs/uuid4" },
-              "file_id": { "$ref": "#/$defs/uuid4" },
-              "group_refs": { "type": "array", "items": { "$ref": "#/$defs/uuid4" }, "uniqueItems": true }
+              "id": {"$ref": "#/$defs/uuid4"},
+              "file_id": {"$ref": "#/$defs/uuid4"},
+              "group_refs": {"type": "array", "items": {"$ref": "#/$defs/uuid4"}, "uniqueItems": true}
             }
           }
         }
       }
     },
-
     "fieldDefinition": {
       "type": "object",
       "required": ["id", "schema_revision", "name", "type", "scopes"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/fieldId" },
-        "schema_revision": { "$ref": "#/$defs/revision" },
-        "name": { "type": "string", "minLength": 1 },
-        "type": { "$ref": "#/$defs/typeId" },
-        "scopes": {
-          "type": "array", "minItems": 1, "uniqueItems": true,
-          "items": { "enum": ["asset", "group", "file"] }
+        "id": {"$ref": "#/$defs/fieldId"},
+        "schema_revision": {"$ref": "#/$defs/revision"},
+        "name": {"type": "string", "minLength": 1},
+        "type": {"$ref": "#/$defs/typeId"},
+        "scopes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["asset", "group", "file"]}},
+        "description": {"type": "string"},
+        "dimension": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Semantic dimension key (X-02 item 3); grammar and registry are OPEN."
         },
-        "description": { "type": "string" },
-        "dimension": { "type": "string" },
-        "unit": { "type": "string" },
-        "constraints": { "type": "object" },
+        "unit": {"$ref": "#/$defs/unit"},
+        "constraints": {"description": "Closed structure per core type (X-02 item 6); opaque JSON for plugin types."},
         "options": {
           "type": "array",
           "items": {
@@ -326,22 +417,159 @@
             "required": ["id", "label"],
             "additionalProperties": false,
             "properties": {
-              "id": { "type": "string", "minLength": 1 },
-              "label": { "type": "string" },
-              "deprecated": { "type": "boolean" }
+              "id": {"type": "string", "minLength": 1},
+              "label": {"type": "string"},
+              "deprecated": {"type": "boolean"}
             }
           }
         },
-        "default": {}
-      }
+        "default": {
+          "description": "Recommendation only; checked like a value by V3. Physical default form is OPEN (X-02 item 9)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "integer"}}, "required": ["type"]},
+          "then": {
+            "properties": {
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "minimum": {
+                    "type": "object",
+                    "required": ["value"],
+                    "additionalProperties": false,
+                    "properties": {"value": {"$ref": "#/$defs/int64String"}, "unit": {"$ref": "#/$defs/unit"}}
+                  },
+                  "maximum": {
+                    "type": "object",
+                    "required": ["value"],
+                    "additionalProperties": false,
+                    "properties": {"value": {"$ref": "#/$defs/int64String"}, "unit": {"$ref": "#/$defs/unit"}}
+                  }
+                },
+                "minProperties": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"type": {"const": "decimal"}}, "required": ["type"]},
+          "then": {
+            "properties": {
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "minimum": {
+                    "type": "object",
+                    "required": ["value"],
+                    "additionalProperties": false,
+                    "properties": {"value": {"$ref": "#/$defs/decimalString"}, "unit": {"$ref": "#/$defs/unit"}}
+                  },
+                  "maximum": {
+                    "type": "object",
+                    "required": ["value"],
+                    "additionalProperties": false,
+                    "properties": {"value": {"$ref": "#/$defs/decimalString"}, "unit": {"$ref": "#/$defs/unit"}}
+                  }
+                },
+                "minProperties": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"type": {"enum": ["string", "text"]}}, "required": ["type"]},
+          "then": {
+            "properties": {
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {"min_length": {"$ref": "#/$defs/safeInt"}, "max_length": {"$ref": "#/$defs/safeInt"}},
+                "minProperties": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"type": {"const": "date"}}, "required": ["type"]},
+          "then": {
+            "properties": {
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "minimum": {
+                    "type": "object",
+                    "required": ["value"],
+                    "additionalProperties": false,
+                    "properties": {"value": {"$ref": "#/$defs/date"}}
+                  },
+                  "maximum": {
+                    "type": "object",
+                    "required": ["value"],
+                    "additionalProperties": false,
+                    "properties": {"value": {"$ref": "#/$defs/date"}}
+                  }
+                },
+                "minProperties": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"type": {"const": "datetime"}}, "required": ["type"]},
+          "then": {
+            "properties": {
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "minimum": {
+                    "type": "object",
+                    "required": ["value"],
+                    "additionalProperties": false,
+                    "properties": {"value": {"$ref": "#/$defs/timestamp"}}
+                  },
+                  "maximum": {
+                    "type": "object",
+                    "required": ["value"],
+                    "additionalProperties": false,
+                    "properties": {"value": {"$ref": "#/$defs/timestamp"}}
+                  }
+                },
+                "minProperties": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"type": {"const": "multi_enum"}}, "required": ["type"]},
+          "then": {
+            "properties": {
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {"min_items": {"$ref": "#/$defs/safeInt"}, "max_items": {"$ref": "#/$defs/safeInt"}},
+                "minProperties": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"type": {"enum": ["boolean", "url", "file_ref", "enum"]}}, "required": ["type"]},
+          "then": {"not": {"required": ["constraints"]}}
+        }
+      ]
     },
-
     "metadata": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "title": { "type": "string" },
-        "description": { "type": "string" },
+        "title": {"type": "string"},
+        "description": {"type": "string"},
         "authors": {
           "type": "array",
           "items": {
@@ -349,39 +577,43 @@
             "required": ["name"],
             "additionalProperties": false,
             "properties": {
-              "id": { "$ref": "#/$defs/uuid4", "description": "Optional; required by V3 when a claim targets this author (R-03)." },
-              "name": { "type": "string" },
-              "role": { "type": "string" }
+              "id": {
+                "$ref": "#/$defs/uuid4",
+                "description": "Optional; required by V3 when a claim targets this author (R-03)."
+              },
+              "name": {"type": "string"},
+              "role": {"type": "string"}
             }
           }
         },
         "publisher": {
           "type": "object",
-          "description": "New contract refinement (ADR-0036 item 7): TZ v1.8 does not define the structure.",
           "required": ["name"],
           "additionalProperties": false,
-          "properties": {
-            "name": { "type": "string", "minLength": 1 },
-            "url": { "$ref": "#/$defs/url" }
-          }
+          "properties": {"name": {"type": "string", "minLength": 1}, "url": {"$ref": "#/$defs/url"}},
+          "description": "ADR-0036 item 7; unchanged by O-14 item 1."
         },
         "license": {
           "type": "object",
-          "minProperties": 1,
           "additionalProperties": false,
           "properties": {
-            "name": { "type": "string" },
-            "spdx": { "type": "string" },
-            "url": { "type": "string" },
-            "notice": { "type": "string" },
-            "file_ref": { "$ref": "#/$defs/uuid4" }
-          }
+            "name": {"type": "string", "minLength": 1},
+            "spdx": {
+              "type": "string",
+              "minLength": 1,
+              "description": "SPDX license expression; grammar is a V3 check (O-14 item 3)."
+            },
+            "url": {"$ref": "#/$defs/url"},
+            "notice": {"type": "string", "minLength": 1},
+            "file_ref": {"$ref": "#/$defs/uuid4"}
+          },
+          "minProperties": 1
         },
         "tags": {
           "type": "array",
-          "description": "Exact user spelling (R-08.1). Exact duplicates are invalid; case variants are allowed (search-key collisions are a V3 warning).",
           "uniqueItems": true,
-          "items": { "type": "string" }
+          "items": {"type": "string"},
+          "description": "Exact user spelling (R-08.1). Exact duplicates are invalid; case variants are allowed (search-key collisions are a V3 warning)."
         },
         "categories": {
           "type": "array",
@@ -389,7 +621,7 @@
             "type": "object",
             "required": ["path"],
             "additionalProperties": false,
-            "properties": { "path": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } }
+            "properties": {"path": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}}
           }
         },
         "links": {
@@ -398,13 +630,14 @@
             "type": "object",
             "required": ["url", "rel"],
             "additionalProperties": false,
-            "properties": { "url": { "$ref": "#/$defs/url" }, "rel": { "type": "string", "minLength": 1 } }
+            "properties": {"url": {"$ref": "#/$defs/url"}, "rel": {"$ref": "#/$defs/relKey"}}
           }
         },
         "dates": {
           "type": "object",
           "additionalProperties": false,
-          "properties": { "published": { "$ref": "#/$defs/date" }, "acquired": { "$ref": "#/$defs/date" } }
+          "properties": {"published": {"$ref": "#/$defs/date"}, "acquired": {"$ref": "#/$defs/date"}},
+          "description": "O-02 item 3: acquired = first acquisition of the described object, not addition to the library."
         },
         "custom_values": {
           "type": "array",
@@ -413,25 +646,27 @@
             "required": ["field_id", "value"],
             "additionalProperties": false,
             "properties": {
-              "field_id": { "$ref": "#/$defs/fieldId" },
+              "field_id": {"$ref": "#/$defs/fieldId"},
               "value": {},
-              "unit": { "type": "string" }
-            }
+              "unit": {"$ref": "#/$defs/unit"},
+              "dependencies": {"$ref": "#/$defs/dependencies"}
+            },
+            "description": "dependencies apply to plugin-typed values (O-12); unit is required by V3 for physical numeric fields (X-02 item 4)."
           }
         },
-        "claims": { "type": "array", "items": { "$ref": "#/$defs/claim" } }
-      }
+        "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}}
+      },
+      "description": "One set of standard fields for asset, group and file; no inheritance between levels (O-02 item 1)."
     },
-    "claim": {
+    "claimCore": {
       "type": "object",
       "required": ["id", "target", "relation", "method", "created_at"],
-      "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/uuid4" },
-        "target": { "$ref": "#/$defs/claimTarget" },
-        "relation": { "enum": ["supports_selected", "alternative", "rejected"] },
+        "id": {"$ref": "#/$defs/uuid4"},
+        "target": {},
+        "relation": {"enum": ["supports_selected", "alternative", "rejected"]},
         "value": {},
-        "method": { "type": "string", "minLength": 1 },
+        "method": {"type": "string", "minLength": 1},
         "evidence": {
           "type": "array",
           "items": {
@@ -439,12 +674,12 @@
             "additionalProperties": false,
             "minProperties": 1,
             "properties": {
-              "file_id": { "$ref": "#/$defs/uuid4" },
-              "sha256": { "$ref": "#/$defs/sha256" },
-              "source_entry_id": { "$ref": "#/$defs/uuid4" },
-              "input_object_id": { "$ref": "#/$defs/uuid4" },
-              "source_id": { "$ref": "#/$defs/uuid4" },
-              "note": { "type": "string" }
+              "file_id": {"$ref": "#/$defs/uuid4"},
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "source_entry_id": {"$ref": "#/$defs/uuid4"},
+              "input_object_id": {"$ref": "#/$defs/uuid4"},
+              "source_id": {"$ref": "#/$defs/uuid4"},
+              "note": {"type": "string"}
             }
           }
         },
@@ -452,63 +687,361 @@
           "type": "object",
           "required": ["id"],
           "additionalProperties": false,
-          "properties": { "id": { "type": "string" }, "version": { "type": "string" } }
+          "properties": {"id": {"type": "string"}, "version": {"type": "string"}}
         },
-        "confidence": { "type": "string", "pattern": "^(0(\\.[0-9]+)?|1(\\.0+)?)$" },
+        "confidence": {"type": "string", "pattern": "^(0(\\.[0-9]+)?|1(\\.0+)?)$"},
         "review": {
           "type": "object",
-          "required": ["state", "at"],
+          "required": ["at"],
           "additionalProperties": false,
-          "properties": {
-            "state": { "enum": ["confirmed", "corrected", "rejected"] },
-            "at": { "$ref": "#/$defs/timestamp" }
-          }
+          "properties": {"at": {"$ref": "#/$defs/timestamp"}},
+          "description": "Fact and time of an explicit user review (O-01); there is no state."
         },
-        "created_at": { "$ref": "#/$defs/timestamp" }
+        "created_at": {"$ref": "#/$defs/timestamp"}
       },
       "allOf": [
-        { "if": { "properties": { "relation": { "enum": ["alternative", "rejected"] } } },
-          "then": { "required": ["value"] } },
-        { "if": { "properties": { "relation": { "const": "supports_selected" } } },
-          "then": { "not": { "required": ["value"] } } }
-      ]
+        {
+          "if": {"properties": {"relation": {"enum": ["alternative", "rejected"]}}, "required": ["relation"]},
+          "then": {"required": ["value"]}
+        },
+        {
+          "if": {"properties": {"relation": {"const": "supports_selected"}}, "required": ["relation"]},
+          "then": {"not": {"required": ["value"]}}
+        },
+        {
+          "if": {"properties": {"relation": {"const": "rejected"}}, "required": ["relation"]},
+          "then": {"required": ["review"]}
+        },
+        {
+          "if": {
+            "properties": {"target": {"properties": {"kind": {"const": "self"}}, "required": ["kind"]}},
+            "required": ["target"]
+          },
+          "then": {"properties": {"relation": {"const": "supports_selected"}}}
+        }
+      ],
+      "description": "Shared claim rules (O-01). Wrappers claim/sourceClaim add the target registry and close the object."
     },
-
-    "claimTarget": {
-      "description": "Typed claim target (R-01..R-03). The owner is the metadata object that holds the claim. Resolution of fields, FieldIDs and author item IDs is V3 (R-05). The full standard-field registry per scope is open (O-02).",
-      "oneOf": [
+    "claim": {
+      "$ref": "#/$defs/claimCore",
+      "properties": {"target": {"$ref": "#/$defs/claimTarget"}},
+      "unevaluatedProperties": false,
+      "allOf": [
         {
-          "type": "object", "required": ["kind", "field"], "additionalProperties": false,
-          "properties": {
-            "kind": { "const": "standard" },
-            "field": { "enum": ["title", "description", "authors", "publisher", "license", "tags", "categories", "links", "dates"] }
-          }
+          "if": {
+            "properties": {"target": {"properties": {"kind": {"const": "standard_item"}}, "required": ["kind"]}},
+            "required": ["target"]
+          },
+          "then": {"properties": {"relation": {"const": "supports_selected"}}}
         },
         {
-          "type": "object", "required": ["kind", "field", "item_id"], "additionalProperties": false,
-          "properties": {
-            "kind": { "const": "standard_item" },
-            "field": { "const": "authors" },
-            "item_id": { "$ref": "#/$defs/uuid4" }
-          }
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "title"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"type": "string"}}}
         },
         {
-          "type": "object", "required": ["kind", "field_id"], "additionalProperties": false,
-          "properties": { "kind": { "const": "custom" }, "field_id": { "$ref": "#/$defs/fieldId" } }
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "description"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"type": "string"}}}
         },
         {
-          "type": "object", "required": ["kind"], "additionalProperties": false,
-          "properties": { "kind": { "const": "self" } }
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "authors"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/metadata/properties/authors"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "publisher"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/metadata/properties/publisher"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "license"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/metadata/properties/license"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "tags"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/metadata/properties/tags"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "categories"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/metadata/properties/categories"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "links"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/metadata/properties/links"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "dates"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/metadata/properties/dates"}}}
         }
       ]
     },
-
-    "extension": {
+    "sourceClaim": {
+      "$ref": "#/$defs/claimCore",
+      "properties": {"target": {"$ref": "#/$defs/sourceClaimTarget"}},
+      "unevaluatedProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "kind"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"type": "string", "minLength": 1}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "name"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"type": "string"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "url"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/url"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "published_at"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/timestamp"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "properties": {"kind": {"const": "standard"}, "field": {"const": "retrieved_at"}},
+                "required": ["kind", "field"]
+              }
+            },
+            "required": ["target", "value"]
+          },
+          "then": {"properties": {"value": {"$ref": "#/$defs/timestamp"}}}
+        }
+      ],
+      "description": "Claims of origin.sources[] use their own registry (O-02 item 7): standard and self only."
+    },
+    "claimTarget": {
+      "description": "Typed claim target (R-01..R-03, O-02). standard addresses the whole field; standard_item addresses only authors[]. Resolution is V3.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "field"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"const": "standard"},
+            "field": {
+              "enum": [
+                "title",
+                "description",
+                "authors",
+                "publisher",
+                "license",
+                "tags",
+                "categories",
+                "links",
+                "dates"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "field", "item_id"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"const": "standard_item"},
+            "field": {"const": "authors"},
+            "item_id": {"$ref": "#/$defs/uuid4"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "field_id"],
+          "additionalProperties": false,
+          "properties": {"kind": {"const": "custom"}, "field_id": {"$ref": "#/$defs/fieldId"}}
+        },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {"kind": {"const": "self"}}
+        }
+      ]
+    },
+    "sourceClaimTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "field"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"const": "standard"},
+            "field": {"enum": ["kind", "name", "url", "published_at", "retrieved_at"]}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {"kind": {"const": "self"}}
+        }
+      ]
+    },
+    "dependencyRef": {
+      "description": "Typed in-asset reference (O-12 item 4).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "file_id"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"const": "file"},
+            "file_id": {"$ref": "#/$defs/uuid4"},
+            "sha256": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "group_id"],
+          "additionalProperties": false,
+          "properties": {"kind": {"const": "group"}, "group_id": {"$ref": "#/$defs/uuid4"}}
+        },
+        {
+          "type": "object",
+          "required": ["kind", "owner_scope", "owner_id", "field_id"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"const": "field_value"},
+            "owner_scope": {"enum": ["asset", "group", "file"]},
+            "owner_id": {"$ref": "#/$defs/uuid4"},
+            "field_id": {"$ref": "#/$defs/fieldId"}
+          }
+        }
+      ]
+    },
+    "dependencies": {
       "type": "object",
+      "required": ["state"],
       "additionalProperties": false,
       "properties": {
-        "schema_version": { "type": "string" },
-        "data": {},
+        "state": {"enum": ["none", "declared", "unknown"]},
+        "refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/dependencyRef"}}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "none"}}, "required": ["state"]},
+          "then": {"properties": {"refs": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"state": {"const": "declared"}}, "required": ["state"]},
+          "then": {"required": ["refs"], "properties": {"refs": {"minItems": 1}}}
+        }
+      ],
+      "description": "O-12: one form for extensions and plugin-typed custom values; missing object = unknown. Writers sort refs (K-9), readers accept any order."
+    },
+    "extension": {
+      "type": "object",
+      "required": ["schema_version"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version of the extension's data contract (O-14 item 7); not a number, not SemVer."
+        },
+        "data": {"description": "Opaque plugin JSON; exact-number guarantee applies (O-13)."},
         "attachments": {
           "type": "array",
           "items": {
@@ -516,86 +1049,98 @@
             "required": ["id", "path", "size_bytes", "sha256"],
             "additionalProperties": false,
             "properties": {
-              "id": { "$ref": "#/$defs/uuid4" },
-              "path": { "type": "string", "pattern": "^extensions/" },
-              "size_bytes": { "$ref": "#/$defs/uint64" },
-              "sha256": { "$ref": "#/$defs/sha256" }
+              "id": {"$ref": "#/$defs/uuid4"},
+              "path": {"type": "string", "pattern": "^extensions/"},
+              "size_bytes": {"$ref": "#/$defs/uint64"},
+              "sha256": {"$ref": "#/$defs/sha256"}
             }
           }
         },
-        "dependencies": {
-          "type": "object",
-          "required": ["state"],
-          "additionalProperties": false,
-          "properties": {
-            "state": { "enum": ["none", "declared", "unknown"] },
-            "refs": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "minProperties": 1,
-                "properties": {
-                  "file_id": { "$ref": "#/$defs/uuid4" },
-                  "sha256": { "$ref": "#/$defs/sha256" },
-                  "group_id": { "$ref": "#/$defs/uuid4" }
-                }
-              }
-            }
-          }
-        }
+        "dependencies": {"$ref": "#/$defs/dependencies"}
       }
     },
-
+    "compactedRangeSummary": {
+      "type": "object",
+      "required": ["revision_count"],
+      "additionalProperties": false,
+      "properties": {
+        "revision_count": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "operation_counts": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "asset_created",
+              "files_changed",
+              "metadata_changed",
+              "groups_changed",
+              "previews_changed",
+              "provenance_changed",
+              "field_definitions_changed",
+              "extension_data_changed",
+              "format_migrated",
+              "history_compacted",
+              "session_committed"
+            ]
+          },
+          "additionalProperties": {"$ref": "#/$defs/safeInt"}
+        }
+      },
+      "description": "O-18 item 5: revision_count = to - from + 1; operation_counts sum = revision_count (V3)."
+    },
     "history": {
       "type": "object",
       "required": ["entries"],
       "additionalProperties": false,
       "properties": {
-        "entries": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/revisionRecord" } },
+        "entries": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/revisionRecord"}},
         "compacted_ranges": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["from_revision", "to_revision"],
+            "required": ["from_revision", "to_revision", "summary"],
             "additionalProperties": false,
             "properties": {
-              "from_revision": { "$ref": "#/$defs/revision" },
-              "to_revision": { "$ref": "#/$defs/revision" },
-              "summary": { "type": "object" }
+              "from_revision": {"$ref": "#/$defs/revision"},
+              "to_revision": {"$ref": "#/$defs/revision"},
+              "summary": {"$ref": "#/$defs/compactedRangeSummary"}
             }
           }
         }
-      }
+      },
+      "description": "O-18: revisions 1..asset.revision covered exactly once; revision 1 and the last are separate entries (V3)."
     },
     "revisionRecord": {
       "type": "object",
       "required": ["revision", "operation_id", "timestamp", "operation"],
       "additionalProperties": false,
       "properties": {
-        "revision": { "$ref": "#/$defs/revision" },
-        "operation_id": { "$ref": "#/$defs/uuid4" },
-        "timestamp": { "$ref": "#/$defs/timestamp" },
-        "operation": { "type": "string", "minLength": 1 },
-        "details": { "type": "object" },
+        "revision": {"$ref": "#/$defs/revision"},
+        "operation_id": {"$ref": "#/$defs/uuid4"},
+        "timestamp": {"$ref": "#/$defs/timestamp"},
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Base vocabulary in SPEC 11 (O-18 item 4); other names are preserved as opaque."
+        },
+        "details": {"type": "object", "description": "Opaque operation parameters; exact-number guarantee applies."},
         "tool": {
           "type": "object",
           "required": ["application_version"],
           "additionalProperties": false,
           "properties": {
-            "application_version": { "type": "string" },
+            "application_version": {"type": "string"},
             "profile": {
               "type": "object",
               "required": ["id"],
               "additionalProperties": false,
               "properties": {
-                "id": { "type": "string" },
-                "version": { "$ref": "#/$defs/safeInt" },
-                "sha256": { "$ref": "#/$defs/sha256" }
+                "id": {"type": "string"},
+                "version": {"$ref": "#/$defs/safeInt"},
+                "sha256": {"$ref": "#/$defs/sha256"}
               }
             },
-            "handlers": { "type": "object", "additionalProperties": { "type": "string" } },
-            "exclusion_rules_version": { "$ref": "#/$defs/safeInt" }
+            "handlers": {"type": "object", "additionalProperties": {"type": "string"}},
+            "exclusion_rules_version": {"$ref": "#/$defs/safeInt"}
           }
         },
         "changes": {
@@ -604,7 +1149,8 @@
             "type": "object",
             "required": ["kind"],
             "additionalProperties": true,
-            "properties": { "kind": { "type": "string" }, "target": { "type": "string" } }
+            "properties": {"kind": {"type": "string"}, "target": {"type": "string"}},
+            "description": "changes[].kind vocabulary is OPEN (O-18); extra keys are opaque."
           }
         }
       }

@@ -1,6 +1,12 @@
 -- index.sqlite — ПЕРЕСТРАИВАЕМЫЙ индекс библиотеки (ADR-0007).
 -- Можно удалить в любой момент: `am library rebuild` восстановит его из ZIP-ассетов.
 -- Поля следуют манифесту формата 1.0 (ADR-0035, docs/specifications/container_manifest_v1.md).
+--
+-- Размеры uint64 (O-16, ADR-0037 п. 10): канонический десятичный TEXT COLLATE BINARY с CHECK
+-- (только цифры, без ведущих нулей, не длиннее 20, не больше 18446744073709551615).
+-- NULL = неизвестно, '0' = известный ноль. Порядок и сравнение — по (length(x), x);
+-- CAST, SUM(), TOTAL() и double запрещены: точные суммы считаются в C++ с контролем переполнения.
+-- Перестроение индекса при смене схемы не меняет ZIP и его ревизию.
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA user_version = 1;
@@ -13,7 +19,10 @@ CREATE TABLE assets (
   revision        INTEGER NOT NULL,
   rel_path        TEXT NOT NULL UNIQUE,           -- assets/xx/<uuid>.zip  или trash/<uuid>.zip
   in_trash        INTEGER NOT NULL DEFAULT 0,
-  zip_size        INTEGER NOT NULL,
+  zip_size        TEXT COLLATE BINARY NOT NULL    -- размер ZIP на ФС, uint64 (O-16)
+                  CHECK (typeof(zip_size) = 'text' AND length(zip_size) BETWEEN 1 AND 20 AND zip_size NOT GLOB '*[^0-9]*'
+                         AND (zip_size = '0' OR substr(zip_size, 1, 1) <> '0')
+                         AND (length(zip_size) < 20 OR zip_size <= '18446744073709551615')),
   zip_mtime_ns    INTEGER NOT NULL,               -- быстрая сверка изменений (ТЗ 4.9.2)
   manifest_sha256 TEXT NOT NULL,
   format_major    INTEGER NOT NULL,
@@ -22,33 +31,38 @@ CREATE TABLE assets (
   description     TEXT,
   created_at      TEXT NOT NULL,
   modified_at     TEXT NOT NULL,
-  incomplete      INTEGER NOT NULL DEFAULT 0,
+  incomplete      INTEGER NOT NULL DEFAULT 0,     -- производный: 1, если есть Input с completeness IN ('incomplete','unknown') (X-01, K-2)
   health          TEXT NOT NULL DEFAULT 'ok',     -- ok | warn | corrupt | unsupported | missing
-  health_detail   TEXT,
+  health_detail   TEXT,                           -- диагностики, например content_bytes_overflow (K-3)
   primary_preview TEXT,                           -- FileID файла previews.primary_id
   file_count      INTEGER NOT NULL DEFAULT 0,
-  content_bytes   INTEGER NOT NULL DEFAULT 0,
+  content_bytes   TEXT COLLATE BINARY             -- сумма files[].size_bytes (K-3): считается в C++; NULL — сумма вне uint64 (+ диагностика) или неизвестна
+                  CHECK (content_bytes IS NULL OR (typeof(content_bytes) = 'text' AND length(content_bytes) BETWEEN 1 AND 20
+                         AND content_bytes NOT GLOB '*[^0-9]*' AND (content_bytes = '0' OR substr(content_bytes, 1, 1) <> '0')
+                         AND (length(content_bytes) < 20 OR content_bytes <= '18446744073709551615'))),
   formats         TEXT,                           -- JSON массив id типов
   manifest_json   TEXT NOT NULL                   -- полная копия для запросов json_extract
 );
 CREATE INDEX assets_title ON assets(title COLLATE NOCASE);
 CREATE INDEX assets_created ON assets(created_at);
 
--- Текущие файлы: только files[] манифеста (§19.4.4). Размеры в манифесте — строки uint64,
--- здесь INTEGER (int64 SQLite покрывает реальные размеры файлов).
+-- Текущие файлы: только files[] манифеста (§19.4.4). Размер — точная строка uint64 (O-16).
 CREATE TABLE files (
   asset_id     TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
   file_id      TEXT NOT NULL,                     -- FileID, UUIDv4
   storage_path TEXT NOT NULL,
   name         TEXT NOT NULL,                     -- basename storage_path (для поиска)
-  size         INTEGER NOT NULL,
+  size         TEXT COLLATE BINARY NOT NULL
+               CHECK (typeof(size) = 'text' AND length(size) BETWEEN 1 AND 20 AND size NOT GLOB '*[^0-9]*'
+                      AND (size = '0' OR substr(size, 1, 1) <> '0')
+                      AND (length(size) < 20 OR size <= '18446744073709551615')),
   sha256       TEXT NOT NULL,
   origin_kind  TEXT NOT NULL,                     -- imported | user_added | generated
   type_id      TEXT,
   PRIMARY KEY (asset_id, file_id)
 );
 CREATE INDEX files_sha ON files(sha256);
-CREATE INDEX files_name_size ON files(name COLLATE NOCASE, size);
+CREATE INDEX files_name_size ON files(name COLLATE NOCASE, length(size), size);
 
 -- История импорта: inputs[].entries[] (§19.4.3) — исходные имена, CRC и судьба каждой записи.
 -- file_id исторический и может указывать на удалённый файл.
@@ -59,14 +73,18 @@ CREATE TABLE input_entries (
   object_id  TEXT NOT NULL,
   src_path   TEXT NOT NULL,
   src_name   TEXT NOT NULL,                       -- basename исходного пути (для поиска)
-  size       INTEGER,
+  entry_kind TEXT NOT NULL,                       -- file | directory (X-01)
+  size       TEXT COLLATE BINARY                  -- NULL = размер неизвестен (O-16)
+             CHECK (size IS NULL OR (typeof(size) = 'text' AND length(size) BETWEEN 1 AND 20 AND size NOT GLOB '*[^0-9]*'
+                    AND (size = '0' OR substr(size, 1, 1) <> '0')
+                    AND (length(size) < 20 OR size <= '18446744073709551615'))),
   crc32      TEXT,
   result     TEXT NOT NULL,                       -- included | included_renamed | excluded | unavailable | failed | not_processed
   file_id    TEXT,
   PRIMARY KEY (asset_id, entry_id)
 );
-CREATE INDEX input_entries_name_size ON input_entries(src_name COLLATE NOCASE, size);
-CREATE INDEX input_entries_crc_size ON input_entries(crc32, size) WHERE crc32 IS NOT NULL;
+CREATE INDEX input_entries_name_size ON input_entries(src_name COLLATE NOCASE, length(size), size);
+CREATE INDEX input_entries_crc_size ON input_entries(crc32, length(size), size) WHERE crc32 IS NOT NULL;
 
 -- Входные объекты (архивы, тома, файлы) — «видели ли мы этот архив?» (ТЗ 6.3): inputs[].objects[]
 CREATE TABLE input_objects (
@@ -74,14 +92,17 @@ CREATE TABLE input_objects (
   object_id     TEXT NOT NULL,                    -- InputObjectID, UUIDv4
   input_id      TEXT NOT NULL,
   kind          TEXT NOT NULL,                    -- file | directory | archive | multivolume_archive
-  volume_index  INTEGER NOT NULL DEFAULT -1,      -- -1 = не том
+  volume_index  INTEGER NOT NULL DEFAULT -1,      -- -1 = не том; иначе volumes[].index (с 0, X-01)
   original_name TEXT NOT NULL,
-  size          INTEGER,
+  size          TEXT COLLATE BINARY               -- NULL = размер неизвестен (O-16)
+                CHECK (size IS NULL OR (typeof(size) = 'text' AND length(size) BETWEEN 1 AND 20 AND size NOT GLOB '*[^0-9]*'
+                       AND (size = '0' OR substr(size, 1, 1) <> '0')
+                       AND (length(size) < 20 OR size <= '18446744073709551615'))),
   sha256        TEXT,
   PRIMARY KEY (asset_id, object_id, volume_index)
 );
 CREATE INDEX input_objects_sha ON input_objects(sha256);
-CREATE INDEX input_objects_name_size ON input_objects(original_name COLLATE NOCASE, size);
+CREATE INDEX input_objects_name_size ON input_objects(original_name COLLATE NOCASE, length(size), size);
 
 CREATE TABLE sources (
   asset_id  TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,

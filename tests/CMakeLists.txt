@@ -70,6 +70,11 @@ if(AM_PYTHON_TESTS)
     endif()
     add_test(NAME schema_check
       COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/schema/schema_check.py ${_am_schema_args})
-    set_tests_properties(schema_check PROPERTIES SKIP_RETURN_CODE 77 LABELS "schema;req:ADR-0036")
+    set_tests_properties(schema_check PROPERTIES SKIP_RETURN_CODE 77 LABELS "schema;req:ADR-0036;req:ADR-0037")
+
+    # SQLite contracts (standard library only): exact uint64 TEXT in index.sql (ADR-0037 item 10).
+    add_test(NAME sql_check
+      COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/schema/sql_check.py --root ${PROJECT_SOURCE_DIR})
+    set_tests_properties(sql_check PROPERTIES LABELS "schema;req:ADR-0037")
   endif()
 endif()

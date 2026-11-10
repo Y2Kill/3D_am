@@ -118,7 +118,7 @@ CASES = [
      mutate(MINIMAL, lambda d: d.__setitem__("extensions", ext({"schema_version": "2",
                                                                "data": {"a": [1, {"b": None, "c": "x"}]}})))),
     ("S-15", "R-09.9", "unknown key in extension envelope", False,
-     mutate(MINIMAL, lambda d: d.__setitem__("extensions", ext({"data": {}, "cache": 1})))),
+     mutate(MINIMAL, lambda d: d.__setitem__("extensions", ext({"schema_version": "1", "data": {}, "cache": 1})))),
     ("S-16", "R-08.3", "exact duplicate tags", False,
      mutate(MINIMAL, lambda d: meta(d).__setitem__("tags", ["PETG", "PETG"]))),
     ("S-17", "R-08.3", "case-variant tags", True,
@@ -146,6 +146,250 @@ CASES = [
      mutate(MINIMAL, lambda d: d.__setitem__("groups", [{"id": AUTHOR, "name": "Components", "type": "part_set",
                                                          "file_refs": []}]))),
 ]
+
+# ---- ADR-0037 cases (decision log v0.11 blocks, answers K-1..K-10) ----
+FILE1 = "1f3403d0-93c1-4919-8ba3-ed78100b7b1f"
+SHA = "a" * 64
+OBJ = "60327ee9-427b-4b88-9dea-13965f61da6c"
+
+
+def src_claim(target, **extra):
+    return {"id": "0b6f3c8e-2a51-4d7e-9c3a-5e1f7b2d4a60", "target": target, "relation": "supports_selected",
+            "method": "directory_inference", "created_at": "2026-11-06T10:15:03.120Z", **extra}
+
+
+def with_source(claims):
+    return lambda d: d.__setitem__("origin", {"sources": [{"id": AUTHOR, "kind": "website", "claims": claims}]})
+
+
+def with_ext(**env):
+    return lambda d: d.__setitem__("extensions", ext(env))
+
+
+def deps(state, refs=None):
+    dep = {"state": state}
+    if refs is not None:
+        dep["refs"] = refs
+    return with_ext(schema_version="1", data={}, dependencies=dep)
+
+
+def with_input(completeness="complete", obj_extra=None, entry=None, drop=None):
+    def fn(d):
+        o = {"id": OBJ, "kind": "archive", "name": "a.zip"}
+        o.update(obj_extra or {})
+        e = {"id": "e6d33bf6-4fc6-4d96-9d67-e55213718bfd", "object_id": OBJ, "entry_kind": "file",
+             "path": "a.stl", "result": "excluded", "exclusion": {"rule": "r", "by": "auto"}}
+        if entry is not None:
+            e = entry
+        inp = {"id": "debdf916-b47c-41db-b4fd-7aa9511396f3", "imported_at": "2026-11-06T10:15:03.120Z",
+               "mode": "strict", "completeness": completeness, "objects": [o], "entries": [e]}
+        if drop:
+            inp.pop(drop)
+        d["inputs"] = [inp]
+    return fn
+
+
+def gen_file(origin_kind, with_generation):
+    f = {"id": FILE1, "storage_path": "generated/p.png", "size_bytes": "1", "sha256": SHA, "origin_kind": origin_kind}
+    if with_generation:
+        f["generation"] = {"tool": "am.preview.mesh", "params": {"w": 1024}}
+    return lambda d: d.__setitem__("files", [f])
+
+
+def fdef_c(type_, constraints, field_id="user:" + UUID):
+    return lambda d: d.__setitem__("field_definitions", [{"id": field_id, "schema_revision": 1, "name": "n",
+                                                          "type": type_, "scopes": ["asset"],
+                                                          "constraints": constraints}])
+
+
+def ext_named(name):
+    return lambda d: d.__setitem__("extensions", {name: {"schema_version": "1", "data": {}}})
+
+
+def history_with_range(summary):
+    def fn(d):
+        d["asset"]["revision"] = 4
+        h = d["history"]
+        last = dict(h["entries"][0], revision=4, operation="metadata_changed",
+                    operation_id="550e8400-e29b-41d4-a716-446655440004")
+        h["entries"].append(last)
+        rng = {"from_revision": 2, "to_revision": 3}
+        if summary is not None:
+            rng["summary"] = summary
+        h["compacted_ranges"] = [rng]
+    return fn
+
+
+PUB = {"name": "Example Publishing", "url": "https://example.com"}
+NEW_CASES = [
+    # O-01: review without state; relation/value/review/self matrix
+    ("O01-1", "O-01", "alternative with review {at}", True,
+     mutate(MINIMAL, lambda d: meta(d).update(title="T", claims=[claim({"kind": "standard", "field": "title"},
+            relation="alternative", value="Other", review={"at": "2026-11-10T10:00:00Z"})]))),
+    ("O01-2", "O-01", "review.state is no longer allowed", False,
+     mutate(MINIMAL, lambda d: meta(d).update(title="T", claims=[claim({"kind": "standard", "field": "title"},
+            review={"state": "confirmed", "at": "2026-11-10T10:00:00Z"})]))),
+    ("O01-3", "O-01", "rejected without review", False,
+     mutate(MINIMAL, lambda d: meta(d).update(claims=[claim({"kind": "standard", "field": "title"},
+            relation="rejected", value="Wrong")]))),
+    ("O01-4", "O-01", "rejected with value and review", True,
+     mutate(MINIMAL, lambda d: meta(d).update(claims=[claim({"kind": "standard", "field": "title"},
+            relation="rejected", value="Wrong", review={"at": "2026-11-10T10:00:00Z"})]))),
+    ("O01-5", "O-01", "self with alternative", False,
+     mutate(MINIMAL, lambda d: meta(d).update(claims=[claim({"kind": "self"}, relation="alternative", value="x")]))),
+    ("O01-6", "O-01", "alternative without value", False,
+     mutate(MINIMAL, lambda d: meta(d).update(claims=[claim({"kind": "standard", "field": "title"},
+            relation="alternative")]))),
+    # O-02: registries, standard_item, value types, sources
+    ("O02-1", "O-02", "standard_item with alternative", False,
+     mutate(MINIMAL, lambda d: meta(d).update(authors=[{"id": AUTHOR, "name": "N"}], claims=[claim(
+         {"kind": "standard_item", "field": "authors", "item_id": AUTHOR}, relation="alternative",
+         value={"name": "M"})]))),
+    ("O02-2", "O-02", "nested path license.spdx as standard field", False,
+     mutate(MINIMAL, lambda d: meta(d).update(claims=[claim({"kind": "standard", "field": "license.spdx"})]))),
+    ("O02-3", "O-02", "source claim on standard url", True,
+     mutate(MINIMAL, with_source([src_claim({"kind": "standard", "field": "url"})]))),
+    ("O02-4", "O-02", "source claim on title (not in source registry)", False,
+     mutate(MINIMAL, with_source([src_claim({"kind": "standard", "field": "title"})]))),
+    ("O02-5", "O-02", "source claim with custom target", False,
+     mutate(MINIMAL, with_source([src_claim({"kind": "custom", "field_id": "user:" + UUID})]))),
+    ("O02-6", "O-02", "source claim with standard_item target", False,
+     mutate(MINIMAL, with_source([src_claim({"kind": "standard_item", "field": "authors", "item_id": AUTHOR})]))),
+    ("O02-7", "O-02", "alternative publisher as string", False,
+     mutate(MINIMAL, lambda d: meta(d).update(publisher=PUB, claims=[claim({"kind": "standard", "field": "publisher"},
+            relation="alternative", value="Other Publishing")]))),
+    ("O02-8", "O-02", "alternative publisher as object", True,
+     mutate(MINIMAL, lambda d: meta(d).update(publisher=PUB, claims=[claim({"kind": "standard", "field": "publisher"},
+            relation="alternative", value={"name": "Other Publishing"})]))),
+    ("O02-9", "O-02", "standard fields on group metadata", True,
+     mutate(MINIMAL, lambda d: d.__setitem__("groups", [{"id": AUTHOR, "name": "g", "type": "variant", "file_refs": [],
+                                                         "metadata": {"title": "G", "dates": {"acquired": "2025-01-31"}}}]))),
+    ("O02-10", "O-02", "dates.published not YYYY-MM-DD", False,
+     mutate(MINIMAL, lambda d: meta(d).__setitem__("dates", {"published": "2026-1-1"}))),
+    ("O02-11", "O-02", "source url without scheme", False,
+     mutate(MINIMAL, lambda d: d.__setitem__("origin", {"sources": [{"id": AUTHOR, "kind": "website",
+                                                                     "url": "example.com/x"}]}))),
+    # O-11: identifier grammars
+    ("O11-1", "O-11", "ExtensionID a.b (minimal)", True, mutate(MINIMAL, ext_named("a.b"))),
+    ("O11-2", "O-11", "ExtensionID with uppercase", False, mutate(MINIMAL, ext_named("Org.example"))),
+    ("O11-3", "O-11", "ExtensionID label ending with hyphen", False, mutate(MINIMAL, ext_named("org.x-"))),
+    ("O11-4", "O-11", "ExtensionID label of 64 chars", False, mutate(MINIMAL, ext_named("a." + "b" * 64))),
+    ("O11-5", "O-11", "ExtensionID longer than 96 bytes", False,
+     mutate(MINIMAL, ext_named(".".join(["abcdefghij"] * 9)))),
+    ("O11-6", "O-11", "single-label ExtensionID", False, mutate(MINIMAL, ext_named("org"))),
+    ("O11-7", "O-11/K-8", "TypeKey with trailing underscore", True,
+     mutate(MINIMAL, lambda d: d.__setitem__("field_definitions", field_def("plugin:org.example:vec_",
+                                                                             "plugin:org.example:com")))),
+    ("O11-8", "O-11/K-8", "TypeKey ending with hyphen", False,
+     mutate(MINIMAL, lambda d: d.__setitem__("field_definitions", field_def("plugin:org.example:vec-")))),
+    ("O11-9", "O-11", "TypeKey with uppercase", False,
+     mutate(MINIMAL, lambda d: d.__setitem__("field_definitions", field_def("plugin:org.example:Vector3")))),
+    ("O11-10", "O-11", "TypeKey longer than 64 bytes", False,
+     mutate(MINIMAL, lambda d: d.__setitem__("field_definitions", field_def("plugin:org.example:" + "a" * 65)))),
+    ("O11-11", "O-11", "FieldKey of exactly 64 bytes", True,
+     mutate(MINIMAL, lambda d: d.__setitem__("field_definitions", field_def("decimal",
+                                                                             "plugin:org.example:" + "a" * 64)))),
+    ("O11-12", "O-11", "TypeID with version suffix", False,
+     mutate(MINIMAL, lambda d: d.__setitem__("field_definitions", field_def("plugin:org.example:vec@2")))),
+    # O-12: typed dependencies
+    ("O12-1", "O-12", "dependency ref without kind", False, mutate(MINIMAL, deps("declared", [{"file_id": FILE1}]))),
+    ("O12-2", "O-12", "declared with empty refs", False, mutate(MINIMAL, deps("declared", []))),
+    ("O12-3", "O-12", "none with refs", False, mutate(MINIMAL, deps("none", [{"kind": "file", "file_id": FILE1}]))),
+    ("O12-4", "O-12", "unknown without refs", True, mutate(MINIMAL, deps("unknown"))),
+    ("O12-5", "O-12", "declared file, group and field_value refs", True,
+     mutate(MINIMAL, deps("declared", [{"kind": "file", "file_id": FILE1, "sha256": SHA},
+                                       {"kind": "group", "group_id": AUTHOR},
+                                       {"kind": "field_value", "owner_scope": "file", "owner_id": FILE1,
+                                        "field_id": "user:" + UUID}]))),
+    ("O12-6", "O-12", "file ref mixed with group_id", False,
+     mutate(MINIMAL, deps("declared", [{"kind": "file", "file_id": FILE1, "group_id": AUTHOR}]))),
+    ("O12-7", "O-12", "sha256 without file_id", False,
+     mutate(MINIMAL, deps("declared", [{"kind": "file", "sha256": SHA}]))),
+    ("O12-8", "O-12", "duplicate refs", False,
+     mutate(MINIMAL, deps("declared", [{"kind": "group", "group_id": AUTHOR}, {"kind": "group", "group_id": AUTHOR}]))),
+    ("O12-9", "O-12", "dependencies on a plugin-typed custom value", True,
+     mutate(MINIMAL, lambda d: meta(d).__setitem__("custom_values", [{"field_id": "plugin:org.example.geometry:com",
+            "value": [1.0, 2.5, 3], "dependencies": {"state": "declared",
+                                                    "refs": [{"kind": "file", "file_id": FILE1}]}}]))),
+    ("O12-10", "O-12/K-9", "unsorted refs are accepted by readers", True,
+     mutate(MINIMAL, deps("declared", [{"kind": "group", "group_id": AUTHOR}, {"kind": "file", "file_id": FILE1}]))),
+    # O-14: license, links.rel, generation, schema_version
+    ("O14-1", "O-14", "license with empty name", False, mutate(MINIMAL, lambda d: meta(d).__setitem__("license", {"name": ""}))),
+    ("O14-2", "O-14", "license url without scheme", False,
+     mutate(MINIMAL, lambda d: meta(d).__setitem__("license", {"url": "example.com/license"}))),
+    ("O14-3", "O-14", "license with SPDX LicenseRef", True,
+     mutate(MINIMAL, lambda d: meta(d).__setitem__("license", {"spdx": "MIT OR LicenseRef-Custom"}))),
+    ("O14-4", "O-14", "rel with uppercase", False,
+     mutate(MINIMAL, lambda d: meta(d).__setitem__("links", [{"url": "https://x.org", "rel": "Homepage"}]))),
+    ("O14-5", "O-14/K-7", "plugin rel", True,
+     mutate(MINIMAL, lambda d: meta(d).__setitem__("links", [{"url": "https://x.org",
+                                                              "rel": "plugin:org.example:mirror_eu"}]))),
+    ("O14-6", "O-14", "unknown simple rel is kept", True,
+     mutate(MINIMAL, lambda d: meta(d).__setitem__("links", [{"url": "https://x.org", "rel": "thingiverse"}]))),
+    ("O14-7", "O-14", "generated file without generation", False, mutate(MINIMAL, gen_file("generated", False))),
+    ("O14-8", "O-14", "imported file with generation", False, mutate(MINIMAL, gen_file("imported", True))),
+    ("O14-9", "O-14", "generated file with generation", True, mutate(MINIMAL, gen_file("generated", True))),
+    ("O14-10", "O-14", "extension without schema_version", False, mutate(MINIMAL, with_ext(data={}))),
+    ("O14-11", "O-14", "schema_version as number", False, mutate(MINIMAL, with_ext(schema_version=2, data={}))),
+    ("O14-12", "O-14", "empty schema_version", False, mutate(MINIMAL, with_ext(schema_version="", data={}))),
+    # X-01: completeness, entry_kind, container, base64
+    ("X01-1", "X-01/K-5", "input without completeness", False, mutate(MINIMAL, with_input(drop="completeness"))),
+    ("X01-2", "X-01/K-5", "entry without entry_kind", False,
+     mutate(MINIMAL, with_input(entry={"id": "e6d33bf6-4fc6-4d96-9d67-e55213718bfd", "object_id": OBJ,
+                                       "path": "a.stl", "result": "not_processed"}))),
+    ("X01-3", "X-01", "directory entry included without FileID", True,
+     mutate(MINIMAL, with_input(entry={"id": "e6d33bf6-4fc6-4d96-9d67-e55213718bfd", "object_id": OBJ,
+                                       "entry_kind": "directory", "path": "dir/", "result": "included"}))),
+    ("X01-4", "X-01", "directory entry with FileID", False,
+     mutate(MINIMAL, with_input(entry={"id": "e6d33bf6-4fc6-4d96-9d67-e55213718bfd", "object_id": OBJ,
+                                       "entry_kind": "directory", "path": "dir/", "result": "included",
+                                       "file_id": FILE1}))),
+    ("X01-5", "X-01", "included file entry without FileID", False,
+     mutate(MINIMAL, with_input(entry={"id": "e6d33bf6-4fc6-4d96-9d67-e55213718bfd", "object_id": OBJ,
+                                       "entry_kind": "file", "path": "a.stl", "result": "included"}))),
+    ("X01-6", "X-01/K-6", "container on an archive object", True,
+     mutate(MINIMAL, with_input(obj_extra={"container": "rar5", "name_encoding": "utf-16(rar)"}))),
+    ("X01-7", "X-01/K-6", "container on a plain file object", False,
+     mutate(MINIMAL, with_input(obj_extra={"kind": "file", "container": "zip"}))),
+    ("X01-8", "X-01", "strict base64 name_raw", True,
+     mutate(MINIMAL, with_input(obj_extra={"name_raw": {"encoding_guess": "cp866", "base64": "YWJj"}}))),
+    ("X01-9", "X-01", "base64 with bad length", False,
+     mutate(MINIMAL, with_input(obj_extra={"name_raw": {"base64": "YWJ"}}))),
+    ("X01-10", "X-01", "base64 with line break", False,
+     mutate(MINIMAL, with_input(obj_extra={"name_raw": {"base64": "YWJj\nZGVm"}}))),
+    ("X01-11", "X-01", "multivolume set with 0-based volumes", True,
+     mutate(MINIMAL, with_input(obj_extra={"kind": "multivolume_archive", "container": "rar5", "volumes": [
+         {"index": 0, "name": "a.part1.rar", "missing": True}, {"index": 1, "name": "a.part2.rar"}]}))),
+    ("X01-12", "X-01", "unknown completeness value", False, mutate(MINIMAL, with_input(completeness="partial"))),
+    # X-02: typed constraints
+    ("X02-1", "X-02", "integer bounds with unit", True,
+     mutate(MINIMAL, fdef_c("integer", {"minimum": {"value": "1", "unit": "mm"}, "maximum": {"value": "500", "unit": "mm"}}))),
+    ("X02-2", "X-02", "integer bound with decimal value", False,
+     mutate(MINIMAL, fdef_c("integer", {"minimum": {"value": "1.5"}}))),
+    ("X02-3", "X-02", "decimal bound keeps trailing zeros", True,
+     mutate(MINIMAL, fdef_c("decimal", {"maximum": {"value": "1.500", "unit": "mm"}}))),
+    ("X02-4", "X-02", "decimal bound with exponent", False, mutate(MINIMAL, fdef_c("decimal", {"maximum": {"value": "1e3"}}))),
+    ("X02-5", "X-02", "string length constraints", True, mutate(MINIMAL, fdef_c("string", {"min_length": 1, "max_length": 80}))),
+    ("X02-6", "X-02", "regex constraint is not part of 1.0", False, mutate(MINIMAL, fdef_c("string", {"pattern": "^a"}))),
+    ("X02-7", "X-02", "constraints on boolean", False, mutate(MINIMAL, fdef_c("boolean", {"min_length": 1}))),
+    ("X02-8", "X-02", "opaque constraints on plugin type", True,
+     mutate(MINIMAL, fdef_c("plugin:org.example.geometry:vector3", {"norm_max": 12345678901234567890.5},
+                            "plugin:org.example.geometry:com"))),
+    ("X02-9", "X-02", "multi_enum item constraints", True, mutate(MINIMAL, fdef_c("multi_enum", {"min_items": 1, "max_items": 3}))),
+    ("X02-10", "X-02", "date bounds", True,
+     mutate(MINIMAL, fdef_c("date", {"minimum": {"value": "2000-01-01"}}))),
+    ("X02-11", "X-02", "empty constraints object", False, mutate(MINIMAL, fdef_c("integer", {}))),
+    # O-18: compacted ranges
+    ("O18-1", "O-18", "compacted range with typed summary", True,
+     mutate(MINIMAL, history_with_range({"revision_count": 2, "operation_counts": {"metadata_changed": 2}}))),
+    ("O18-2", "O-18", "compacted range without summary", False, mutate(MINIMAL, history_with_range(None))),
+    ("O18-3", "O-18", "summary with revision_count 0", False, mutate(MINIMAL, history_with_range({"revision_count": 0}))),
+    ("O18-4", "O-18", "operation_counts with unknown operation", False,
+     mutate(MINIMAL, history_with_range({"revision_count": 2, "operation_counts": {"made_up": 2}}))),
+    ("O18-5", "O-18", "free-form summary key", False,
+     mutate(MINIMAL, history_with_range({"revision_count": 2, "note": "x"}))),
+]
+CASES.extend(NEW_CASES)
 
 # Negative cases kept from the ADR-0035 schema check (mutations of the full example).
 LEGACY_NEGATIVE = {

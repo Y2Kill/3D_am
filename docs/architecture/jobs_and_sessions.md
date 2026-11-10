@@ -47,13 +47,18 @@ commit_update(asset, mutate):
   tmp = lib/.am/.am-tmp/<asset>.<op>.zip
   m = manifest.clone(); staged = mutate(m)     // SHA-256 и размеры новых данных известны заранее (подготовка/lookup)
   if m == manifest: journal.drop(op); return    // no-op: ревизия не меняется (ADR-0035 п. 5)
-  m.asset.revision += 1; m.history.entries.push(op, ...)
+  m.asset.revision += 1; m.history.entries.push(op, ts, ...)
+  m.asset.modified_at = ts                     // = timestamp последней записи истории (O-14)
+  if has_unknown_numbers(m) and not exact_number_safe: abort(write_blocked)   // R-09.8 / O-13, до итога S7
   w = ZipWriter(tmp)
   w.add("manifest.json", m.dump())             // первой записью (ADR-0035 п. 2)
   for s in staged: w.add_stream(s)              // потоковый SHA-256 сверяется с объявленным
-  for e in old.entries if e not removed: w.copy_raw(e)   // в т. ч. неизвестные записи
+  for e in old.entries if e not removed:
+    if e.opaque and not safe_to_preserve(e): abort(read_only)   // O-15: extra fields/смещения/флаги; без silent drop
+    w.copy_raw(e)                               // в т. ч. неизвестные записи; CRC сверяется по распакованному потоку
   w.close(); fsync(tmp)
-  verify(tmp, level = full)                     // V1–V4: CRC + SHA-256 всех зарегистрированных потоков (ADR-0035 п. 7)
+  verify(tmp, level = full)                     // V1–V4: CRC + SHA-256 всех зарегистрированных потоков (ADR-0035 п. 7);
+                                                // opaque — не выше verified_crc_size_only (O-15); failed → abort, исходник не тронут
   journal.set(verified)
   if stat(asset.zip) != base: abort("изменён извне")    // ТЗ 8.7.8, внешнее изменение
   replace(asset.zip, tmp, backup)                       // ReplaceFileW / rename

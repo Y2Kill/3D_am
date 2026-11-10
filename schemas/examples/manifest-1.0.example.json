@@ -87,6 +87,7 @@
       ],
       "imported_at": "2026-11-06T10:15:03.120Z",
       "mode": "strict",
+      "completeness": "complete",
       "objects": [
         {
           "id": "60327ee9-427b-4b88-9dea-13965f61da6c",
@@ -103,6 +104,7 @@
         {
           "id": "e6d33bf6-4fc6-4d96-9d67-e55213718bfd",
           "object_id": "60327ee9-427b-4b88-9dea-13965f61da6c",
+          "entry_kind": "file",
           "path": "Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
           "size_bytes": "25649684",
           "crc32": "f3c218f0",
@@ -113,6 +115,7 @@
         {
           "id": "6c995acb-8d52-443c-b43c-a2cfca740204",
           "object_id": "60327ee9-427b-4b88-9dea-13965f61da6c",
+          "entry_kind": "file",
           "path": "__MACOSX/Dinamuuu3D_WinryRockbell_Alt/._AN_Winry_Hips.stl",
           "size_bytes": "4096",
           "result": "excluded",
@@ -125,6 +128,7 @@
         {
           "id": "351b684e-befc-4c57-8ff5-3cdcb5a0ef15",
           "object_id": "60327ee9-427b-4b88-9dea-13965f61da6c",
+          "entry_kind": "file",
           "path": "Dinamuuu3D_WinryRockbell_Alt/very long folder name …/part.stl",
           "size_bytes": "1200484",
           "result": "included_renamed",
@@ -231,6 +235,7 @@
         "state": "declared",
         "refs": [
           {
+            "kind": "file",
             "file_id": "1f3403d0-93c1-4919-8ba3-ed78100b7b1f",
             "sha256": "a3d95a27244ba57f370f8a30e890a8f4bfa65a6e67d6b6d3067721302fe2cb4b"
           }

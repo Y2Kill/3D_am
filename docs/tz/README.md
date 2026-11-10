@@ -18,6 +18,12 @@
   - `R01-R09_owner_decisions_2026-11-07.md` — решения владельца по шести вопросам отчёта 06.
 
   Сверка — отчёт `docs/reports/06_R01-R09_vs_prepared.md`, решение — ADR-0036. В ТЗ уточнения войдут отдельной редакцией (v1.9) только по решению владельца.
+- Журнал решений после `e2472e9` (RC-1, не изменять):
+  - `RC1_decisions_after_e2472e9_v0.11.md` — 108 принципов в 11 блоках (извлечён из пакета байт в байт);
+  - `3D_am_handoff_review_RC1_2026-11-10.zip` — исходный пакет проверки;
+  - `RC1_report07_response_K01-K10_DRAFT_2026-11-10.md` и `3D_am_RC1_report07_response_DRAFT_2026-11-10.zip` — ответы на вопросы K-1…K-10 отчёта 07 (журнал v0.12); утверждены владельцем 2026-11-10.
+
+  Проверка — отчёт `docs/reports/07_RC1_v0.11_vs_prepared.md`, решение — ADR-0037.
 
 Файлы владельца (`description.txt`, черновики, материалы к v1.8) не изменять. Новые версии создаются только как новые файлы.
 Аудит эволюции: `../reports/01_TZ_evolution_loss_report.md`, `../reports/03_TZ_v1.3-1.5_vs_prepared.md`, `../reports/04_TZ_v1.7_vs_prepared.md`, `../reports/05_TZ_v1.8_format_vs_prepared.md`, `../reports/06_R01-R09_vs_prepared.md`; сравнение версий — `tools/tz_audit/verdiff.py`.
