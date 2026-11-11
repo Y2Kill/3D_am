@@ -148,3 +148,146 @@
 - Linux-прогон и CI — T-005.
 - Политика лимитов (O-17), правило сопоставления существующих `changes[]` без ID (OPEN, ADR-0038), словари `operation`/`changes[].kind`.
 - Изменение `libraries.md`, ADR, спецификации — делает управляющий.
+
+## Отчёт исполнителя
+
+**Дата:** 2026-11-11. **Ветка:** `codex/T-006`, от `main` (`9d92241`).
+
+**Коммиты:** `2ab8f97` — реализация, фикстуры, тесты и статус in_progress; завершающий коммит `T-006: record codec validation and handoff` — этот отчёт и статус review.
+
+### Выполнение критериев приёмки
+
+1. **Минимальная сборка:** `tools\build_min.cmd` — 82/82 PASS (исходные 78 + 4 теста токенизатора), без предупреждений MSVC. `AM_WITH_CONTAINER=OFF`, domain остаётся INTERFACE; compile_commands не содержит исходников кодека. Новый foundation использует только стандартную библиотеку и собственный unicode/result.
+2. **win-cli:** онлайн и офлайн — 96/96 PASS (78 + 4 foundation + 14 codec), без предупреждений MSVC. `AM_WITH_CONTAINER=ON`: domain — STATIC, nlohmann PUBLIC, jsoncons PRIVATE. json-schema-validator удалён из vcpkg.json и продуктовой установки; jsoncons 1.9.0 восстановлен из бинарного кэша (1 пакет, 218 мс; установка 164 мс). Baseline не менялся. Офлайн-повтор использует существующую продуктовую установку, read-only binary/asset-кэши и x-block-origin; списки и SHA-256 кэшей до/после совпали.
+3. **Все сценарии п. 5:** реализованы и фактически выполнены (таблица ниже). 100000 уровней разбираются с явным стеком; глубокое непрозрачное значение проходит чтение/V2/запись/сверку, а известная часть той же глубины отклоняется до nlohmann. Обе сборки проходят arch_check, schema_check и sql_check.
+4. **Границы модулей:** публичный codec.hpp содержит nlohmann, стандартные типы и Result. Типы/заголовки jsoncons находятся только в schema_validator.cpp за pimpl. Исключения библиотек/std::bad_alloc перехватываются публичными операциями с Result; собственные внутренние Error тоже преобразуются в Result. Ошибки foundation переводятся в am.manifest.* с исходной ошибкой в cause. Технические детали — английские, message_id соответствуют таблице задачи. Геттеры DOM возвращают ссылки; операции с полученным DOM выполняет вызывающий.
+5. **Сложность и ресурсы:** разбор, обходы DOM и сравнение поддеревьев используют явные стеки. Группы, отсортированные индексы членов объектов и индекс владельцев строятся один раз на анализируемый текст; verify_preserved строит по одному анализу до/после и общий пул компонентов ключей. Обоснование и замер приведены ниже.
+6. **Фикстуры:** 29 синтетических JSON, 626839 байт, скопированы без изменения. Для каждого SHA-256 исходника в spikes/s7/fixtures совпадает с tests/fixtures/manifest/s7 (полная таблица ниже). Большие и глубокие входы создаются только в памяти тестов; стенд S7 не изменялся.
+7. **Отчёт и сдача:** настоящий раздел содержит ветку/коммиты, проверки, выводы, отклонения и вопросы; статус в реестре — review. В main не сливал, push/rebase не выполнял.
+
+### Покрытие сценариев п. 5
+
+| № | Проверка | Тесты |
+|---|---|---|
+| 1 | Грамматика, UTF-8, BOM, суррогаты, лишние данные | JsonText.RejectsMalformedGrammarAndEncoding |
+| 2 | Дубли, включая escape | JsonText.DecodesStringsAndRejectsEscapedDuplicateKeys |
+| 3 | 100000 уровней: предел 1024 / успех при 200000 | JsonText.DeepInputUsesExplicitStackAndConfigurableLimits |
+| 4 | Допустимые числа и точные байтовые границы | JsonText.PreservesEveryNumberSpanWithoutConversion |
+| 5 | 14 допустимых фикстур, известная часть совпадает | ManifestCodec.EveryValidFixtureRoundTripsAndValidates |
+| 6 | title, удаление user custom_value, новая история/ревизия/время, V2 | StructuralEditRetainsOwnersAfterIndexShift |
+| 7 | Число, тип, строка, ключ, владелец, удаление/добавление; явное намерение; неоднозначность | GuardRejectsUnannouncedChangesAndHonorsExplicitIntent; AmbiguousOwnersAndDuplicateKeysBlockWrites |
+| 8 | bytes/subtype и маркер не подделывают binary; чужие/повторные/неправильно размещённые handles | HandlesCannotBeForgedRepeatedOrOutOfRange |
+| 9 | Инъекции make_opaque отвергаются; [1e400,-0,1.500] сохраняется | NewFragmentsAreStrictAndIntentIsRequiredForReplacement |
+| 10 | Неразрешимые field_id в asset/file/group metadata, claims; перестановки | UnresolvedFieldIdsRemainOpaqueAcrossMetadataScopes |
+| 11 | Канонические известные int64/uint64 без double; ошибки диапазона/дроби | KnownNumbersUseExactDecimalIntegerArithmetic |
+| 12 | Все valid принимаются, unevaluatedProperties отвергается, 1e400 не теряется | EveryValidFixtureRoundTripsAndValidates; ErrorsRetainFoundationCauseAndV2RejectsUnevaluatedProperties |
+| 13 | Глубокий opaque проходит полный путь, известная глубина ограничена до DOM | DeepOpaqueInputNeverEntersRecursiveDom |
+| 14 | Более 16 МиБ, более 100000 непрозрачных листов; время/RAM без порога | LargeManyLeafCycleReportsMeasurementsWithoutThreshold |
+
+Дополнительно: MutatedKnownDomStillHonorsUtf8NumberAndDepthLimits; EscapedOwnerKeysAuthorizeOnlyTheirExactOwner; LongScopeWithManyOwnersUsesInternedComponents. Теги req — ADR-0038, для точных чисел также R-09.8.
+
+### Фактические проверки
+
+| Команда | Время команды, с | Итог |
+|---|---:|---|
+| `tools\build_min.cmd` | 19.710 | 82/82 PASS |
+| `tools\build_cli.cmd` | 84.891 | 96/96 PASS |
+| `tools\build_cli.cmd --offline` | 70.034 | 96/96 PASS |
+
+`min_final`, итоговые строки:
+
+```text
+79/82 Test #79: arch_check ..........................................................   Passed    1.74 sec
+81/82 Test #81: schema_check ........................................................   Passed    0.83 sec
+82/82 Test #82: sql_check ...........................................................   Passed    0.15 sec
+100% tests passed, 0 tests failed out of 82
+Total Test time (real) =  15.52 sec
+```
+
+`cli_verified`, итоговые строки:
+
+```text
+93/96 Test #93: arch_check ...................................................................   Passed    6.04 sec
+95/96 Test #95: schema_check .................................................................   Passed    0.80 sec
+96/96 Test #96: sql_check ....................................................................   Passed    0.18 sec
+100% tests passed, 0 tests failed out of 96
+Total Test time (real) =  64.68 sec
+```
+
+`cli_offline`, итоговые строки:
+
+```text
+93/96 Test #93: arch_check ...................................................................   Passed    5.82 sec
+95/96 Test #95: schema_check .................................................................   Passed    0.80 sec
+96/96 Test #96: sql_check ....................................................................   Passed    0.16 sec
+100% tests passed, 0 tests failed out of 96
+Total Test time (real) =  61.82 sec
+```
+
+Логи: `.cache/t006_min_final.log`, `.cache/t006_cli_verified.log`, `.cache/t006_cli_offline.log`; таймеры — одноимённые `_seconds.txt`. `.cache/t006_audit.log` подтверждает все PASS, отсутствие MSVC diagnostics, неизменность кэшей, побайтовые фикстуры, условное подключение двух исходников domain, границы зависимостей и отсутствие BOM. Исходная смена портов — `.cache/t006_cli.log`. `git diff --check` — без замечаний.
+
+### Сложность и замер сценария 14
+
+- Токенизатор: один проход байтов и явный стек контейнеров; дубли проверяются хеш-таблицей объекта. Ожидаемая сложность O(n), память O(n), где n — объём входа/число узлов. Строки и escape декодируются собственным кодом, числа остаются с исходными границами. Дерево плоское, его разрушение тоже не рекурсивно по входу.
+- Непрозрачные корни: индекс членов каждого объекта строится один раз (сортировка), поиск члена — бинарный. FieldID → plugin/core/неизвестен строится один раз. Владельцы представлены короткими векторами интернированных компонентов; длинный FileID/GroupID не копируется в каждый дочерний ключ. Общий пул до/после даёт точное равенство компонентов без хеш-коллизий. Регрессия проверяет V1 с FileID длиной 128 КиБ и 10000 владельцев до любой проверки UUID в V2.
+- Защита: O(n log n) или лучше на сортировках/деревьях индексов; одинаковые owners сравниваются прямым итеративным обходом их деревьев. Для объекта сравниваются отсортированные декодированные ключи, для массива — индексы, для листьев — вид и декодированная строка/литерал/исходная числовая лексема. Это эквивалентно сравнению типизированных путей, но не материализует длинный путь каждого листа. Путь собирается только один раз при ошибке. Явный вывод строковых ключей методом opaque_keys дополнительно требует памяти/времени пропорционально размеру выдачи.
+- Известные числа: грамматика проверяется отдельно, мантисса/масштаб обрабатываются десятичными цифрами. Экспонента насыщается на границе, выведенной из длины входа; огромная нулевая экспонента не требует разворачивания. Сравнение с пределами int64/uint64 — по длине и цифрам. Через double исходные известные числа не проходят.
+
+Конфигурация замера: Windows, MSVC 19.44.35223.0, preset win-cli, **Debug**, /W4 /permissive- /utf-8. Генерация входа до таймера; измеряется parse → создание/V2 валидатора → правка title → write → verify. Пики GetProcessMemoryInfo относятся ко всему отдельному процессу GTest, включая тестовые буферы, а не только к живым структурам кодека. CTest запускает каждый тест отдельным фильтрованным процессом. Это факты измерения, порог в тесте отсутствует.
+
+| Прогон | Байты входа | Непрозрачных числовых листов | Цикл, мс | PeakWorkingSet, байт | PeakPagefile, байт |
+|---|---:|---:|---:|---:|---:|
+| cli_verified | 17384580 | ≥100000 | 11729.6 | 292605952 | 289419264 |
+| cli_offline | 17384580 | ≥100000 | 11647.2 | 292638720 | 289599488 |
+
+Полный stdout измерений: `.cache/t006_cli_verified_lasttest.log`, `.cache/t006_cli_offline_lasttest.log`.
+
+### SHA-256 фикстур
+
+Для каждой строки хеш исходника и копии совпал; полный машинный список — `.cache/t006_fixture_hashes.json`.
+
+| Файл | SHA-256 (оба каталога) |
+|---|---|
+| duplicate_known.json | `88ea3948330227c5e8f554e80eb29d3308ca4b58aa3f1c5fb40a61fab2d14f3f` |
+| duplicate_opaque.json | `37931975a4f12fd10266279d210f3a73b9dc3ed599b98c04b77a00a089baa2cb` |
+| invalid_00.json | `a22b84e5670e2425e85ccd70940f150d352e00c36c7584bba429bdbd49c83ce9` |
+| invalid_01.json | `72072cc3d8e27fd657ad3d1e2e1992cf14334a8fe5b6eab6557d4adbfadf5fe0` |
+| invalid_02.json | `1b4be7760c7966fb446d325eca2bbc42186c9dd16c867f427526ad5684c9c077` |
+| invalid_03.json | `e0415352252002bcbdd53a9e84f28450f3ed87aa7f1e5d9abfb8c4b87a53274d` |
+| invalid_04.json | `746e08b7ca1b5aec3f97282930029af3b5958883887d7e24d9977255a0a5c5ff` |
+| invalid_05.json | `c78bd52dd650277e2037ed5ffe40c9385dbdf2a086e1d6cac643bc51835afdaf` |
+| invalid_06.json | `aa9317634ffea7b5bf32f1ebcc61bd590531f40b725693a709c59221d316a1fc` |
+| invalid_07.json | `b8d2faafda511517f53b409c7bae91b44fe67f298fbf26d7568bef1b9da70662` |
+| invalid_08.json | `3ae28c0c6b0f5ced0241c1bcfa8cbe6cb76a9bf30efe4583271025af4dc8766c` |
+| invalid_09.json | `e956c8c748965a0e8a8b7dd1ca5e76365a71cf2da29743434a8d53ccad1261ae` |
+| invalid_10.json | `acd016ea92ceae76ea5dd8c004bf99a2ef3fa35a073f31f65054f055ab92b8da` |
+| invalid_11.json | `0b4ba90aefbe9e9b58535516485af498c67153074081c6ea13e4a32bc34ec8e5` |
+| schema_invalid_claim_extra.json | `07640417698038852995bc14593ac4cf2038f09e546c085d0caee19ec7412fcd` |
+| valid_all.json | `64630ce35a24afd6007c6b86c12bfbc79eed9120dfb3524d38cde5a7813eee3d` |
+| valid_control.json | `ab4df572ebebb7d9dd873230d11ef60533cb4a5d9e19153f1fda30016b35a1fb` |
+| valid_exponent_1000.json | `4e249135459ecda6468faac41c1787875cc8ccdda7d05df12ced866859728051` |
+| valid_exponent_style.json | `76ae684e1b8e2a887502632fe8d3653c3b65018384311bfb9a87d930f0e931fd` |
+| valid_fraction_10000.json | `a22854cf882eda759d09642eb33b0c1259bf8304c321a0a47d8ff172420ac39b` |
+| valid_huge_negative.json | `c13b5df07049e76af1ba3e1ad871078f41c86d6cc11df761f8463fda771c4a64` |
+| valid_huge_positive.json | `39458e82acbcfd893a2d814dfd614bd545f2411e23cf17920d0b6d784ca9ee16` |
+| valid_int_overflow.json | `01e50712ab8a17768dcf3f63b917927f395a478a1f18403defaccba2f3b741e5` |
+| valid_negative_zero.json | `0bbeb016c328b45f45b250b167ac35ca5f9cd4cc2f02e7eb5cba4b578af3bbab` |
+| valid_negative_zero_float.json | `9c7c33a8d24612ac1093494f81537b29e4c8c0b3ce76c105f538031f1853f188` |
+| valid_precision.json | `d3735f729419e08114490e51a914a327be4d868bf5bdd2dc342d5efdb08361f5` |
+| valid_trailing_zeros.json | `c8aa6e6cdd6e319650a7adbd83ca22a90f815790a4d054ee5adee48d622dbec4` |
+| valid_uint_overflow.json | `3403a00b68b74138ec48861cf77c3761a1ea6ad8bd2ab214d52d9acb0e7beab2` |
+| valid_zero_exponent.json | `7dffbe62f1516b3f2638296417bfa1267bedf118e45264eb5d468e62b22f7e97` |
+
+### Отклонения и уточнения реализации
+
+- API расположен в am::json и am::manifest; публичные имена и форма OpaqueKey/IntendedChanges выбраны в рамках задачи. OpaqueKey — экранированное scope-qualified имя корня, IntendedChanges содержит точный набор таких ключей. При непригодном DOM opaque_keys возвращает пустой список; подробная ошибка доступна через write_manifest, пустой список ничего не разрешает защите. Это документировано в заголовке.
+- Дополнительно проверяется взаимно-однозначное соответствие binary и текущих непрозрачных корней. Правильный по размеру/номеру handle, перенесённый в известное поле, блокируется, чтобы V2 не заменяла известное значение заглушкой. Новый/заменяемый непрозрачный корень создаётся make_opaque; обычный DOM-объект вместо raw handle блокируется. Удалённые фрагменты могут оставаться в таблице и не выводятся; использованный handle выводится максимум один раз.
+- Перед разбором переданной схемы также проверяются UTF-8/дубли и глубина её DOM: применяется существующая гипотеза max_known_depth из CodecLimits по умолчанию, поскольку create не принимает отдельного параметра лимитов. V2 получает текст и использует встроенный meta-resolver jsoncons; файлового/сетевого загрузчика кодек не подключает.
+- Дополнительные регрессии выше усиливают обязательные сценарии; новых продуктовых нормативов не вводилось. Значения CodecLimits остаются hypothesis, O-17. OOM-ветви перехвачены, принудительная инъекция нехватки памяти не выполнялась.
+- Стенд, схемы, ADR, спецификация, libraries.md, матрицы, roadmap, CLI и другие уровни не менялись. Linux/CI, V3/V4, ZIP и AssetRepository не выполнялись согласно границам T-006.
+
+### Вопросы
+
+Блокирующих вопросов и противоречий с ADR/SPEC не обнаружено. Политика ресурсов O-17 и сопоставление изменяемых существующих changes[] без ID остаются открытыми вопросами управляющего; реализован предписанный ключ OperationID + индекс change + дополнительный ключ. Формат 1.0 и O-13 этой сдачей не объявляются закрытыми.
+
+Собственные изменения закоммичены в codex/T-006. Исходный посторонний незарегистрированный `3D_am_open_questions_e2472e9.zip` оставлен без изменения.
