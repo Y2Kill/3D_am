@@ -28,12 +28,15 @@ std::string fold(std::string_view s) {
   return unicode::path_collision_key(s);
 }
 
+bool forbidden_filename_byte(char ch) {
+  return static_cast<unsigned char>(ch) < 0x20 || ch == '<' || ch == '>' || ch == ':' ||
+         ch == '"' || ch == '|' || ch == '?' || ch == '*' || ch == '\\';
+}
+
 bool sanitize_component(std::string& c) {
   bool changed = false;
   for (auto& ch : c) {
-    auto u = static_cast<unsigned char>(ch);
-    if (u < 0x20 || ch == '<' || ch == '>' || ch == ':' || ch == '"' || ch == '|' || ch == '?' ||
-        ch == '*' || ch == '\\') {
+    if (forbidden_filename_byte(ch)) {
       ch = '_';
       changed = true;
     }
@@ -109,6 +112,43 @@ std::string normalize_source_path(std::string_view original) {
   while (out.rfind("./", 0) == 0) out.erase(0, 2);
   if (!out.empty() && out.back() == '/') out.pop_back();
   return out;
+}
+
+Result<void> check_container_path(std::string_view path) {
+  try {
+    auto invalid = [](std::string detail) -> Result<void> {
+      return Error::make(Errc::invalid_argument, "Invalid container path", std::move(detail))
+          .in("foundation.paths").id("am.paths.invalid_container_path");
+    };
+    if (path.empty() || path.size() > ZipPathMapper::kMaxZipPathBytes) return invalid("Empty path or path exceeds 200 bytes");
+    if (!unicode::is_valid_utf8(path)) return invalid("Path is not valid UTF-8");
+    auto normalized = unicode::nfc(path);
+    if (!normalized) return normalized.error();
+    if (*normalized != path) return invalid("Path is not NFC");
+    for (std::size_t start = 0; start <= path.size();) {
+      const auto slash = path.find('/', start);
+      const auto stop = slash == std::string_view::npos ? path.size() : slash;
+      const auto part = path.substr(start, stop - start);
+      if (part.empty() || part == "." || part == "..") return invalid("Empty, dot or parent component");
+      for (std::size_t i = 0; i < part.size(); ++i) {
+        // The mapper's byte policy is shared. The strict reader additionally
+        // rejects DEL/C1 controls without changing historical import mapping.
+        if (forbidden_filename_byte(part[i]) || part[i] == '\x7f' ||
+            (static_cast<unsigned char>(part[i]) == 0xc2 && i + 1 < part.size() &&
+             static_cast<unsigned char>(part[i + 1]) >= 0x80 && static_cast<unsigned char>(part[i + 1]) <= 0x9f))
+          return invalid("Forbidden filename character or control");
+      }
+      if (part.back() == '.' || part.back() == ' ') return invalid("Trailing dot or space");
+      if (is_reserved_windows_name(part)) return invalid("Reserved Windows name");
+      if (slash == std::string_view::npos) break;
+      start = slash + 1;
+    }
+    return {};
+  } catch (const std::bad_alloc&) {
+    Error error;
+    error.code = Errc::resource_exhausted;
+    return error;
+  }
 }
 
 std::string_view to_string(RenameReason r) {

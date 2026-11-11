@@ -25,6 +25,10 @@ std::filesystem::path native(const std::filesystem::path& p);
 // Does NOT resolve ".." — that is a policy decision of the mapper.
 std::string normalize_source_path(std::string_view original);
 
+// Strict, non-transforming normative container path check. The first failure
+// is returned in ctx.detail; unlike ZipPathMapper this never repairs a name.
+Result<void> check_container_path(std::string_view utf8_path);
+
 enum class RenameReason { none, path_too_long, invalid_chars, encoding, collision, reserved_name };
 std::string_view to_string(RenameReason r);
 

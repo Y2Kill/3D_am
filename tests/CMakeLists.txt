@@ -32,10 +32,15 @@ target_link_libraries(am_unit_tests PRIVATE am::application GTest::gtest_main)
 target_compile_definitions(am_unit_tests PRIVATE
   AM_UNICODE_DATA_DIR="${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0")
 if(AM_WITH_CONTAINER)
-  target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp unit/test_manifest_wide.cpp)
+  find_package(ZLIB REQUIRED)
+  target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp unit/test_manifest_wide.cpp
+    unit/zip_builder.cpp unit/test_zip_reader.cpp unit/test_zip_stream.cpp unit/test_zip_probe.cpp)
+  target_link_libraries(am_unit_tests PRIVATE ZLIB::ZLIB)
   target_compile_definitions(am_unit_tests PRIVATE
     AM_MANIFEST_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/manifest/s7"
-    AM_MANIFEST_SCHEMA="${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.draft.schema.json")
+    AM_MANIFEST_SCHEMA="${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.draft.schema.json"
+    AM_ZIP_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/zip"
+    AM_ZIP_CACHE="${PROJECT_SOURCE_DIR}/.cache/zip-tests")
   if(WIN32)
     target_link_libraries(am_unit_tests PRIVATE psapi)
   endif()
