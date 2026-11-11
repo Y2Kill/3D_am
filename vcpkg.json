@@ -14,7 +14,7 @@
     { "name": "minizip-ng", "default-features": false, "features": ["zlib"] },
     "openssl",
     "xxhash",
-    "json-schema-validator",
+    "jsoncons",
     "efsw",
     "gtest"
   ],
