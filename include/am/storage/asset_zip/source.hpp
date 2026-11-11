@@ -19,4 +19,6 @@ class RandomAccessSource {
 Result<std::shared_ptr<const RandomAccessSource>> memory_source(std::vector<std::byte> bytes);
 // Read-only, shared-read file; cached initial size. Uses native long paths.
 Result<std::shared_ptr<const RandomAccessSource>> file_source(const std::filesystem::path& path);
+// Allows an open reader to keep the old file alive across atomic replacement.
+Result<std::shared_ptr<const RandomAccessSource>> file_source(const std::filesystem::path& path, bool share_delete);
 }  // namespace am::asset_zip
