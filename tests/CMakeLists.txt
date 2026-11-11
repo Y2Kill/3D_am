@@ -34,7 +34,8 @@ target_compile_definitions(am_unit_tests PRIVATE
 if(AM_WITH_CONTAINER)
   find_package(ZLIB REQUIRED)
   target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp unit/test_manifest_wide.cpp
-    unit/zip_builder.cpp unit/test_zip_reader.cpp unit/test_zip_stream.cpp unit/test_zip_probe.cpp)
+    unit/zip_builder.cpp unit/test_zip_reader.cpp unit/test_zip_stream.cpp unit/test_zip_probe.cpp
+    unit/test_zip_writer.cpp unit/test_zip_writer_large.cpp unit/test_zip_writer_interop.cpp)
   target_link_libraries(am_unit_tests PRIVATE ZLIB::ZLIB)
   target_compile_definitions(am_unit_tests PRIVATE
     AM_MANIFEST_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/manifest/s7"
@@ -70,6 +71,12 @@ if(AM_PYTHON_TESTS)
     endif()
     message(WARNING "Python 3 not found: arch_check and schema_check are not registered")
   else()
+    if(AM_WITH_CONTAINER)
+      add_test(NAME zip_writer_interop
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/fixtures/check_written_zips.py
+          ${PROJECT_SOURCE_DIR}/.cache/zip-tests/written --generator $<TARGET_FILE:am_unit_tests>)
+      set_tests_properties(zip_writer_interop PROPERTIES LABELS "req:ADR-0006;req:ADR-0035")
+    endif()
     add_test(NAME arch_check
       COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/arch_check/arch_check.py
               --root ${PROJECT_SOURCE_DIR} --build-dir ${PROJECT_BINARY_DIR})

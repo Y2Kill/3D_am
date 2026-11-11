@@ -2,10 +2,39 @@
 
 #include <utility>
 #include <vector>
+#if defined(_WIN32) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
 
 #include "am/foundation/paths.hpp"
 
 using namespace am::paths;
+
+#if defined(_WIN32) && defined(_DEBUG)
+namespace {
+thread_local bool fail_path_allocation = false;
+int __cdecl path_allocation_hook(int type, void*, std::size_t, int, long, const unsigned char*, int) {
+  if (fail_path_allocation && (type == _HOOK_ALLOC || type == _HOOK_REALLOC)) {
+    fail_path_allocation = false;
+    return 0;
+  }
+  return 1;
+}
+}
+TEST(Paths, ContainerPathAllocationFailureHasIdentity) {
+  RecordProperty("req", "ADR-0032");
+  const auto previous = _CrtSetAllocHook(path_allocation_hook);
+  fail_path_allocation = true;
+  // The first allocation constructs the failure reason, before entering Unicode.
+  auto result = check_container_path("");
+  fail_path_allocation = false;
+  _CrtSetAllocHook(previous);
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().code, am::Errc::resource_exhausted);
+  EXPECT_EQ(result.error().component, "foundation.paths");
+  EXPECT_EQ(result.error().message_id, "am.paths.out_of_memory");
+}
+#endif
 
 TEST(Paths, StrictContainerCheckNeverRepairsInput) {
   RecordProperty("req", "ADR-0012|ADR-0035");

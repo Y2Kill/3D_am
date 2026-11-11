@@ -27,6 +27,7 @@ struct EntryInfo {
   std::uint64_t compressed_size = 0, uncompressed_size = 0, local_offset = 0, data_offset = 0, record_end = 0;
   EntryKind kind = EntryKind::regular;
   std::vector<std::byte> central_extra, local_extra;
+  std::vector<std::byte> comment;
 };
 struct ArchiveSummary {
   std::uint64_t entry_count = 0, directory_offset = 0, directory_size = 0, unaccounted_bytes = 0;
@@ -71,6 +72,8 @@ class ZipArchive {
   std::span<const EntryInfo> entries() const noexcept;
   const ArchiveSummary& summary() const noexcept;
   Result<ByteRange> raw_range(std::size_t index) const;
+  // Relative compressed offset; bounded by raw_range, without budget charges.
+  Result<std::size_t> read_raw(std::size_t index, std::uint64_t offset, std::span<std::byte> output) const;
   Result<EntryStream> open_entry(std::size_t index, ReadBudget& budget, bool sha256 = false) const;
   Result<EntryVerification> verify_entry(std::size_t index, ReadBudget& budget, bool sha256 = false) const;
  private:

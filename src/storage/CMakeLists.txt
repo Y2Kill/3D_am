@@ -8,7 +8,8 @@ if(AM_WITH_CONTAINER)
   find_package(ZLIB REQUIRED)
   find_package(OpenSSL REQUIRED COMPONENTS Crypto)
   list(APPEND AM_STORAGE_SOURCES asset_zip/source.cpp asset_zip/sha256.cpp
-    asset_zip/reader.cpp asset_zip/profile.cpp)
+    asset_zip/reader.cpp asset_zip/profile.cpp asset_zip/sink.cpp
+    asset_zip/writer.cpp asset_zip/compression_policy.cpp)
 endif()
 am_add_module(storage
   SOURCES ${AM_STORAGE_SOURCES}

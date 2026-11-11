@@ -265,3 +265,30 @@ TEST(ZipReader, SourceExceptionsBecomeResultsAndStreamErrorsStaySticky) {
   auto retry = stream->read(buffer); ASSERT_FALSE(retry); EXPECT_EQ(retry.error().ctx.detail, failure.error().ctx.detail);
   EXPECT_FALSE(stream->verification());
 }
+
+TEST(ZipReader, RawReadsAreRelativeBoundedAndExcludeDescriptors) {
+  RecordProperty("req", "ADR-0006|ADR-0035");
+  for (const auto method : {0, 8}) {
+    Entry e; e.method = static_cast<std::uint16_t>(method); e.flags |= 8; e.data = "abcdefghij";
+    const auto b = build({e}); auto a = open(b.bytes); ASSERT_TRUE(a);
+    const auto expected = method == 0 ? Bytes(std::as_bytes(std::span(e.data)).begin(), std::as_bytes(std::span(e.data)).end()) : raw_deflate(e.data);
+    Bytes actual; std::array<std::byte, 3> buffer{}; std::uint64_t offset = 0;
+    for (;;) { auto n = a->read_raw(0, offset, buffer); ASSERT_TRUE(n); if (!*n) break; actual.insert(actual.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(*n)); offset += *n; }
+    EXPECT_EQ(actual, expected); EXPECT_EQ(offset, a->entries()[0].compressed_size);
+    std::array<std::byte, 100> big{}; auto tail = a->read_raw(0, 1, big); ASSERT_TRUE(tail); EXPECT_EQ(*tail, expected.size() - 1);
+    EXPECT_TRUE(std::equal(big.begin(), big.begin() + static_cast<std::ptrdiff_t>(*tail), expected.begin() + 1));
+    for (const auto p : {offset, offset + 1, std::numeric_limits<std::uint64_t>::max()}) { auto n = a->read_raw(0, p, buffer); ASSERT_TRUE(n); EXPECT_EQ(*n, 0u); }
+    auto invalid = a->read_raw(1, 0, buffer); ASSERT_FALSE(invalid); EXPECT_EQ(invalid.error().message_id, "am.zip.io_error");
+  }
+}
+TEST(ZipReader, EntryCommentsPreserveAllBytesAndEofIsReported) {
+  RecordProperty("req", "ADR-0006|ADR-0035");
+  for (const auto size : {0u, 3u, 65535u}) {
+    Entry e; e.comment = std::string(size, '\xff'); if (size) e.comment[0] = 0;
+    auto a = open(build({e}).bytes); ASSERT_TRUE(a);
+    EXPECT_EQ(a->entries()[0].comment, Bytes(std::as_bytes(std::span(e.comment)).begin(), std::as_bytes(std::span(e.comment)).end()));
+  }
+  auto source = std::make_shared<ThrowingSource>(); auto a = ZipArchive::open(source); ASSERT_TRUE(a);
+  source->bytes.resize(static_cast<std::size_t>(a->entries()[0].data_offset));
+  std::array<std::byte, 5> buffer{}; auto eof = a->read_raw(0, 0, buffer); ASSERT_FALSE(eof); EXPECT_EQ(eof.error().message_id, "am.zip.entry_corrupt");
+}

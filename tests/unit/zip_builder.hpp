@@ -17,6 +17,8 @@ struct Entry {
   std::optional<Bytes> compressed;
   std::optional<std::uint64_t> declared_size;
   std::optional<std::uint32_t> declared_crc;
+  Bytes local_extra, central_extra;
+  std::string comment;
 };
 struct Built {
   Bytes bytes;
