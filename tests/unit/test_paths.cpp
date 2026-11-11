@@ -1,10 +1,31 @@
 #include <gtest/gtest.h>
 
 #include <utility>
+#include <vector>
 
 #include "am/foundation/paths.hpp"
 
 using namespace am::paths;
+
+TEST(Paths, StrictContainerCheckNeverRepairsInput) {
+  RecordProperty("req", "ADR-0012|ADR-0035");
+  for (const auto& path : {"manifest.json", "content/Caf\u00e9.stl", "generated/a b", "extensions/other/.hidden"}) {
+    EXPECT_TRUE(check_container_path(path)) << path;
+  }
+  EXPECT_TRUE(check_container_path(std::string(200, 'x')));
+  std::string unicode_limit;
+  for (int i = 0; i < 100; ++i) unicode_limit += "\u00e9";
+  EXPECT_TRUE(check_container_path(unicode_limit)); EXPECT_FALSE(check_container_path(unicode_limit + 'x'));
+  const std::vector<std::string> invalid{"", "/a", "//host/a", "C:/a", "C:a", "a\\b", "a//b", "a/", ".", "..",
+      "a/./b", "a/../b", "a<b", "a>b", "a:b", "a\"b", "a|b", "a?b", "a*b", "a.", "a ", "a. /b", "CON",
+      "nul.txt", "a/COM9.stl", "lpt1", "a\x01" "b", "a\x7f" "b", "a\xc2\x85" "b", std::string("a\0b", 3),
+      "cafe\u0301.stl", "\xff", std::string(201, 'x')};
+  for (const auto& path : invalid) {
+    const auto copy = path;
+    EXPECT_FALSE(check_container_path(path)) << path;
+    EXPECT_EQ(path, copy);
+  }
+}
 
 TEST(Paths, NormalizeSource) {
   EXPECT_EQ(normalize_source_path(R"(Dinamuuu3D\Winry\\AN_Hips.stl)"), "Dinamuuu3D/Winry/AN_Hips.stl");

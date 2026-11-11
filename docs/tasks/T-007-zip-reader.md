@@ -1,6 +1,6 @@
 # T-007. Безопасное чтение ZIP-контейнера: структура, потоки записей, распознавание «своего» ZIP
 
-**Статус:** ready · **Веха:** M1 (`am_storage`, модуль 5 «Контейнер», P0.3) · **Основание:** ТЗ §19.4.1, §19.4.14.2, §19.4.17 (MF-10); ADR-0005 (сжатие, ZIP64, без шифрования и data descriptor), ADR-0006 п. 2 (raw-копия), ADR-0012, ADR-0024, ADR-0032, ADR-0035 пп. 2, 7, 8, ADR-0037 п. 9 (классы записей, V4); спецификация §1, §12
+**Статус:** review · **Веха:** M1 (`am_storage`, модуль 5 «Контейнер», P0.3) · **Основание:** ТЗ §19.4.1, §19.4.14.2, §19.4.17 (MF-10); ADR-0005 (сжатие, ZIP64, без шифрования и data descriptor), ADR-0006 п. 2 (raw-копия), ADR-0012, ADR-0024, ADR-0032, ADR-0035 пп. 2, 7, 8, ADR-0037 п. 9 (классы записей, V4); спецификация §1, §12
 
 ## Цель
 
@@ -154,3 +154,82 @@
 - Декодирование имён не в UTF-8 (CP866/CP1251/…, ADR-0012) — импорт, M3a; читатель отдаёт сырые байты.
 - Реестр допустимых extra fields и граница legacy/1.0 (O-15) — OPEN; читатель только отдаёт extra fields.
 - Linux-прогон и CI — T-005. Политика лимитов — O-17.
+
+## Отчёт исполнителя
+
+**2026-11-11. Ветка:** `codex/T-007`. Реализация и тесты — `6c1cbb5` (`T-007: implement bounded ZIP reader, profile and container probe`); этот отчёт и перевод в `review` — отдельный последующий коммит.
+
+### Выполнение критериев приёмки
+
+1. **Минимальная сборка — PASS, 83/83.** Новая проверка `Paths.StrictContainerCheckNeverRepairsInput` выполняется без внешних библиотек; остальные проверки маппера сохранились. Поиск `ZLIB`, `OpenSSL`, `libcrypto`, `z.lib`/`zd.dll` в `build/win-debug-min/CMakeCache.txt` и `build.ninja` не дал совпадений. Подключения в storage и тестах защищены `AM_WITH_CONTAINER`.
+2. **CLI и офлайн CLI — PASS, 119/119 и 119/119.** Итоговые команды и строки приведены ниже. Предупреждений MSVC/CMake нет. При офлайн-повторе установлены `files,...,read`, `x-azurl,...,read` и `x-block-origin`; контрольные суммы архивов кэшей до/после совпали (81 файлов). В снимок вошли верхний уровень `downloads` (без распакованных `tools`), `vcpkg-bin`, `vcpkg-assets`, `vcpkg-registries`. Изменений `vcpkg.json` и загрузок новых зависимостей нет.
+3. **Реализованы и выполнены все 15 групп сценариев**, см. таблицу. ZIP строятся побайтово в тестах; пять интероперабельных архивов с ожидаемыми байтами и SHA-256 закоммичены. Генератор Python запускается вручную, тесты его не вызывают. Дополнительно сверены SHA-256 самих архивов с `expected.json`.
+4. **Границы модулей соблюдены.** В публичных заголовках нет zlib/OpenSSL; реализации источника, SHA-256 и потока скрыты за интерфейсом/pimpl. Обе библиотеки подключены `PRIVATE` к `am_storage`. Исключения перехватываются на входах, возвращающих `Result`; инъекции `std::bad_alloc` и ошибки источника проверены тестом. Ошибки чтения потока окончательные, ошибки механизма/кодека при распознавании сохранены в `cause`. `arch_check` прошёл в обеих конфигурациях.
+5. **Структура — O(n log n), поток — O(1) относительно распакованного размера.** Нет рекурсии: один проход по каталогу, сортировка локальных смещений, множество точных имён и сортировка непересекающихся диапазонов. Проверка профиля использует `std::map` ключей коллизий. Память структуры зависит от ограниченного каталога/числа записей; лимиты EOCD проверяются до соответствующих аллокаций. Имена ограничены перед созданием строк, заявленные размеры — до распаковки. Поток имеет два буфера по 64 КиБ, фиксированное состояние inflate/EVP и ограниченные метаданные записи; `verify_entry` — ещё один буфер 64 КиБ. Накопления распакованных данных нет. Фактический замер 4 ГиБ — ниже; нормативный порог не вводился.
+6. **Отчёт и сдача.** Изменены только разрешённые файлы задачи; статус реестра — `review`. Все собственные изменения закоммичены в ветке задачи. В `main` не сливал, push/rebase не выполнял. Посторонний исходный `3D_am_open_questions_e2472e9.zip` оставлен без изменения и не включён в коммиты.
+
+### Сценарий → тесты
+
+Все новые ZIP-тесты имеют `RecordProperty("req", ...)` с `ADR-0035`; проверка исключений дополнительно `ADR-0032`, путей — `ADR-0012`, замер — `K-116`.
+
+| № | Сценарий | Выполненные тесты |
+|---|---|---|
+| 1 | Stored, Deflate, пустые записи/архив, комментарий, ZIP64 EOCD/extra с малыми размерами, CRC/SHA | `ZipReader.CorrectStoredDeflateEmptyCommentsAndZip64`, `ZipStream.Sha256KnownVectorsAndFinalization`, `ZipInterop.PythonZipfileFixturesBytesAndSha256` |
+| 2 | EOCD отсутствует/обрезан, длина комментария, ложная сигнатура, последний точный кандидат, неверный указатель ZIP64 | `ZipReader.EocdBoundaryLastCandidateAndZip64Pointer` |
+| 3 | Число/размер/смещение/сигнатура каталога, TLV extra, обязательные поля ZIP64 и частичная насыщенность | `ZipReader.CentralDirectoryCountsRangesSignaturesAndExtras` |
+| 4 | Локальные имя/метод/CRC/размеры/флаги шифрования/смещение/ZIP64 extra | `ZipReader.LocalHeaderConsistency` |
+| 5 | Общий локальный заголовок, данные поверх соседней записи/каталога, заголовок в каталоге | `ZipReader.OverlappingHeadersDataAndDirectory` |
+| 6 | Точные дубликаты; case/NFC-коллизии, включая fallback для невалидного UTF-8 | `ZipReader.DuplicateNamesAreStructuralButCaseAndNfcAreProfile` |
+| 7 | Все запрещённые пути, 200/201 байт ASCII и UTF-8, NFC, управляющие символы, отсутствие преобразования | `Paths.StrictContainerCheckNeverRepairsInput`; тесты группы 6/8 проверяют применение в профиле |
+| 8 | Многотомность; шифрование/метод 99; метод 12 открывается механизмом, поток запрещён; отсутствие бита 11 | `ZipReader.MultidiskIsUnsupported`, `ZipReader.ForeignFeaturesKindsAndAllProfileCodes` |
+| 9 | Первый лишний байт, недобор, хвост/обрыв/ошибка Deflate, CRC, лимит до распаковки, общий бюджет на второй записи | `ZipStream.SizeCrcTruncationTailAndInvalidInflate`, `ZipStream.ExcessStopsAtFirstByteAndBudgetIsSharedAndSticky`, `ZipReader.LimitsBeforeAllocationAndHugeCountInTinyFile` |
+| 10 | Data descriptor с/без сигнатуры, ZIP64, неверные CRC/размер, обрезанный descriptor, ZIP64 только в центральном каталоге | `ZipReader.DataDescriptorsWithAndWithoutSignatureAndZip64`, Python-фикстуры descriptor/descriptor-zip64 |
+| 11 | Directory, Unix symlink/special: свойства, нарушение профиля, возможность читать байты | `ZipReader.ForeignFeaturesKindsAndAllProfileCodes` |
+| 12 | Малые лимиты числа записей/каталога/имени/размера, 2^32−1 записей в крошечном ZIP64 | `ZipReader.LimitsBeforeAllocationAndHugeCountInTinyFile` |
+| 13 | Полные 4 ГиБ нулей, ZIP64 Deflate, SHA-256, время и пик процесса | `ZipStream.FourGiBZip64ZerosFullSha256AndPeakMemory` |
+| 14 | Все шесть исходов probe, версия, cause, чужой id, повреждённый JSON, физически первая запись, ID на границе буферов, лимит кодека | `ZipProbe.AllSixOutcomesVersionAndCause`, `ZipProbe.PhysicalFirstEntryMarkerBoundaryAndCodecLimit` |
+| 15 | Все пять ZIP Python zipfile, точные байты и SHA-256, descriptor, force_zip64 | `ZipInterop.PythonZipfileFixturesBytesAndSha256` |
+
+Дополнительно: `ZipReader.ShortReadsAndMemoryOwnership` — короткие чтения источника и владение буфером; `ZipStream.FileSourceSharedReadLongPathAndErrors` — Windows-путь длиннее MAX_PATH, совместное чтение и ошибка открытия; `ZipReader.SourceExceptionsBecomeResultsAndStreamErrorsStaySticky` — барьер исключений и окончательность ошибки. Профиль не требует manifest-first, а все его коды проверяются отдельными примерами.
+
+### Команды и фактический вывод
+
+Генерация фикстур: `python tools/fixtures/make_zip_fixtures.py`. После неё сверены все пять SHA-256 архивов с `expected.json`: `fixture archive hashes: True`.
+
+```text
+tools\build_min.cmd
+100% tests passed, 0 tests failed out of 83
+Total Test time (real) = 13.98 sec
+
+tools\build_cli.cmd
+100% tests passed, 0 tests failed out of 119
+Total Test time (real) = 304.22 sec
+
+tools\build_cli.cmd --offline
+100% tests passed, 0 tests failed out of 119
+Total Test time (real) = 280.41 sec
+```
+
+Логи финальной версии: `.cache/t007-min.log`, `.cache/t007-cli-final.log`, `.cache/t007-offline.log`; полный вывод каждого CLI-теста 13 сохранён в `.cache/t007-cli-tests.log` / `.cache/t007-offline-tests.log`. Проверка кэшей — `.cache/t007-cache-audit.log`, снимки `.cache/t007-cache-{before,after}.json`. `git diff --check` — без замечаний. В минимальном Ninja нет зависимостей zlib/OpenSSL; публичные заголовки их не включают, новые исходники — UTF-8 без BOM.
+
+Промежуточный прогон обнаружил неверное ожидание в тесте: математически целое `1.0` кодек V1 канонизирует в `1`; для отрицательного примера взято `1.5`. Кодек T-006 не менялся. После исправления ожидания и добавления граничных случаев выполнены полные финальные прогоны выше.
+
+### Замер сценария 13
+
+ZIP64-файл содержит ровно 4 294 967 296 распакованных нулевых байтов; сжатый файл — 4 174 747 байт, находится только в `.cache/zip-tests/four-gib-zeros.zip`. Генератор сжимает нули порциями по 64 КиБ. Читатель заново открывает файл и читает его целиком с ровно достаточным общим бюджетом. Проверены размер, CRC-32 и SHA-256; SHA-256 также рассчитан по исходным порциям генератора. Отдельные известные векторы SHA-256: пустая строка и `abc`; Python проверяет независимые хеши малых фикстур.
+
+```text
+CLI: ZIP64 4GiB: compressed_file_bytes=4174747 generate_seconds=103.31 read_seconds=34.0029 sha256=8479e43911dc45e89f934fe48d01297e16f51d17aa561d4d1c216b1ae0fcddca peak_working_set_bytes=39243776 peak_commit_bytes=31780864
+OFFLINE: ZIP64 4GiB: compressed_file_bytes=4174747 generate_seconds=94.2756 read_seconds=26.5767 sha256=8479e43911dc45e89f934fe48d01297e16f51d17aa561d4d1c216b1ae0fcddca peak_working_set_bytes=39211008 peak_commit_bytes=31834112
+```
+
+Пик измерен `GetProcessMemoryInfo`: `PeakWorkingSetSize` и `PeakPagefileUsage`. Он включает сам тест, генератор и временные копии сжатого архива, а не только читатель. Это фактические замеры Debug, без порогов времени/памяти и без назначения нормативов O-17.
+
+### Детали реализации, отклонения, вопросы
+
+- Поведение `ZipPathMapper` сохранено: общий предикат запрещённых байтов извлечён без изменения набора. Строгая проверка дополнительно отклоняет DEL/C1 (Unicode U+007F…U+009F), не-NFC и прочие ненормативные пути; маппер по-прежнему преобразует исходные пути и не приобретает новых правил переименования. `Result<void>` возвращает первую причину в `ctx.detail`, не исправляя вход.
+- При бите 3 descriptor проверяется в пределах следующего физического диапазона; отсутствующий/обрезанный обязательный descriptor — `invalid_structure`. Поддержаны обе сигнатурные формы и 32/64-битные размеры. Источник структуры — [PKWARE APPNOTE 6.3.10](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT), разделы 4.3/4.5.
+- При нулевом бюджете непустая запись отвергается до создания буферов потока. После ровно заявленного размера допускается однобайтовая проверка конца в фиксированном внутреннем буфере: лишний байт даёт `entry_corrupt`, не выдаётся вызывающему коду и не накапливается. Благодаря этому исчерпанный ровно достаточный бюджет не мешает проверить корректный EOF.
+- Поиск FormatID в первой физической записи также ограничен `CodecLimits::max_bytes`; данные для него не накапливаются целиком. Признак своей версии читается через V1; V2/V3 и ограничения версии из схемы не выполняются.
+- `am.zip.profile.archive_comment` явно помечен как предложение управляющего; сам механизм комментарии допускает. Реестр переносимых extra fields не вводился.
+- Выходов за разрешённый набор файлов и изменений требований/архитектуры нет. Блокирующих вопросов нет. O-17, Linux/CI, писатель ZIP и V3/V4 остаются за рамками T-007.
