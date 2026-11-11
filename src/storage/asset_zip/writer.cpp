@@ -241,7 +241,7 @@ Result<WrittenEntry> ZipWriter::copy_raw(const ZipArchive& archive, std::size_t 
     if (source.encrypted || (source.method != 0 && source.method != 8)) unsupported("Raw-copy compression/encryption cannot be verified");
     Record r; r.entry.name = source.raw_name; r.entry.method = static_cast<CompressionMethod>(source.method);
     r.entry.uncompressed_size = source.uncompressed_size; r.entry.compressed_size = source.compressed_size; r.entry.crc32 = source.crc32;
-    r.dos = impl_->options.dos_time; r.local64 = source.uncompressed_size >= max32 || source.compressed_size >= max32;
+    r.dos = {source.dos_date, source.dos_time}; r.local64 = source.uncompressed_size >= max32 || source.compressed_size >= max32;
     r.local_extra = carried_extra(source.local_extra, options); r.central_extra = carried_extra(source.central_extra, options);
     if (!source.comment.empty() && !options.carry_comment) write_fail(Errc::unsupported, "am.zip.write.extra_not_preserved", "Entry comment is not authorized for transfer");
     if (options.carry_comment) r.comment = source.comment;

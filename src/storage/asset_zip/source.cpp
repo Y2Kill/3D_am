@@ -70,16 +70,20 @@ Result<std::shared_ptr<const RandomAccessSource>> memory_source(std::vector<std:
   } catch (const std::bad_alloc&) { return error("Allocation failed", true); }
 }
 Result<std::shared_ptr<const RandomAccessSource>> file_source(const std::filesystem::path& path) {
+  return file_source(path, false);
+}
+Result<std::shared_ptr<const RandomAccessSource>> file_source(const std::filesystem::path& path, bool share_delete) {
   try {
     auto source = std::make_shared<FileSource>();
     const auto native = paths::native(std::filesystem::absolute(path));
 #ifdef _WIN32
-    source->handle = CreateFileW(native.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, nullptr);
+    source->handle = CreateFileW(native.c_str(), GENERIC_READ, FILE_SHARE_READ | (share_delete ? FILE_SHARE_DELETE : 0), nullptr, OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, nullptr);
     if (source->handle == INVALID_HANDLE_VALUE) return error("CreateFileW error=" + std::to_string(GetLastError()));
     LARGE_INTEGER size{};
     if (!GetFileSizeEx(source->handle, &size) || size.QuadPart < 0) return error("GetFileSizeEx failed");
     source->length = static_cast<std::uint64_t>(size.QuadPart);
 #else
+    (void)share_delete;
     source->file.open(native, std::ios::binary);
     if (!source->file) return error("Cannot open file");
     source->file.seekg(0, std::ios::end);

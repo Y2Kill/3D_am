@@ -33,15 +33,27 @@ target_compile_definitions(am_unit_tests PRIVATE
   AM_UNICODE_DATA_DIR="${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0")
 if(AM_WITH_CONTAINER)
   find_package(ZLIB REQUIRED)
+  find_package(unofficial-sqlite3 CONFIG REQUIRED)
   target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp unit/test_manifest_wide.cpp
     unit/zip_builder.cpp unit/test_zip_reader.cpp unit/test_zip_stream.cpp unit/test_zip_probe.cpp
-    unit/test_zip_writer.cpp unit/test_zip_writer_large.cpp unit/test_zip_writer_interop.cpp)
+    unit/test_zip_writer.cpp unit/test_zip_writer_large.cpp unit/test_zip_writer_interop.cpp
+    unit/test_state_journal.cpp unit/test_commit_protocol.cpp)
+  add_executable(am_commit_crash_helper integration/commit_crash_helper.cpp)
+  target_link_libraries(am_commit_crash_helper PRIVATE am::storage)
+  am_apply_defaults(am_commit_crash_helper)
+  add_dependencies(am_unit_tests am_commit_crash_helper)
+  target_link_libraries(am_unit_tests PRIVATE unofficial::sqlite3::sqlite3)
   target_link_libraries(am_unit_tests PRIVATE ZLIB::ZLIB)
   target_compile_definitions(am_unit_tests PRIVATE
     AM_MANIFEST_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/manifest/s7"
     AM_MANIFEST_SCHEMA="${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.draft.schema.json"
     AM_ZIP_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/zip"
-    AM_ZIP_CACHE="${PROJECT_SOURCE_DIR}/.cache/zip-tests")
+    AM_ZIP_CACHE="${PROJECT_SOURCE_DIR}/.cache/zip-tests"
+    AM_COMMIT_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/commit-tests"
+    AM_COMMIT_HELPER="$<TARGET_FILE:am_commit_crash_helper>")
+  if(WIN32)
+    target_compile_definitions(am_unit_tests PRIVATE _WIN32_WINNT=0x0A00)
+  endif()
   if(WIN32)
     target_link_libraries(am_unit_tests PRIVATE psapi)
   endif()

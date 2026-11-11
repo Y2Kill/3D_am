@@ -7,9 +7,14 @@ set(AM_STORAGE_SOURCES archive/volume_detect.cpp)
 if(AM_WITH_CONTAINER)
   find_package(ZLIB REQUIRED)
   find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+  find_package(unofficial-sqlite3 CONFIG REQUIRED)
+  file(READ "${PROJECT_SOURCE_DIR}/schemas/sql/state.sql" AM_STATE_SCHEMA_SQL)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/schemas/sql/state.sql")
+  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/state_schema.hpp"
+    CONTENT "#pragma once\ninline constexpr const char state_schema_sql[] = R\"AMSQL(${AM_STATE_SCHEMA_SQL})AMSQL\";\n")
   list(APPEND AM_STORAGE_SOURCES asset_zip/source.cpp asset_zip/sha256.cpp
     asset_zip/reader.cpp asset_zip/profile.cpp asset_zip/sink.cpp
-    asset_zip/writer.cpp asset_zip/compression_policy.cpp)
+    asset_zip/writer.cpp asset_zip/compression_policy.cpp db/state_journal.cpp commit/protocol.cpp)
 endif()
 am_add_module(storage
   SOURCES ${AM_STORAGE_SOURCES}
@@ -17,4 +22,9 @@ am_add_module(storage
   FORBID services processing automation gui)
 if(AM_WITH_CONTAINER)
   target_link_libraries(am_storage PRIVATE ZLIB::ZLIB OpenSSL::Crypto)
+  target_link_libraries(am_storage PRIVATE unofficial::sqlite3::sqlite3)
+  target_include_directories(am_storage PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  if(WIN32)
+    target_compile_definitions(am_storage PRIVATE _WIN32_WINNT=0x0A00)
+  endif()
 endif()

@@ -28,6 +28,7 @@ struct EntryInfo {
   EntryKind kind = EntryKind::regular;
   std::vector<std::byte> central_extra, local_extra;
   std::vector<std::byte> comment;
+  std::uint16_t dos_time = 0, dos_date = 0;
 };
 struct ArchiveSummary {
   std::uint64_t entry_count = 0, directory_offset = 0, directory_size = 0, unaccounted_bytes = 0;

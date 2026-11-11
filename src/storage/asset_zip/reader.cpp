@@ -113,6 +113,7 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     if (variable_length > directory.size() - cursor) fail("Central directory variable fields exceed directory");
     EntryInfo entry;
     entry.index = parsed.entries.size(); entry.version_made_by = u16(header, 4); entry.flags = u16(header, 8); entry.method = u16(header, 10);
+    entry.dos_time = u16(header, 12); entry.dos_date = u16(header, 14);
     entry.crc32 = u32(header, 16); entry.compressed_size = u32(header, 20); entry.uncompressed_size = u32(header, 24);
     central_wide_sizes.push_back(entry.compressed_size == max32 || entry.uncompressed_size == max32);
     entry.external_attributes = u32(header, 38); entry.local_offset = u32(header, 42);
