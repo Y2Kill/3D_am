@@ -11,12 +11,68 @@
 #include <nlohmann/json-schema.hpp>
 
 namespace s7 {
+using Ordered = nlohmann::ordered_json;
+Ordered history_entry(std::uint64_t revision) {
+  return {{"revision", revision}, {"operation_id", "12345678-1234-4123-8123-000000000004"},
+          {"timestamp", "2026-11-11T00:00:00Z"}, {"operation", "metadata_changed"},
+          {"changes", Ordered::array({{{"kind", "metadata_set"}, {"target", "asset"}}})}};
+}
+void edit_dom(Ordered& value, bool structural) {
+  value["asset"]["metadata"]["title"] = "S7 edited title";
+  if (!structural) return;
+  auto& values = value.at("asset").at("metadata").at("custom_values");
+  if (values.size() < 2 || values[0].at("field_id").get<std::string>().rfind("user:", 0) != 0 ||
+      values[1].at("field_id").get<std::string>().rfind("plugin:", 0) != 0)
+    throw std::runtime_error("structural fixture lacks core value before plugin value");
+  values.erase(values.begin());
+  const auto revision = value["asset"]["revision"].get<std::uint64_t>() + 1;
+  value["asset"]["revision"] = revision;
+  value["asset"]["modified_at"] = "2026-11-11T00:00:00Z";
+  value["history"]["entries"].push_back(history_entry(revision));
+}
+std::string write_hybrid(const Ordered& value, const std::vector<std::string>& fragments) {
+  std::string output;
+  auto write = [&](auto&& self, const Ordered& node) -> void {
+    if (node.is_binary()) {
+      const auto& bytes = node.get_binary();
+      if (bytes.size() != sizeof(std::uint64_t)) throw std::runtime_error("invalid fragment handle");
+      std::uint64_t id = 0;
+      for (std::size_t i = 0; i < bytes.size(); ++i) id |= static_cast<std::uint64_t>(bytes[i]) << (8 * i);
+      if (id >= fragments.size()) throw std::runtime_error("unknown fragment handle");
+      const auto& fragment = fragments[static_cast<std::size_t>(id)];
+      const Document checked(fragment);
+      if (checked.duplicates) throw std::runtime_error("duplicate fragment keys");
+      output += fragment;
+    } else if (node.is_object()) {
+      output += '{';
+      bool comma = false;
+      for (auto it = node.begin(); it != node.end(); ++it) {
+        if (comma) output += ',';
+        comma = true;
+        output += Ordered(it.key()).dump(); output += ':';
+        self(self, it.value());
+      }
+      output += '}';
+    } else if (node.is_array()) {
+      output += '[';
+      bool comma = false;
+      for (const auto& item : node) {
+        if (comma) output += ',';
+        comma = true;
+        self(self, item);
+      }
+      output += ']';
+    } else output += node.dump();
+  };
+  write(write, value);
+  return output;
+}
 namespace {
 using Json = nlohmann::ordered_json;
 struct Dom final : Candidate {
   Json value;
   void parse(std::string_view text) override { value = Json::parse(text); }
-  std::string serialize() override { value["asset"]["metadata"]["title"] = "S7 edited title"; return value.dump(); }
+  std::string serialize(bool structural) override { edit_dom(value, structural); return value.dump(); }
   void validate_native(std::string_view) override {}
 };
 enum class EventKind { object, end_object, array, end_array, key, string, number, boolean, null };
@@ -88,9 +144,9 @@ struct SaxCandidate final : Candidate {
   void parse(std::string_view text) override {
     if (!Json::sax_parse(text, &sax)) throw std::runtime_error(sax.error);
   }
-  std::string serialize() override {
+  std::string serialize(bool structural) override {
     const auto text = sax.tree.serialize(false);
-    return Document(text).edit_title("S7 edited title");
+    return Document(text).edit_known(structural);
   }
   void validate_native(std::string_view) override {}
 };
@@ -115,9 +171,9 @@ struct RapidCandidate final : Candidate {
                                      rapidjson::kParseValidateEncodingFlag>(input, handler);
     if (!result) throw std::runtime_error("RapidJSON parse error " + std::to_string(result.Code()) + " at " + std::to_string(result.Offset()));
   }
-  std::string serialize() override {
+  std::string serialize(bool structural) override {
     const auto text = handler.tree.serialize(true);
-    return Document(text).edit_title("S7 edited title");
+    return Document(text).edit_known(structural);
   }
   void validate_native(std::string_view) override {}
 };
@@ -125,22 +181,42 @@ struct RawCandidate final : Candidate {
   std::string text;
   void parse(std::string_view input) override {
     Document checked(input);
-    if (checked.duplicates) throw std::runtime_error("D duplicate key rejected");
+    if (checked.duplicates) throw std::runtime_error("D1 duplicate key rejected");
     text = input;
   }
-  std::string serialize() override { return Document(text).edit_title("S7 edited title"); }
+  std::string serialize(bool structural) override { return Document(text).edit_known(structural); }
+  void validate_native(std::string_view) override {}
+};
+struct HybridCandidate final : Candidate {
+  Json value;
+  std::vector<std::string> fragments;
+  void parse(std::string_view input) override {
+    const Document checked(input);
+    if (checked.duplicates) throw std::runtime_error("D2 duplicate key rejected");
+    value = Json::parse(checked.shadow());
+    fragments.clear();
+    for (const auto root : checked.opaque_roots()) {
+      const auto& token = checked.tokens[root];
+      const auto id = static_cast<std::uint64_t>(fragments.size());
+      fragments.emplace_back(input.substr(token.begin, token.end - token.begin));
+      std::vector<std::uint8_t> bytes(sizeof(id));
+      for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::uint8_t>(id >> (8 * i));
+      // JSON has no binary value: user objects/strings cannot forge this handle.
+      value[Json::json_pointer(checked.path(root))] = Json::binary(std::move(bytes));
+    }
+  }
+  std::string serialize(bool structural) override { edit_dom(value, structural); return write_hybrid(value, fragments); }
   void validate_native(std::string_view) override {}
 };
 }  // namespace
-std::unique_ptr<Candidate> candidate(char id) {
-  switch (id) {
-    case 'A': return std::make_unique<Dom>();
-    case 'B': return std::make_unique<SaxCandidate>();
-    case 'C': return std::make_unique<RapidCandidate>();
-    case 'D': return std::make_unique<RawCandidate>();
-    case 'E': return jsoncons_candidate();
-    default: throw std::runtime_error("unknown candidate");
-  }
+std::unique_ptr<Candidate> candidate(std::string_view id) {
+  if (id == "A") return std::make_unique<Dom>();
+  if (id == "B") return std::make_unique<SaxCandidate>();
+  if (id == "C") return std::make_unique<RapidCandidate>();
+  if (id == "D1") return std::make_unique<RawCandidate>();
+  if (id == "D2") return std::make_unique<HybridCandidate>();
+  if (id == "E") return jsoncons_candidate();
+  throw std::runtime_error("unknown candidate");
 }
 nlohmann::ordered_json validator_probe(std::string_view text, std::string_view schema) {
   nlohmann::ordered_json result;

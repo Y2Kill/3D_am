@@ -39,15 +39,22 @@ Json schema_probes(std::string_view text, std::string_view schema) {
 
 int main(int argc, char** argv) {
   s7::initialize_process();
-  char id = 'A';
+  std::string id = "A", component;
   fs::path input, out = "s7-output";
   bool probe = false;
+  bool structural = true;
   std::size_t hypothesis_bytes = 128 * 1024 * 1024;
   try {
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
       if (arg == "--probe-schema") probe = true;
-      else if (i + 1 < argc && arg == "--candidate") id = argv[++i][0];
+      else if (i + 1 < argc && arg == "--candidate") id = argv[++i];
+      else if (i + 1 < argc && arg == "--memory-component") component = argv[++i];
+      else if (i + 1 < argc && arg == "--edit") {
+        const std::string mode = argv[++i];
+        if (mode != "title" && mode != "structural") throw std::runtime_error("unknown edit mode");
+        structural = mode == "structural";
+      }
       else if (i + 1 < argc && arg == "--input") input = utf8_path(argv[++i]);
       else if (i + 1 < argc && arg == "--out") out = utf8_path(argv[++i]);
       else if (i + 1 < argc && arg == "--hypothesis-max-depth") s7::hypothesis_max_depth = std::stoull(argv[++i]);
@@ -58,7 +65,7 @@ int main(int argc, char** argv) {
   } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 2; }
 
   const auto cycle_start = Clock::now();
-  Json report = {{"candidate", std::string(1, id)}, {"status", "unsafe_write"}, {"stage", "setup"},
+  Json report = {{"candidate", id}, {"edit", structural ? "structural" : "title"}, {"status", "unsafe_write"}, {"stage", "setup"},
                  {"parse_accepted", false}, {"v2_accepted", false}, {"committed", false},
                  {"parse_ms", nullptr}, {"v2_ms", nullptr}, {"serialize_ms", nullptr},
                  {"locations", {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
@@ -69,6 +76,29 @@ int main(int argc, char** argv) {
   try {
     fs::create_directories(out);
     const auto schema = s7::read_file(fs::path(S7_ROOT) / "schemas/manifest-1.0.draft.schema.json");
+    if (!component.empty()) {
+      const auto text = s7::read_file(input);
+      if (component == "reference" || component == "reference_maps") {
+        const s7::Document reference(text);
+        if (component == "reference_maps") {
+          const auto values = reference.fingerprints(true);
+          const auto numbers = reference.numeric_lexemes(true);
+          report["map_groups"] = values.size() + numbers.size();
+        }
+      } else if (component == "candidate") {
+        auto mechanism = s7::candidate(id);
+        mechanism->parse(text);
+        const auto output = mechanism->serialize(structural);
+        report["output_bytes"] = output.size();
+      } else if (component != "input") throw std::runtime_error("unknown memory component");
+      const auto peak = s7::memory();
+      report["status"] = "memory_probe";
+      report["component"] = component;
+      report["peak_working_set"] = peak.peak_working_set;
+      report["peak_pagefile"] = peak.peak_pagefile;
+      std::cout << report.dump() << '\n';
+      return 0;
+    }
     if (probe) {
       const auto text = input.extension() == ".zip" ? s7::read_zip(input).at("manifest.json") : s7::read_file(input);
       std::cout << schema_probes(text, schema).dump() << '\n';
@@ -95,7 +125,7 @@ int main(int argc, char** argv) {
     report["depth"] = before.max_depth;
     if (before.duplicates) {
       report["stage"] = "duplicate_probe";
-      const auto serialized = mechanism->serialize();
+      const auto serialized = mechanism->serialize(false);
       const s7::Document duplicate_result(serialized);
       report["duplicate_policy"] = duplicate_result.duplicates ? "preserved" : "coalesced";
       Json observed = Json::array();
@@ -108,21 +138,22 @@ int main(int argc, char** argv) {
     report["stage"] = "v2";
     start = Clock::now();
     try {
-      if (id == 'E') mechanism->validate_native(schema);
+      if (id == "E") mechanism->validate_native(schema);
       else s7::validate_shadow(before.shadow(), schema);
     } catch (...) { report["v2_ms"] = elapsed(start); throw; }
     report["v2_ms"] = elapsed(start);
     report["v2_accepted"] = true;
-    report["validator"] = id == 'E' ? "jsoncons_native_2020_12" : "jsoncons_same_type_shadow_2020_12";
+    report["validator"] = id == "E" ? "jsoncons_native_2020_12" : "jsoncons_same_type_shadow_2020_12";
     report["stage"] = "serialize";
     start = Clock::now();
-    auto output = mechanism->serialize();
+    auto output = mechanism->serialize(structural);
     report["serialize_ms"] = elapsed(start);
     report["stage"] = "guard";
     const s7::Document after(output);
     if (after.duplicates) throw std::runtime_error("output duplicates");
-    const auto old_values = before.fingerprints(), new_values = after.fingerprints();
-    const auto old_numbers = before.numeric_lexemes(), new_numbers = after.numeric_lexemes();
+    const auto old_values = before.fingerprints(true), new_values = after.fingerprints(true);
+    const auto old_numbers = before.numeric_lexemes(true), new_numbers = after.numeric_lexemes(true);
+    report["indexed_equal"] = before.fingerprints() == after.fingerprints() && before.numeric_lexemes() == after.numeric_lexemes();
     report["opaque_number_counts"] = Json::array();
     bool exact = true;
     for (std::size_t i = 0; i < old_values.size(); ++i) {
@@ -132,6 +163,12 @@ int main(int argc, char** argv) {
       exact = exact && equal;
     }
     if (!exact) throw std::runtime_error("unsafe write: opaque paths, types, values or numeric lexemes changed");
+    auto expected = Json::parse(before.shadow());
+    s7::edit_dom(expected, structural);
+    if (nlohmann::json(expected) != nlohmann::json::parse(after.shadow())) throw std::runtime_error("known structural edit differs");
+    s7::validate_shadow(after.shadow(), schema);
+    report["output_v2_accepted"] = true;
+    report["structural_edit_verified"] = structural;
     const auto title = after.child(after.child(after.child(0, "asset"), "metadata"), "title");
     if (title == s7::missing || after.tokens[title].decoded != "S7 edited title") throw std::runtime_error("known title edit missing");
     auto replacement = entries;
@@ -143,7 +180,7 @@ int main(int argc, char** argv) {
     const auto checked = s7::read_zip(temporary);
     if (checked != replacement) throw std::runtime_error("ZIP reopen differs before replacement");
     const s7::Document checked_manifest(checked.at("manifest.json"));
-    if (checked_manifest.fingerprints() != old_values || checked_manifest.numeric_lexemes() != old_numbers)
+    if (checked_manifest.fingerprints(true) != old_values || checked_manifest.numeric_lexemes(true) != old_numbers)
       throw std::runtime_error("ZIP numeric guard failed");
     s7::atomic_replace(temporary, zip);
     report["committed"] = true;

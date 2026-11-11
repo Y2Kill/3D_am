@@ -72,7 +72,8 @@ def manifest(numbers):
 
 
 def validate_small(directory):
-    sys.path.insert(0, str(ROOT / '.cache/pylib'))
+    if sys.platform == 'win32':
+        sys.path.insert(0, str(ROOT / '.cache/pylib'))
     import jsonschema
     # Exact numeric placeholders retain their lexemes and JSON number type.
     # Normative integer fields still use Python integers. No float conversion.

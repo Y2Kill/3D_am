@@ -24,11 +24,13 @@ struct Document {
   std::size_t max_depth = 0;
   explicit Document(std::string_view source, std::size_t hypothesis_depth = hypothesis_max_depth);
   std::size_t child(std::size_t parent, std::string_view key) const;
-  std::string path(std::size_t node, bool typed = false) const;
-  std::array<std::map<std::string, std::string>, 6> fingerprints() const;
-  std::array<std::map<std::string, std::string_view>, 6> numeric_lexemes() const;
+  std::string path(std::size_t node, bool typed = false, bool stable = false) const;
+  std::array<std::map<std::string, std::string>, 6> fingerprints(bool stable = false) const;
+  std::array<std::map<std::string, std::string_view>, 6> numeric_lexemes(bool stable = false) const;
+  std::vector<std::size_t> opaque_roots() const;
   std::string shadow() const;
   std::string edit_title(std::string_view title) const;
+  std::string edit_known(bool structural) const;
  private:
   std::vector<int> opaque_groups() const;
 };

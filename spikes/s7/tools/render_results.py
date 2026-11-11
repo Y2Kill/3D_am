@@ -1,132 +1,203 @@
-"""Render the measured Windows matrix, including failures and unavailable metrics."""
+"""Render measured Windows/Linux matrices without choosing the product JSON stack."""
 import argparse
 import json
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
+CANDIDATES = ('A', 'B', 'C', 'D1', 'D2', 'E')
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--results', type=pathlib.Path, required=True)
-parser.add_argument('--output', type=pathlib.Path, default=ROOT / 'spikes/s7/RESULTS.md')
+parser.add_argument('--linux-results', type=pathlib.Path, required=True)
+parser.add_argument('--output', type=pathlib.Path, required=True)
 args = parser.parse_args()
-data = json.loads(args.results.read_text(encoding='utf-8'))
-cases = data['cases']
-lines = ['# S7: результаты Windows', '',
-         '**Статус:** наблюдения спайка T-004. Выбор механизма и закрытие O-13 — за управляющим отдельной ADR после Linux. Linux **не выполнялся**.', '',
-         '## Конфигурация', '',
-         '```json', json.dumps(data['configuration'], indent=2, ensure_ascii=False), '```', '',
-         'Машина: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz, 6 ядер / 12 потоков; физическая ОЗУ по Win32_ComputerSystem — 119 992 246 272 байта. '
-         'Система: `' + data['platform'] + '`. Замеры Release, один процесс на повтор, пять последовательных повторов.', '',
-         'Пик памяти включает библиотеки, V1/V2, ZIP, защитный эталон и сравнение. Это стоимость стенда/полного пути, не изолированного JSON-парсера. '
-         'Результат crash не подменяется нулём памяти или успешным отказом: недоступные измерения обозначены «—».', '',
-         'Гипотезы стенда: reference/D max-depth 1024; max JSON bytes 134217728; timeout процесса ' + str(data['hypothesis_timeout_seconds']) +
-         ' с. Они параметризованы и не являются нормативами продукта. Нативные ограничения библиотек проверяются до эталона.', '',
-         '## Зависимости и лицензии', '', '| Порт | Версия baseline | Лицензия |', '|---|---|---|']
-for name in ['nlohmann-json','json-schema-validator','rapidjson','jsoncons','minizip-ng','gtest']:
+platforms = {'Windows': json.loads(args.results.read_text(encoding='utf-8')),
+             'Linux': json.loads(args.linux_results.read_text(encoding='utf-8'))}
+lines = ['# S7: результаты T-004 после доработки', '',
+         'Эксперимент на закреплённом baseline, не утверждение формата 1.0 и не ADR. '
+         'Первичный Windows-отчёт и его тестовые итоги сохранены в файле задачи; ниже — новые измерения со структурной правкой.', '',
+         '## Механизмы и сценарий', '',
+         '- A: nlohmann ordered DOM; правки в DOM.',
+         '- B: nlohmann SAX, лексемы number_float и собственные события; C: RapidJSON NumbersAsStrings + проверенный RawValue. '
+         'B и C и в первом варианте меняли title вклейкой после сериализации; теперь структурные правки также выполняются по позициям токенов.',
+         '- D1: прежний D, правка исходного текста по позициям токенов. Он сохранён как отдельный механизм; его успех не доказывает работу DOM-гибрида.',
+         '- D2: известная часть в nlohmann ordered DOM; непрозрачные корни заменены значениями binary с 64-битным номером в отдельной таблице. '
+         'JSON не содержит binary-типа: строки, объекты bytes/subtype и похожие маркеры из манифеста не создают заглушку. '
+         'Заглушка переезжает вместе с владельцем при erase массива. Собственный писатель обходит DOM, экранирует ключи/обычные значения через nlohmann '
+         'и выводит фрагмент только после нового строгого разбора ровно одного JSON-значения; подстановка по шаблонам отсутствует.',
+         '- E: jsoncons lossless_number, правки в его DOM, собственная V2 2020-12.', '',
+         'Все кандидаты меняют title, удаляют первый user custom_value перед plugin custom_value, добавляют одну metadata_changed-запись '
+         'history.entries только с известными полями, увеличивают asset.revision и обновляют modified_at до timestamp новой записи. '
+         'Проверяются входная V2 и выходная V2, ожидаемая известная часть, все шесть непрозрачных мест, содержимое ZIP и повторное открытие. '
+         'Запись транзакционна: проверенный временный ZIP в той же папке, атомарная замена. При обработанном отказе исходный ZIP побайтово прежний; '
+         'независимый guard проверяет SHA-256.', '',
+         '## Устойчивые ключи защиты', '',
+         '| Владелец | Ключ |', '|---|---|',
+         '| extensions | ExtensionID — ключ объекта |',
+         '| field_definitions / custom_values | id / field_id (FieldID) |',
+         '| files, groups | id (FileID / GroupID); file_id в ссылках обозначает этот id |',
+         '| claims | id (ClaimID, SPEC §9.3) |',
+         '| history.entries | operation_id (OperationID, SPEC §11) |', '',
+         'Scope владельца включён в ключ: asset, конкретный FileID или GroupID. Неоднозначные одинаковые ID отвергаются. '
+         'Внутри непрозрачного поддерева остаётся типизированный JSON-путь: перестановка чисел внутри массива обнаруживается. '
+         'В changes[] собственного ID по SPEC нет: для дополнительного непрозрачного ключа сохраняется индекс изменения внутри OperationID; '
+         'этот массив в сценарии не редактируется. Проверка не объявляет произвольную перестановку changes поддержанной. '
+         'Индексная карта сохранена отдельно: на структурной правке она ожидаемо различается, на успешной правке только title — совпадает.', '',
+         '## Конфигурация и зависимости', '']
+for label, data in platforms.items():
+    lines += [label + ': `' + data['platform'] + '`', '', '```json',
+              json.dumps(data['configuration'], indent=2, ensure_ascii=False), '```', '']
+lines += ['Intel Core i7-9750H @ 2.60GHz, 6 ядер / 12 потоков; физическая ОЗУ Windows — 119 992 246 272 байта. '
+          'Release, пять отдельных последовательных процессов на пару документ/кандидат; дополнительно один title-only процесс на пару. '
+          'WSL: установленная Ubuntu 24.04, GCC; все рабочие файлы через /mnt/d (drvfs). '
+          'Этот путь обычно медленнее родной ФС и влияет на время ZIP/цикла; отдельного сравнения с ext4 в задаче нет. '
+          'На сохранность лексем тип ФС не влияет.', '',
+          'Гипотезы, не нормативы продукта: max-depth reference/D1/D2 1024, max JSON bytes 134217728, '
+          'тайм-аут процесса ' + str(platforms['Windows']['hypothesis_timeout_seconds']) + ' с. Нативный разбор исполняется до общего эталона.', '',
+          '| Порт | Версия | Лицензия |', '|---|---|---|']
+for name in ('nlohmann-json', 'json-schema-validator', 'rapidjson', 'jsoncons', 'minizip-ng', 'gtest'):
     port = json.loads((ROOT / '.cache/vcpkg/ports' / name / 'vcpkg.json').read_text(encoding='utf-8'))
-    version = next(port[k] for k in ('version','version-semver','version-string','version-date') if k in port)
+    version = next(port[k] for k in ('version', 'version-semver', 'version-string', 'version-date') if k in port)
     if port.get('port-version'):
         version += '#' + str(port['port-version'])
     lines.append(f"| {name} | {version} | {port['license']} |")
 
-def adapter_lines(start, end):
-    source = (ROOT / 'spikes/s7/src/candidates.cpp').read_text(encoding='utf-8')
-    body = source[source.index(start):source.index(end,source.index(start))]
-    return sum(bool(line.strip()) for line in body.splitlines())
 
-loc = {'A':adapter_lines('struct Dom final','enum class EventKind'),
-       'B':adapter_lines('struct Sax :','struct RapidHandler'),
-       'C':adapter_lines('struct RapidHandler','struct RawCandidate'),
-       'D':adapter_lines('struct RawCandidate','}  // namespace') ,
-       'E':sum(bool(x.strip()) for x in (ROOT/'spikes/s7/src/jsoncons_candidate.cpp').read_text(encoding='utf-8').splitlines())}
-shared = adapter_lines('enum class EventKind','struct Sax :')
-reference_loc = sum(bool(x.strip()) for x in (ROOT/'spikes/s7/src/reference.cpp').read_text(encoding='utf-8').splitlines())
-lines += ['', '## Матрица кандидатов', '',
-          'A — nlohmann ordered DOM; B — nlohmann SAX с лексемами number_float и своими узлами; '
-          'C — RapidJSON NumbersAsStrings + проверенный RawValue; D — строгие исходные фрагменты / nlohmann для известных полей; '
-          'E — jsoncons lossless_number. Во всех случаях вложенные объекты и массивы входят в сравнение путей, типов и значений.', '',
-          'В полном цикле A–D используют jsoncons 2020-12 на теневом документе, E — jsoncons на собственном DOM. '
-          'pboettch испытан отдельно на исходных документах и shadow: его положительный результат сам по себе не доказывает ни точность лексем, ни полноту V2.', '',
-          '| ID | Строгий native-разбор 12 недопустимых чисел | valid_all: полный цикл / 6 мест | Вложенность 1000 / 100000 | Fail-closed | LOC адаптера | Windows | Linux |',
-          '|---|---|---|---|---|---:|---|---|']
-for candidate in 'ABCDE':
-    all_case = cases['valid_all.json']['candidates'][candidate]['summary']
-    depth = [','.join(cases[f'depth_{n}.json']['candidates'][candidate]['summary']['outcomes']) for n in (1000,100000)]
-    sites = all_case['locations']
-    status = ','.join(all_case['outcomes']) + ' / ' + ('н/д' if sites is None or all(s is None for s in sites) else ''.join('+' if s else '-' for s in sites))
-    lines.append(f"| {candidate} | {'отверг все' if data['strict_parsers'][candidate] else 'принял часть (см. results.json)'} | {status} | {' / '.join(depth)} | SHA-256 guard PASS | {loc[candidate]} | измерен | не выполнялся |")
-lines += ['', f'LOC — непустые физические строки адаптеров. B/C дополнительно используют общий event writer ({shared} строк). '
-          f'У D основной механизм — общий эталонный токенизатор ({reference_loc} строк) плюс адаптер; он же нужен стенду остальных кандидатов для независимого guard. '
-          'E включает в свой подсчёт адаптер и вызов валидатора. Обвязка ZIP, транзакции, памяти и main общая и не включена в числа адаптеров.', '',
-          'Смысл колонок 6 мест: extensions.data (оба независимых расширения), custom_values.value, generation.params, claims.value, '
-          'field_definitions.default/constraints, history.details/дополнительные changes[]. «+» — лексемы, пути и другие непрозрачные значения совпали; '
-          '«-» — guard обнаружил различие; «н/д» — кандидат не дошёл до проверки. Порядок object-ключей и пробелы не считаются потерей.', '',
-          '### Сохранность по местам на отдельных допустимых фикстурах', '',
-          '| ID | extensions | custom | generation | claims | fields | history |', '|---|---|---|---|---|---|---|']
-for candidate in 'ABCDE':
-    columns = []
-    selected = [case['candidates'][candidate]['summary']['locations'] for name,case in cases.items() if name.startswith('valid_')]
-    for place in range(6):
-        observed = [s[place] for s in selected if s is not None and s[place] is not None]
-        columns.append(f'{sum(observed)}/{len(observed)} совпали; н/д {len(selected)-len(observed)}')
-    lines.append('| ' + candidate + ' | ' + ' | '.join(columns) + ' |')
+def outcome(entry):
+    summary = entry['summary']
+    sites = summary.get('locations')
+    return ','.join(summary['outcomes']) + ' / ' + ('н/д' if not sites or all(x is None for x in sites)
+                                                  else ''.join('+' if x else '-' for x in sites))
 
-lines += ['', '### Дубли ключей', '', '| ID | Непрозрачный | Известный |', '|---|---|---|']
-for candidate in 'ABCDE':
-    columns = []
-    for fixture in ['duplicate_opaque.json','duplicate_known.json']:
-        trial = cases[fixture]['candidates'][candidate]['trials'][0]
-        columns.append(trial.get('duplicate_policy', 'отказ native') + ': ' + str(trial.get('duplicate_values', [])))
-    lines.append('| ' + candidate + ' | ' + ' | '.join(columns) + ' |')
-lines += ['', 'Во всех случаях запись дублей запрещена общим guard. Это экспериментальная мера сохранности, не решение политики O-17.', '',
-          '## V2: реальные результаты', '', 'Пример исходного манифеста:', '```json',
-          json.dumps(data.get('example_validators', {}), indent=2, ensure_ascii=False), '```', '',
-          'Отрицательная фикстура `schema_invalid_claim_extra.json` (лишнее поле claim, запрещённое unevaluatedProperties):',
-          '```json', json.dumps(data['validators']['schema_invalid_claim_extra.json'], indent=2, ensure_ascii=False), '```', '',
-          'pboettch с установленным default_string_format_check загружает данную схему, но загрузка не доказывает поддержку 2020-12: '
-          'результат на запрещённом дополнительном поле отличается от Python-reference и jsoncons. Стенд проверяет поведение закреплённого порта, '
-          'а не вывод по имени версии схемы. Полные пробы обоих валидаторов и shadow для всех 35 документов находятся в results.json.', '',
-          'Shadow заменяет только непрозрачные поддеревья заглушками того же JSON-типа. В данной схеме для generation.params и history.details требуется object; '
-          'extensions.data, plugin custom/claim values, plugin defaults/constraints и дополнительные change-ключи не ограничивают числовые значения. '
-          'Нормативные поля и их ограничения остаются. Проверка лексем остаётся отдельным V1/guard; shadow не объявляет семантику плагина проверенной. '
-          'При изменении схемы применимость shadow необходимо исследовать заново.', '',
-          '### Показательные отказы', '', '| Фикстура | ID | Этап | Наблюдение |', '|---|---|---|---|']
-for name in ['valid_huge_positive.json','valid_negative_zero.json','valid_exponent_1000.json','depth_100000.json']:
-    for candidate in 'ABCDE':
-        trial = cases[name]['candidates'][candidate]['trials'][0]
-        if trial.get('status') != 'success':
-            error = trial.get('error',trial.get('exit_hex',trial['status'])).replace('|','\\|').replace('\n',' ')[:240]
-            lines.append(f"| {name} | {candidate} | {trial.get('stage','процесс')} | {error} |")
 
-lines += ['', '## Замеры: все документы', '',
-          'Медианы по пяти отдельным процессам, время в мс, память в МиБ. Parse — нативный разбор/хранение кандидата, V2 — выбранный validator path, '
-          'serialize — сериализация с правкой title. Цикл включает создание/чтение ZIP, reference, V2, защитное сравнение и транзакцию; '
-          'при отказе это время до отказа, а не успешно выполненный цикл. `—` — этап не достигнут или процесс упал до отчёта. '
-          'При crash доступны только время дочернего процесса wall и код завершения; память/этапы не выдумываются. '
-          'Результаты всех пяти запусков и хеши входов — в build/s7/results.json.', '',
-          '| Документ | ID | Итог | parse | V2 | serialize | цикл/отказ | wall | PeakWorkingSet | PeakPagefile |',
-          '|---|---|---|---:|---:|---:|---:|---:|---:|---:|']
-for name,case in cases.items():
-    for candidate,entry in case['candidates'].items():
-        medians = entry['summary']['medians']
+lines += ['', '## Матрица', '',
+          'Шесть знаков: extensions, custom, generation, claims, fields, history. '
+          '«+» означает совпадение чисел, типов и значений по устойчивому владельцу; «н/д» — guard не достигнут.', '',
+          '| ID | Windows valid_all / 6 мест | Linux valid_all / 6 мест | Строгость Windows / Linux | Fail-closed |', '|---|---|---|---|---|']
+for candidate in CANDIDATES:
+    values = [outcome(data['cases']['valid_all.json']['candidates'][candidate]) for data in platforms.values()]
+    strict = ['все 12 отвергнуты' if data['strict_parsers'][candidate] else 'есть принятые' for data in platforms.values()]
+    lines.append('| ' + candidate + ' | ' + ' | '.join(values) + ' | ' + ' / '.join(strict) + ' | SHA-256 guard PASS |')
+for label, data in platforms.items():
+    lines += ['', '### ' + label + ': сохранность и индексная проверка', '',
+              '| ID | extensions | custom | generation | claims | fields | history | title-only индексная карта |',
+              '|---|---|---|---|---|---|---|---|']
+    for candidate in CANDIDATES:
+        entries = [case['candidates'][candidate] for name, case in data['cases'].items() if name.startswith('valid_')]
+        columns = []
+        for place in range(6):
+            observed = [e['summary']['locations'][place] for e in entries if e['summary'].get('locations') and e['summary']['locations'][place] is not None]
+            columns.append(f'{sum(observed)}/{len(observed)}; н/д {len(entries)-len(observed)}')
+        title = [e['title_only'] for e in entries]
+        columns.append(f"{sum(t.get('indexed_equal') is True for t in title)}/{len(title)} совпали")
+        lines.append('| ' + candidate + ' | ' + ' | '.join(columns) + ' |')
+    failed_e = [name for name, case in data['cases'].items() if name.startswith('valid_') and
+                case['candidates']['E']['summary']['outcomes'] != ['success']]
+    lines += ['', 'E не прошёл следующие допустимые числовые фикстуры: ' + ', '.join('`' + n + '`' for n in failed_e) + '.', '',
+              '### ' + label + ': дубли', '', '| ID | Непрозрачный | Известный |', '|---|---|---|']
+    for candidate in CANDIDATES:
         values = []
-        for key in ['parse_ms','v2_ms','serialize_ms','cycle_ms','wall_ms','peak_working_set','peak_pagefile']:
-            value = medians[key]
-            values.append('—' if value is None else f'{value/(1024*1024) if key.startswith("peak_") else value:.3f}')
-        lines.append('| ' + name + ' | ' + candidate + ' | ' + ','.join(entry['summary']['outcomes']) + ' | ' + ' | '.join(values) + ' |')
-lines += ['', '## Наблюдения и рекомендация исполнителя', '',
-          '**Рекомендация, не архитектурное решение:** продолжить исследование D / гибридного хранения проверенных исходных непрозрачных фрагментов. '
-          'На данной Windows-выборке D прошёл весь обязательный набор лексем; это не основание закрывать S7 без Linux. '
-          'A непригоден для общей гарантии. B требует отдельного решения для integer callbacks и диапазонных отказов до number_float. '
-          'C с данным Reader/флагами ограничен диапазонной обработкой экспонент. E полезен для V2 2020-12 и точных decimal/bigint, '
-          'но отдельный integer -0 не сохраняется. Проверка безопасности записи обязательна и при использовании стороннего lossless API.', '',
-          '## Вопросы O-17 и ограничения эксперимента', '',
-          '- Политика дублей, размерные/глубинные лимиты и тайм-ауты остаются открыты. Успех на глубине 1000 не даёт норматива; '
-          'отказ reference/D на 100000 — результат настроенной гипотезы, а не доказательство принципиального ограничения токенизации.',
-          '- A на глубине 100000 завершился переполнением стека 0xc00000fd; процесс изолирован. Остальные результаты различают native parse и reference guard.',
-          '- Для упавшего процесса нет достоверного post-exit пика памяти: он отмечен как недоступный. Пять запусков crash не усредняются с нулями.',
-          '- Данный стенд проверяет V1/V2 и сохранение содержимого, не V3/V4, доверие плагинов или ZIP-bomb-политику. '
-          'Временный ZIP проверяется до атомарной замены; SHA-256 внешнего guard проверяет исходный ZIP при небезопасной записи.',
-          '- Linux не выполнялся. WSL обнаружен: Ubuntu (default), docker-desktop, оба Stopped, версия 2. Установка/включение и Linux-компилятор не запускались.',
-          '- Схема, SPEC, ADR, libraries.md и продуктовые зависимости не менялись; формат 1.0 и O-13 не объявляются утверждёнными.', '']
+        for fixture in ('duplicate_opaque.json', 'duplicate_known.json'):
+            trial = data['cases'][fixture]['candidates'][candidate]['trials'][0]
+            values.append(trial.get('duplicate_policy', 'отказ native') + ': ' + str(trial.get('duplicate_values', [])))
+        lines.append('| ' + candidate + ' | ' + ' | '.join(values) + ' |')
+    lines += ['', '### ' + label + ': глубина и причина отказа', '',
+              '| ID | Глубина | Итог | Этап | Ошибка / код |', '|---|---:|---|---|---|']
+    for candidate in CANDIDATES:
+        for depth in (64, 1000, 100000):
+            trial = data['cases'][f'depth_{depth}.json']['candidates'][candidate]['trials'][0]
+            reason = trial.get('error', trial.get('exit_hex', '')).replace('|', '\\|').replace('\n', ' ')[:180]
+            lines.append(f"| {candidate} | {depth} | {trial['status']} | {trial.get('stage', 'процесс')} | {reason} |")
+lines += ['', 'Дубли всегда блокируют запись в стенде. Это не утверждение политики O-17.', '', '## V2', '',
+          'A–D2 используют jsoncons 2020-12 на теневом документе, E — на собственном DOM. pboettch отдельно испытан на исходном '
+          'документе и shadow. Само успешное чтение схемы не доказывает поддержку её диалекта.', '']
+for label, data in platforms.items():
+    lines += [label + ', исходный пример:', '```json', json.dumps(data['example_validators'], indent=2, ensure_ascii=False), '```', '',
+              label + ', запрещённое дополнительное поле claim (unevaluatedProperties):', '```json',
+              json.dumps(data['validators']['schema_invalid_claim_extra.json'], indent=2, ensure_ascii=False), '```', '']
+lines += ['pboettch загружает схему, но ложно принимает запрещённое поле claim; jsoncons и Python отвергают. '
+          'Наблюдение закреплённого порта подтверждено отдельно на обеих ОС.', '',
+          'Shadow сохраняет JSON-тип непрозрачного корня. Схема требует object для generation.params и history.details; '
+          'значения чисел внутри остальных перечисленных plugin-поддеревьев не ограничивает. '
+          'Известные ограничения остаются; лексемы проверяет V1/guard. Проверка семантики плагина из этого не следует. '
+          'При смене схемы применимость shadow проверяется заново.', '', '## Память: разложение стенда', '',
+          'Ниже медианы пяти изолированных процессов на manifest_64m, МиБ. input — только чтение исходного текста; reference — чтение '
+          'и токенизатор; reference_maps — также одна пара устойчивых карт значений/чисел; candidate — чтение, разбор, правка и сериализация '
+          'одного кандидата без ZIP/V2/общего guard. Значения включают общий процесс и вход. Их нельзя складывать: общие байты учитываются '
+          'повторно, аллокаторы и временные копии имеют разные времена жизни. Разности относительно input — оценка дополнительных затрат. '
+          'Полный цикл держит одновременно два документа и карты before/after, ZIP-копии и проверки повторного открытия. '
+          'Первоначальные ~837 МиБ были пиком всего стенда, а не памятью каждого парсера.', '',
+          '| ОС | Компонент | Peak RSS/working set | сверх input |', '|---|---|---:|---:|']
+for label, data in platforms.items():
+    memory = data['memory_components']
+    baseline = memory['input:D2']['summary']['medians']['peak_working_set']
+    for key, entry in memory.items():
+        peak = entry['summary']['medians']['peak_working_set']
+        lines.append(f'| {label} | {key} | {peak/1048576:.3f} | {(peak-baseline)/1048576:.3f} |')
+lines += ['', 'Linux ru_maxrss — RSS, не commit. PeakPagefile на Linux API не измеряет; в машинных данных стоит 0, '
+          'в таблице ниже «н/д». Для crash пик памяти недоступен и не заменяется нулём.', '', '## Различия ОС', '']
+differences = []
+for name, case in platforms['Windows']['cases'].items():
+    other = platforms['Linux']['cases'][name]
+    assert case['sha256'] == other['sha256'], name
+    for candidate in CANDIDATES:
+        w = case['candidates'][candidate]['summary']
+        l = other['candidates'][candidate]['summary']
+        for key in ('outcomes', 'parse_accepted', 'locations'):
+            if w.get(key) != l.get(key):
+                differences.append(f"- `{name}`, {candidate}, {key}: Windows `{w.get(key)}`, Linux `{l.get(key)}`.")
+lines += differences or ['Сводные исходы, native parse acceptance и сохранность шести мест совпали для всех пар.']
+lines += ['', 'Коды crash платформенные; на depth_100000 учитываются отдельно в машинных данных. Время и RSS '
+          'между ОС напрямую не эквивалентны (drvfs, GCC/MSVC, аллокаторы, системные библиотеки).', '', '## Размер реализации', '',
+          'Непустые физические строки (включая комментарии), не метрика сложности:', '', '| Файл | Строк |', '|---|---:|']
+for path in sorted((ROOT / 'spikes/s7/src').glob('*')):
+    count = sum(bool(line.strip()) for line in path.read_text(encoding='utf-8').splitlines())
+    lines.append(f'| {path.name} | {count} |')
+lines += ['', 'candidates.cpp содержит A/B/C/D1/D2 и общий писатель событий; reference.cpp — общий строгий проверяющий код и D1; '
+          'jsoncons_candidate.cpp — E и V2. Память/ZIP/main — общая обвязка.', '']
+source = (ROOT / 'spikes/s7/src/candidates.cpp').read_text(encoding='utf-8')
+def loc(start, end):
+    begin = source.index(start)
+    body = source[begin:source.index(end, begin)]
+    return sum(bool(line.strip()) for line in body.splitlines())
+lines += ['| Адаптер / общая часть | Непустых строк |', '|---|---:|',
+          f"| A | {loc('struct Dom final', 'enum class EventKind')} |",
+          f"| B | {loc('struct Sax :', 'struct RapidHandler')} |",
+          f"| C | {loc('struct RapidHandler', 'struct RawCandidate')} |",
+          f"| D1 | {loc('struct RawCandidate', 'struct HybridCandidate')} |",
+          f"| D2 | {loc('struct HybridCandidate', '}  // namespace')} |",
+          f"| B/C общий event writer | {loc('enum class EventKind', 'struct Sax :')} |",
+          f"| D2 собственный writer | {loc('std::string write_hybrid', 'namespace {')} |",
+          f"| Общая DOM-правка и запись истории | {loc('Ordered history_entry', 'std::string write_hybrid')} |",
+          '| E | см. jsoncons_candidate.cpp выше (включает общий V2) |', '',
+          'D1 использует также edit_known/edit_title и токенизатор из reference.cpp; B/C делят этот код. '
+          'D2 также использует эталонный токенизатор для строгой проверки фрагментов. Общий код не скрыт внутри числа адаптера.', '',
+          '## Полные замеры', '',
+          'Медианы пяти отдельных структурных запусков. Время в мс, память в МиБ. Цикл включает ZIP, V1/V2, правку, guard '
+          'и транзакцию; при отказе указано время до отказа. «—» — этап не достигнут/процесс упал; wall — время дочернего процесса. '
+          'Исходные повторы, title-only, хеши фикстур и validator probes: build/s7/results.json и build/s7-linux/results.json.', '']
+for label, data in platforms.items():
+    lines += ['### ' + label, '', '| Документ | ID | Итог | parse | V2 | serialize | цикл/отказ | wall | Peak RSS/WS | PeakPagefile |',
+              '|---|---|---|---:|---:|---:|---:|---:|---:|---:|']
+    for name, case in data['cases'].items():
+        for candidate in CANDIDATES:
+            entry = case['candidates'][candidate]['summary']
+            values = []
+            for key in ('parse_ms', 'v2_ms', 'serialize_ms', 'cycle_ms', 'wall_ms', 'peak_working_set', 'peak_pagefile'):
+                value = entry['medians'][key]
+                values.append('—' if value is None else 'н/д' if label == 'Linux' and key == 'peak_pagefile' else
+                              f'{value/1048576 if key.startswith("peak_") else value:.3f}')
+            lines.append('| ' + name + ' | ' + candidate + ' | ' + ','.join(entry['outcomes']) + ' | ' + ' | '.join(values) + ' |')
+lines += ['', '## Рекомендация исполнителя и вопросы', '',
+          '**Рекомендация, не архитектурное решение:** рассматривать D2 как измеренный гибрид для дальнейшего проектирования: '
+          'результат теперь включает реальный DOM-обход, повторную проверку фрагментов и сдвиг индексов. D1 оставлен как контроль другого подхода. '
+          'A не обеспечивает обещание; B теряет integer -0 и отказывает на 1e400; C ограничен диапазоном экспоненты; '
+          'E сохраняет многие decimal/bigint, но теряет integer -0. Fail-closed нужен независимо от библиотеки.', '',
+          '- O-17: политика дублей, измеренные лимиты глубины/размера/времени остаются решением управляющего/владельца. '
+          'Гипотеза 1024 не является фундаментальным пределом токенизатора.',
+          '- Выбор JSON-стека, итоговая ADR, libraries.md, утверждение формата и закрытие O-13 остаются вне задачи.',
+          '- Стенд проверяет V1/V2 и сохранность, не V3/V4 и не политику ZIP bomb. Идентификаторы синтетической новой операции '
+          'детерминированы для одного цикла эксперимента, это не реализация генератора OperationID продукта.',
+          '- Для перестановки changes[] потребуется отдельно определить устойчивое соответствие изменений без ID; текущий сценарий '
+          'сдвигает custom_values и добавляет history.entries, существующие changes не переставляет.', '']
 args.output.write_text('\n'.join(lines), encoding='utf-8', newline='\n')
-print('Rendered ' + str(args.output) + f' ({len(cases)} fixtures, 5 candidates)')
+print('Rendered Windows/Linux matrices: ' + str(args.output))

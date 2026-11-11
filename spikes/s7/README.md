@@ -12,6 +12,20 @@ spikes\s7\build.cmd --offline
 tools\build_min.cmd
 ```
 
+Linux в установленной Ubuntu WSL (разрешение владельца в разделе доработки T-004):
+
+```sh
+bash spikes/s7/build_linux.sh
+bash spikes/s7/build_linux.sh --offline
+```
+
+Linux использует отдельный LF-клон `.cache/vcpkg-linux` того же тега 2026.10.16,
+`.cache/vcpkg-bin-linux`, `.cache/vcpkg-installed-s7-linux`, `build/s7-linux` и
+общий asset-кэш. Перед чистой офлайн-проверкой удаляются только сборка и установка
+этого спайка для соответствующей ОС. Скрипт не устанавливает системные пакеты
+и не меняет настройки WSL. После завершения задачи Ubuntu останавливается
+командой `wsl --terminate Ubuntu`.
+
 Сборка спайка — Release, каталог `build/s7`, отдельная установка портов —
 `.cache/vcpkg-installed-s7`. Реестр, бинарный и asset-кэши — общие в `.cache/`;
 `--offline` включает чтение кэшей и `x-block-origin`. Для проверки полного
@@ -37,11 +51,21 @@ build\s7\s7_run.exe --probe-schema --input schemas/examples/manifest-1.0.example
 ```
 
 На JSON-входе runner создаёт ZIP через minizip-ng, читает его, выполняет V1/V2,
-меняет `asset.metadata.title`, сериализует, проверяет точные пары JSON Pointer →
-лексема и остальные непрозрачные значения, записывает временный ZIP рядом с
+меняет `asset.metadata.title`, удаляет обычное custom_value перед plugin-значением,
+добавляет запись истории с известными полями, обновляет ревизию и modified_at.
+Затем сериализует, проверяет пары «устойчивый владелец + внутренний JSON-путь →
+лексема» и остальные непрозрачные значения, известную часть и выходную V2,
+записывает временный ZIP рядом с
 исходным, проверяет его повторным открытием, затем атомарно заменяет исходный.
 Содержимое остальных ZIP-записей сохраняется. ZIP-вход изменяется только при
 успехе: для ручных экспериментов следует использовать синтетический ZIP.
+
+ID кандидатов: A, B, C, D1 (прежний D, правка текста), D2 (DOM + фрагменты), E.
+У D2 заглушки binary невозможно создать JSON-текстом. Собственный писатель
+заново проверяет каждый фрагмент как одно полное значение перед выводом.
+`--edit title` оставляет только правку title и включает прежнюю индексную
+проверку для сравнения; по умолчанию `--edit structural`. Все фикстуры сценария
+содержат user custom_value перед plugin custom_value.
 
 Код возврата 0 — успешная транзакция, 10 — небезопасная запись запрещена,
 2 — ошибка аргументов. JSON-результат печатается в stdout. При падении процесса
@@ -49,7 +73,7 @@ build\s7\s7_run.exe --probe-schema --input schemas/examples/manifest-1.0.example
 
 Гипотезы стенда, **не нормативы продукта**:
 
-- `--hypothesis-max-depth 1024`: глубина эталонного сканера и D; B/C могут
+- `--hypothesis-max-depth 1024`: глубина эталонного сканера и D1/D2; B/C могут
   разобрать более глубокий документ, но guard затем запретит запись по этой
   гипотезе. Нативные ограничения библиотек испытываются до эталонного сканера.
 - `--hypothesis-max-bytes 134217728`: максимальный размер JSON-входа runner.
@@ -61,14 +85,18 @@ build\s7\s7_run.exe --probe-schema --input schemas/examples/manifest-1.0.example
 превращаются в «порчу ZIP».
 
 CTest включает `s7_tokenizer`, `s7_guard` (независимый SHA-256 исходного ZIP),
-`s7_matrix` (5 отдельных процессов на кандидата и фикстуру), `s7_reject`
+`s7_matrix` (5 отдельных структурных процессов и 1 title-only на кандидата и фикстуру), `s7_reject`
 (проверка истинности измеренной строгости), `s7_fixtures_schema`.
 Результаты — `build/s7/results.json`, конфигурация — `build/s7/configuration.json`.
-Сводная матрица и выводы — [RESULTS.md](RESULTS.md). Linux не выполняется в T-004.
+Сводная матрица и выводы — [RESULTS.md](RESULTS.md). Для Linux аналогичные данные
+находятся в `build/s7-linux`. Матрица также запускает по пять изолированных
+замеров памяти на 64 МиБ-манифесте: `--memory-component input`, `reference`,
+`reference_maps`, `candidate`. Эти процессы отделяют накладные расходы стенда
+от разбора/вывода кандидата; их пики нельзя складывать.
 
 Сводный отчёт воспроизводится из завершённой матрицы и метаданных закреплённых
 портов локального реестра:
 
 ```text
-python -I spikes/s7/tools/render_results.py --results build/s7/results.json --output spikes/s7/RESULTS.md
+python -I spikes/s7/tools/render_results.py --results build/s7/results.json --linux-results build/s7-linux/results.json --output spikes/s7/RESULTS.md
 ```

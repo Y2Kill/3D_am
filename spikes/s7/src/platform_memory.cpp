@@ -11,6 +11,10 @@ namespace s7 {
 void initialize_process() {
 #ifdef _WIN32
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+#else
+  // Expected crash probes must not produce core files outside the build tree.
+  const rlimit no_core{0, 0};
+  if (setrlimit(RLIMIT_CORE, &no_core)) throw std::runtime_error("cannot disable process core dumps");
 #endif
 }
 Memory memory() {

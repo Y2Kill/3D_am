@@ -1,4 +1,5 @@
 #include "reference.hpp"
+#include "candidates.hpp"
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
@@ -127,14 +128,38 @@ std::size_t Document::child(std::size_t parent, std::string_view key) const {
   for (auto id : tokens[parent].children) if (tokens[id].edge == key) return id;
   return missing;
 }
-std::string Document::path(std::size_t id, bool typed) const {
+std::string Document::path(std::size_t id, bool typed, bool stable) const {
   std::vector<std::size_t> chain;
   for (; id != missing && tokens[id].parent != missing; id = tokens[id].parent) chain.push_back(id);
   std::string out;
+  const auto groups = stable ? opaque_groups() : std::vector<int>{};
   for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
     out += '/';
     if (typed) out += tokens[tokens[*it].parent].kind == Kind::array ? "a:" : "o:";
-    out += escape_pointer(tokens[*it].edge);
+    std::string edge = tokens[*it].edge;
+    const auto parent = tokens[*it].parent;
+    if (stable && groups[*it] < 0 && tokens[parent].kind == Kind::array) {
+      const auto& array = tokens[parent].edge;
+      const auto grandparent = tokens[parent].parent;
+      const auto name = grandparent == missing ? std::string{} : tokens[grandparent].edge;
+      std::string key;
+      if ((array == "files" || array == "groups" || array == "field_definitions") && grandparent == 0) key = "id";
+      else if (array == "custom_values" && name == "metadata") key = "field_id";
+      else if (array == "claims" && name == "metadata") key = "id";
+      else if (array == "entries" && name == "history") key = "operation_id";
+      if (!key.empty()) {
+        const auto identity = child(*it, key);
+        if (identity == missing || tokens[identity].kind != Kind::string) throw std::runtime_error("missing stable owner ID");
+        edge = key + ':' + tokens[identity].decoded;
+        // Ambiguous owners must never silently overwrite a fingerprint map entry.
+        for (const auto sibling : tokens[parent].children) {
+          const auto other = child(sibling, key);
+          if (sibling != *it && other != missing && tokens[other].decoded == tokens[identity].decoded)
+            throw std::runtime_error("ambiguous stable owner ID");
+        }
+      }
+    }
+    out += escape_pointer(edge);
   }
   return out;
 }
@@ -185,7 +210,14 @@ std::vector<int> Document::opaque_groups() const {
     if (groups[i] == -1) groups[i] = groups[tokens[i].parent];
   return groups;
 }
-std::array<std::map<std::string, std::string>, 6> Document::fingerprints() const {
+std::vector<std::size_t> Document::opaque_roots() const {
+  std::vector<std::size_t> roots;
+  const auto groups = opaque_groups();
+  for (std::size_t i = 0; i < tokens.size(); ++i)
+    if (groups[i] >= 0 && (tokens[i].parent == missing || groups[tokens[i].parent] < 0)) roots.push_back(i);
+  return roots;
+}
+std::array<std::map<std::string, std::string>, 6> Document::fingerprints(bool stable) const {
   std::array<std::map<std::string, std::string>, 6> result;
   const auto groups = opaque_groups();
   for (std::size_t i = 0; i < tokens.size(); ++i) {
@@ -193,7 +225,7 @@ std::array<std::map<std::string, std::string>, 6> Document::fingerprints() const
     if (groups[i] < 0 || !t.children.empty()) continue;
     const auto body = t.kind == Kind::object ? "{}" : t.kind == Kind::array ? "[]" :
         t.kind == Kind::string ? t.decoded : std::string(text.substr(t.begin, t.end - t.begin));
-    result[static_cast<std::size_t>(groups[i])][path(i, true)] = std::to_string(static_cast<int>(t.kind)) + ':' + body;
+    result[static_cast<std::size_t>(groups[i])][path(i, true, stable)] = std::to_string(static_cast<int>(t.kind)) + ':' + body;
   }
   return result;
 }
@@ -215,12 +247,12 @@ std::string Document::shadow() const {
   }
   return out;
 }
-std::array<std::map<std::string, std::string_view>, 6> Document::numeric_lexemes() const {
+std::array<std::map<std::string, std::string_view>, 6> Document::numeric_lexemes(bool stable) const {
   std::array<std::map<std::string, std::string_view>, 6> result;
   const auto groups = opaque_groups();
   for (std::size_t i = 0; i < tokens.size(); ++i) if (groups[i] >= 0 && tokens[i].kind == Kind::number) {
     const auto& t = tokens[i];
-    result[static_cast<std::size_t>(groups[i])][path(i)] = text.substr(t.begin, t.end - t.begin);
+    result[static_cast<std::size_t>(groups[i])][path(i, false, stable)] = text.substr(t.begin, t.end - t.begin);
   }
   return result;
 }
@@ -233,5 +265,32 @@ std::string Document::edit_title(std::string_view title) const {
   std::string out(text);
   out.replace(tokens[id].begin, tokens[id].end - tokens[id].begin, quoted);
   return out;
+}
+std::string Document::edit_known(bool structural) const {
+  if (!structural) return edit_title("S7 edited title");
+  auto known = nlohmann::ordered_json::parse(shadow());
+  edit_dom(known, true);
+  struct Edit { std::size_t begin, end; std::string value; };
+  std::vector<Edit> edits;
+  const auto asset = child(0, "asset"), meta = child(asset, "metadata");
+  auto replace = [&](std::size_t node, std::string value) {
+    if (node == missing) throw std::runtime_error("required edit field missing");
+    edits.push_back({tokens[node].begin, tokens[node].end, std::move(value)});
+  };
+  replace(child(meta, "title"), known["asset"]["metadata"]["title"].dump());
+  replace(child(asset, "revision"), known["asset"]["revision"].dump());
+  replace(child(asset, "modified_at"), known["asset"]["modified_at"].dump());
+  const auto values = child(meta, "custom_values");
+  if (values == missing || tokens[values].children.size() < 2) throw std::runtime_error("structural fixture lacks preceding core value");
+  const auto first = tokens[values].children[0], second = tokens[values].children[1];
+  edits.push_back({tokens[first].begin, tokens[second].begin, {}});
+  const auto entries = child(child(0, "history"), "entries");
+  if (entries == missing) throw std::runtime_error("history missing");
+  const auto end = tokens[entries].end - 1;
+  edits.push_back({end, end, (tokens[entries].children.empty() ? "" : ",") + known["history"]["entries"].back().dump()});
+  std::sort(edits.begin(), edits.end(), [](const auto& a, const auto& b) { return a.begin > b.begin; });
+  std::string output(text);
+  for (const auto& edit : edits) output.replace(edit.begin, edit.end - edit.begin, edit.value);
+  return output;
 }
 }  // namespace s7
