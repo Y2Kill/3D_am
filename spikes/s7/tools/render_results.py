@@ -126,14 +126,22 @@ lines += ['pboettch загружает схему, но ложно приним�
           'повторно, аллокаторы и временные копии имеют разные времена жизни. Разности относительно input — оценка дополнительных затрат. '
           'Полный цикл держит одновременно два документа и карты before/after, ZIP-копии и проверки повторного открытия. '
           'Первоначальные ~837 МиБ были пиком всего стенда, а не памятью каждого парсера.', '',
-          '| ОС | Компонент | Peak RSS/working set | сверх input |', '|---|---|---:|---:|']
+          '| ОС | Компонент | Peak RSS/working set | сверх input | оценка сверх input / полный цикл |', '|---|---|---:|---:|---:|']
 for label, data in platforms.items():
     memory = data['memory_components']
     baseline = memory['input:D2']['summary']['medians']['peak_working_set']
     for key, entry in memory.items():
         peak = entry['summary']['medians']['peak_working_set']
-        lines.append(f'| {label} | {key} | {peak/1048576:.3f} | {(peak-baseline)/1048576:.3f} |')
-lines += ['', 'Linux ru_maxrss — RSS, не commit. PeakPagefile на Linux API не измеряет; в машинных данных стоит 0, '
+        candidate = key.split(':')[1]
+        full = data['cases']['manifest_64m.json']['candidates'][candidate]['summary']['medians']['peak_working_set']
+        lines.append(f'| {label} | {key} | {peak/1048576:.3f} | {(peak-baseline)/1048576:.3f} | {100*(peak-baseline)/full:.1f}% |')
+lines += ['', 'Проценты — только оценка масштаба компонента относительно пика полного цикла, не аддитивные доли. '
+          'reference_maps включает reference, а кандидаты B/C/D1/D2 также используют эталон внутри своего механизма. '
+          'Разность reference_maps − reference оценивает добавочную цену одной пары карт; в полном guard одновременно есть карты до/после. '
+          'Из-за повторного использования аллокатором временных буферов карты могут не увеличить уже достигнутый пик (наблюдается на Linux); '
+          'это не означает нулевой размер карт. '
+          'Остаток нельзя приписать конкретной библиотеке: он включает повторное открытие, ZIP, копии текста и аллокаторы.', '',
+          'Linux ru_maxrss — RSS, не commit. PeakPagefile на Linux API не измеряет; в машинных данных стоит 0, '
           'в таблице ниже «н/д». Для crash пик памяти недоступен и не заменяется нулём.', '', '## Различия ОС', '']
 differences = []
 for name, case in platforms['Windows']['cases'].items():
