@@ -22,6 +22,7 @@ add_executable(am_unit_tests
   unit/test_signature.cpp
   unit/test_paths.cpp
   unit/test_unicode.cpp
+  unit/test_json_text.cpp
   unit/test_exclusion.cpp
   unit/test_volumes.cpp
   unit/test_stl_probe.cpp
@@ -30,6 +31,15 @@ add_executable(am_unit_tests
 target_link_libraries(am_unit_tests PRIVATE am::application GTest::gtest_main)
 target_compile_definitions(am_unit_tests PRIVATE
   AM_UNICODE_DATA_DIR="${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0")
+if(AM_WITH_CONTAINER)
+  target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp)
+  target_compile_definitions(am_unit_tests PRIVATE
+    AM_MANIFEST_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/manifest/s7"
+    AM_MANIFEST_SCHEMA="${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.draft.schema.json")
+  if(WIN32)
+    target_link_libraries(am_unit_tests PRIVATE psapi)
+  endif()
+endif()
 am_apply_defaults(am_unit_tests)
 gtest_discover_tests(am_unit_tests DISCOVERY_MODE PRE_TEST)
 
