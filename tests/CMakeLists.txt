@@ -32,7 +32,7 @@ target_link_libraries(am_unit_tests PRIVATE am::application GTest::gtest_main)
 target_compile_definitions(am_unit_tests PRIVATE
   AM_UNICODE_DATA_DIR="${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0")
 if(AM_WITH_CONTAINER)
-  target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp)
+  target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp unit/test_manifest_wide.cpp)
   target_compile_definitions(am_unit_tests PRIVATE
     AM_MANIFEST_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/manifest/s7"
     AM_MANIFEST_SCHEMA="${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.draft.schema.json")

@@ -2,6 +2,7 @@
 #include "am/foundation/json_text.hpp"
 #include "am/foundation/unicode.hpp"
 #include <algorithm>
+#include <charconv>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -223,6 +224,21 @@ std::string integer(std::string_view lexeme) {
   if (digits.size() > bound.size() || (digits.size() == bound.size() && digits > bound)) { reject(); }
   return negative ? '-' + digits : digits;
 }
+Json integer_value(std::string_view lexeme) {
+  const auto canonical = integer(lexeme);
+  const auto* first = canonical.data();
+  const auto* last = first + canonical.size();
+  if (canonical.front() == '-') {
+    Json::number_integer_t value{};
+    const auto result = std::from_chars(first, last, value);
+    if (result.ec == std::errc{} && result.ptr == last) return Json(value);
+  } else {
+    Json::number_unsigned_t value{};
+    const auto result = std::from_chars(first, last, value);
+    if (result.ec == std::errc{} && result.ptr == last) return Json(value);
+  }
+  fail(Errc::corrupt_data, "am.manifest.known_number_out_of_range", "Canonical integer conversion failed");
+}
 Json handle(Id id) {
   const auto value = static_cast<std::uint64_t>(id);
   std::vector<std::uint8_t> bytes(8);
@@ -340,45 +356,76 @@ Result<ManifestDocument> parse_manifest(std::string_view text, const CodecLimits
     Analysis analysis(text, limits);
     auto impl = std::make_unique<ManifestDocument::Impl>();
     impl->original = text; impl->limits = limits;
-    // Build JSON for the bounded known part in one forward token pass. Root
-    // fragments become null temporarily; their DOM addresses are retained as
-    // token IDs and assigned during the subsequent bounded DOM traversal.
-    std::string known;
-    std::vector<Id> fragment_at(analysis.tree.nodes.size(), absent);
+    // Preflight the complete known depth before constructing any recursive DOM.
     std::vector<Id> depth(analysis.tree.nodes.size(), 0);
-    Id cursor = 0;
     for (Id i = 0; i < analysis.tree.nodes.size();) {
       const auto& node = analysis.tree.nodes[i];
       if (node.parent != absent) depth[i] = depth[node.parent] + 1;
       if (analysis.root_at[i] != absent) {
-        known.append(text.substr(cursor, node.begin - cursor));
-        known += "null";
-        fragment_at[i] = impl->fragments.size();
-        impl->fragments.push_back({std::string(analysis.raw(i))});
-        cursor = node.end;
-        // Preorder node spans allow skipping a raw subtree without recursion.
+        const auto end = node.end;
         ++i;
-        while (i < analysis.tree.nodes.size() && analysis.tree.nodes[i].begin < cursor) ++i;
+        while (i < analysis.tree.nodes.size() && analysis.tree.nodes[i].begin < end) ++i;
         continue;
       }
       if ((node.kind == Kind::array || node.kind == Kind::object) && depth[i] >= limits.max_known_depth)
         fail(Errc::resource_exhausted, "am.manifest.limit_exceeded", "Known text exceeds hypothesis max_known_depth");
-      if (node.kind == Kind::number) {
-        known.append(text.substr(cursor, node.begin - cursor)); known += integer(analysis.raw(i)); cursor = node.end;
-      }
       ++i;
     }
-    known.append(text.substr(cursor));
-    impl->dom = Json::parse(known);
-    struct Pending { Id node; Json* dom; };
-    std::vector<Pending> pending{{0, &impl->dom}};
-    while (!pending.empty()) {
-      const auto [id, dom] = pending.back(); pending.pop_back();
-      if (fragment_at[id] != absent) { *dom = handle(fragment_at[id]); continue; }
-      for (Id child : analysis.tree.nodes[id].children) {
-        auto* target = analysis.tree.nodes[id].kind == Kind::array ? &(*dom)[analysis.tree.nodes[child].index] : &(*dom)[analysis.tree.nodes[child].edge];
-        pending.push_back({child, target});
+
+    // ordered_map's map-like insertion/search is linear in object width. Append
+    // directly to its public vector base: the strict tokenizer proved uniqueness.
+    // Reserve each container once so every child pointer remains stable while
+    // constructing descendants, even as later siblings are appended.
+    using ObjectMembers = Json::object_t::Container;
+    auto make_node = [&](Id id) -> Json {
+      const auto& node = analysis.tree.nodes[id];
+      if (analysis.root_at[id] != absent) {
+        const auto fragment = impl->fragments.size();
+        impl->fragments.push_back({std::string(analysis.raw(id))});
+        return handle(fragment);
       }
+      switch (node.kind) {
+        case Kind::object: {
+          Json value = Json::object();
+          static_cast<ObjectMembers&>(value.get_ref<Json::object_t&>()).reserve(node.children.size());
+          return value;
+        }
+        case Kind::array: {
+          Json value = Json::array();
+          value.get_ref<Json::array_t&>().reserve(node.children.size());
+          return value;
+        }
+        case Kind::string: return Json(node.decoded);
+        case Kind::number: return integer_value(analysis.raw(id));
+        case Kind::literal:
+          if (analysis.raw(id) == "true") return Json(true);
+          if (analysis.raw(id) == "false") return Json(false);
+          return Json(nullptr);
+      }
+      blocked("Unknown token kind");
+    };
+    impl->dom = make_node(0);
+    struct Frame { Id node; Json* dom; Id next = 0; };
+    std::vector<Frame> pending{{0, &impl->dom, 0}};
+    while (!pending.empty()) {
+      auto& frame = pending.back();
+      const auto& parent = analysis.tree.nodes[frame.node];
+      if (frame.next == parent.children.size()) { pending.pop_back(); continue; }
+      const auto child = parent.children[frame.next++];
+      auto value = make_node(child);
+      Json* target = nullptr;
+      if (parent.kind == Kind::object) {
+        auto& members = static_cast<ObjectMembers&>(frame.dom->get_ref<Json::object_t&>());
+        members.emplace_back(analysis.tree.nodes[child].edge, std::move(value));
+        target = &members.back().second;
+      } else {
+        auto& items = frame.dom->get_ref<Json::array_t&>();
+        items.emplace_back(std::move(value));
+        target = &items.back();
+      }
+      if (analysis.root_at[child] == absent &&
+          (analysis.tree.nodes[child].kind == Kind::object || analysis.tree.nodes[child].kind == Kind::array))
+        pending.push_back({child, target, 0});
     }
     return ManifestDocument(std::move(impl));
   } catch (const Error& e) { return e; }
