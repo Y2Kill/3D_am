@@ -82,7 +82,10 @@ struct ZipWriter::Impl {
   }
   void emit(Bytes bytes) { emit_at(position, bytes); position += bytes.size(); }
   void validate_name(std::string_view name, U64 size) {
+    if (name.empty() || name.size() > paths::ZipPathMapper::kMaxZipPathBytes)
+      write_fail(Errc::invalid_argument, "am.zip.write.invalid_name", "Path is empty or exceeds the container path byte limit");
     const auto key = unicode::path_collision_key(name);
+    if (key.empty() && !name.empty()) throw write_oom();
     if (keys.contains(key)) write_fail(Errc::invalid_argument, "am.zip.write.name_collision", "Container path collides with an earlier entry");
     auto valid = paths::check_container_path(name);
     if (!valid) {
@@ -98,7 +101,9 @@ struct ZipWriter::Impl {
     r.entry.data_offset = position + header.size();
     // Validate variable fields before any bytes of this entry are emitted.
     (void)central_record(r);
-    keys.insert(unicode::path_collision_key(r.entry.name)); open = true; zip64 = zip64 || r.local64 || position >= max32;
+    auto key = unicode::path_collision_key(r.entry.name);
+    if (key.empty()) throw write_oom();
+    keys.insert(std::move(key)); open = true; zip64 = zip64 || r.local64 || position >= max32;
     emit(header);
   }
   WrittenEntry complete(Record r) {

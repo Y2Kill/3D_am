@@ -7,6 +7,9 @@
 #include <filesystem>
 #include <random>
 #include <stdexcept>
+#if defined(_WIN32) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
 
 using namespace am::asset_zip;
 namespace {
@@ -291,3 +294,22 @@ TEST(ZipWriter, SafeOpaqueNamesAreLeftForTheCallerProfileDecision) {
   auto archive = open(snapshot(*sink)); ASSERT_TRUE(archive); auto profile = check_normative_profile(*archive); ASSERT_TRUE(profile);
   EXPECT_TRUE(std::any_of(profile->begin(), profile->end(), [](const auto& v) { return v.code == profile_code::space; }));
 }
+#if defined(_WIN32) && defined(_DEBUG)
+namespace {
+thread_local bool fail_writer_allocation = false;
+int __cdecl writer_allocation_hook(int type, void*, std::size_t, int, long, const unsigned char*, int) {
+  if (fail_writer_allocation && (type == _HOOK_ALLOC || type == _HOOK_REALLOC)) { fail_writer_allocation = false; return 0; }
+  return 1;
+}
+}
+TEST(ZipWriter, UnicodeKeyAllocationFailureIsFatalOutOfMemory) {
+  RecordProperty("req", "ADR-0032|ADR-0006");
+  auto sink = std::make_shared<MemorySink>(); auto writer = ZipWriter::create(sink); ASSERT_TRUE(writer);
+  EntryOptions options;
+  const auto previous = _CrtSetAllocHook(writer_allocation_hook); fail_writer_allocation = true;
+  auto entry = writer->begin_entry("content/a", options);
+  fail_writer_allocation = false; _CrtSetAllocHook(previous);
+  ASSERT_FALSE(entry); EXPECT_EQ(entry.error().code, am::Errc::resource_exhausted); EXPECT_EQ(entry.error().message_id, "am.zip.out_of_memory");
+  auto sticky = writer->finish(); ASSERT_FALSE(sticky); EXPECT_EQ(sticky.error().message_id, entry.error().message_id); EXPECT_EQ(sink->size(), 0u);
+}
+#endif

@@ -26,7 +26,11 @@ Result<void> MemorySink::write_at(U64 offset, Bytes bytes) {
   } catch (const std::bad_alloc&) { return write_oom(); }
   catch (const std::exception& e) { return write_error(Errc::io_error, "am.zip.io_error", e.what()); }
 }
-Result<void> MemorySink::flush() { if (discarded_) return invalid_state(); return {}; }
+Result<void> MemorySink::flush() {
+  try { if (discarded_) return invalid_state(); return {}; }
+  catch (const std::bad_alloc&) { return write_oom(); }
+  catch (const std::exception& e) { return write_error(Errc::io_error, "am.zip.io_error", e.what()); }
+}
 Result<void> MemorySink::discard() { bytes_.clear(); discarded_ = true; return {}; }
 U64 MemorySink::size() const noexcept { return bytes_.size(); }
 std::span<const std::byte> MemorySink::bytes() const noexcept { return bytes_; }
@@ -104,15 +108,18 @@ class FileSink final : public RandomAccessSink {
     catch (const std::exception& e) { return write_error(Errc::io_error, "am.zip.io_error", e.what()); }
   }
   Result<void> close() override {
-    if (!opened()) return {};
+    try {
+      if (!opened()) return {};
 #ifdef _WIN32
-    const auto current = handle; handle = INVALID_HANDLE_VALUE;
-    if (!CloseHandle(current)) return os_error(GetLastError(), "CloseHandle");
+      const auto current = handle; handle = INVALID_HANDLE_VALUE;
+      if (!CloseHandle(current)) return os_error(GetLastError(), "CloseHandle");
 #else
-    const auto current = handle; handle = -1;
-    if (::close(current) != 0) return os_error(errno, "close");
+      const auto current = handle; handle = -1;
+      if (::close(current) != 0) return os_error(errno, "close");
 #endif
-    return {};
+      return {};
+    } catch (const std::bad_alloc&) { return write_oom(); }
+    catch (const std::exception& e) { return write_error(Errc::io_error, "am.zip.io_error", e.what()); }
   }
   Result<void> discard() override {
     try {
