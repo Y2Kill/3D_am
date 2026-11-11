@@ -39,7 +39,7 @@
 | [T-003](T-003-vcpkg-baseline.md) | Базовая линия vcpkg: клон реестра в `.cache/vcpkg`, `builtin-baseline`, сборка `win-cli`, офлайн-повтор с `x-block-origin` | done | загрузка разрешена 2026-11-10 | M0 |
 | [T-004](T-004-spike-s7-exact-json-numbers.md) | Спайк S7: точные числа непрозрачного JSON — кандидаты A–E (nlohmann DOM/SAX, RapidJSON, собственный токенизатор, jsoncons), полный цикл ZIP, V2 по схеме 2020-12, замеры (каталог `spikes/s7/`) | done | загрузка портов vcpkg разрешена 2026-11-10 | M0 |
 | T-005 | Каркас CI: Windows + Linux, `-DAM_REQUIRE_PYTHON_TESTS=ON` (только конфигурация до появления удалённого репозитория) | draft | T-003; выбор GitHub/GitLab владельцем (отложен) | M0 |
-| [T-006](T-006-manifest-codec.md) | Кодек `manifest.json` по ADR-0038: строгий токенизатор в foundation, гибрид D2 в `am_domain`, V2 на jsoncons, защита записи по ключам владельцев; `vcpkg.json`: jsoncons вместо json-schema-validator | review | ADR-0038; загрузка порта jsoncons разрешена | M1 |
+| [T-006](T-006-manifest-codec.md) | Кодек `manifest.json` по ADR-0038: строгий токенизатор в foundation, гибрид D2 в `am_domain`, V2 на jsoncons, защита записи по ключам владельцев; `vcpkg.json`: jsoncons вместо json-schema-validator | rework | ADR-0038; загрузка порта jsoncons разрешена | M1 |
 
 **Порядок:** T-003 → T-002 → T-004 (приняты; итог S7 — ADR-0038) → T-006. T-005 ждёт выбора платформы CI. Папка одна, поэтому задачи выполняются строго по одной.
 
