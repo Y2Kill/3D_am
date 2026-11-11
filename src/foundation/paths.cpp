@@ -147,6 +147,8 @@ Result<void> check_container_path(std::string_view path) {
   } catch (const std::bad_alloc&) {
     Error error;
     error.code = Errc::resource_exhausted;
+    error.component = "foundation.paths";
+    error.message_id = "am.paths.out_of_memory";
     return error;
   }
 }

@@ -49,9 +49,10 @@ Built build(const std::vector<Entry>& entries, bool zip64, const std::string& co
     put(b.bytes, p + 14, e.flags & 8 ? 0 : crc, 4);
     put(b.bytes, p + 18, e.zip64 ? 0xffffffffULL : (e.flags & 8 ? 0 : v.payload.size()), 4);
     put(b.bytes, p + 22, e.zip64 ? 0xffffffffULL : (e.flags & 8 ? 0 : v.size), 4);
-    put(b.bytes, p + 26, e.name.size(), 2); put(b.bytes, p + 28, e.zip64 ? 20 : 0, 2);
+    put(b.bytes, p + 26, e.name.size(), 2); put(b.bytes, p + 28, (e.zip64 ? 20 : 0) + e.local_extra.size(), 2);
     text(b.bytes, e.name);
     if (e.zip64) { append(b.bytes, 1, 2); append(b.bytes, 16, 2); append(b.bytes, v.size, 8); append(b.bytes, v.payload.size(), 8); }
+    b.bytes.insert(b.bytes.end(), e.local_extra.begin(), e.local_extra.end());
     b.data.push_back(b.bytes.size()); b.bytes.insert(b.bytes.end(), v.payload.begin(), v.payload.end());
     b.descriptor.push_back(b.bytes.size());
     if (e.flags & 8) {
@@ -67,10 +68,12 @@ Built build(const std::vector<Entry>& entries, bool zip64, const std::string& co
     put(b.bytes, p, 0x02014b50, 4); put(b.bytes, p + 4, e.made_by, 2); put(b.bytes, p + 6, e.zip64 ? 45 : 20, 2);
     put(b.bytes, p + 8, e.flags, 2); put(b.bytes, p + 10, e.method, 2); put(b.bytes, p + 16, v.crc, 4);
     put(b.bytes, p + 20, e.zip64 ? 0xffffffffULL : v.payload.size(), 4); put(b.bytes, p + 24, e.zip64 ? 0xffffffffULL : v.size, 4);
-    put(b.bytes, p + 28, e.name.size(), 2); put(b.bytes, p + 30, e.zip64 ? 28 : 0, 2);
+    put(b.bytes, p + 28, e.name.size(), 2); put(b.bytes, p + 30, (e.zip64 ? 28 : 0) + e.central_extra.size(), 2);
+    put(b.bytes, p + 32, e.comment.size(), 2);
     put(b.bytes, p + 38, e.attributes, 4); put(b.bytes, p + 42, e.zip64 ? 0xffffffffULL : b.local[i], 4);
     text(b.bytes, e.name);
     if (e.zip64) { append(b.bytes, 1, 2); append(b.bytes, 24, 2); append(b.bytes, v.size, 8); append(b.bytes, v.payload.size(), 8); append(b.bytes, b.local[i], 8); }
+    b.bytes.insert(b.bytes.end(), e.central_extra.begin(), e.central_extra.end()); text(b.bytes, e.comment);
   }
   const auto cd_size = b.bytes.size() - b.cd;
   if (zip64) {

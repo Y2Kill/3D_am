@@ -8,67 +8,11 @@
 #include <new>
 #include <numeric>
 #include <set>
-#include <zlib.h>
+#include "zip_internal.hpp"
 
 namespace am::asset_zip {
 namespace {
-using U64 = std::uint64_t;
-using Bytes = std::span<const std::byte>;
-constexpr std::uint32_t eocd_sig = 0x06054b50, local_sig = 0x04034b50, central_sig = 0x02014b50;
-constexpr std::uint32_t locator_sig = 0x07064b50, end64_sig = 0x06064b50, descriptor_sig = 0x08074b50;
-constexpr U64 max32 = 0xffffffffULL;
-constexpr std::uint16_t encryption_flags = 1 | 64 | 0x2000;
-constexpr std::string_view format_id = "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128";
-Error error(Errc code, std::string_view id, std::string detail) {
-  return Error::make(code, "ZIP reader rejected input or operation", std::move(detail))
-      .in("storage.asset_zip").op("zip.read").id(std::string(id));
-}
-[[noreturn]] void fail(std::string detail) { throw error(Errc::corrupt_data, "am.zip.invalid_structure", std::move(detail)); }
-[[noreturn]] void overlap(std::string detail) { throw error(Errc::corrupt_data, "am.zip.overlapping_entries", std::move(detail)); }
-[[noreturn]] void limit(std::string detail) { throw error(Errc::resource_exhausted, "am.zip.limit_exceeded", std::move(detail)); }
-[[noreturn]] void unsupported(std::string detail) { throw error(Errc::unsupported, "am.zip.unsupported_feature", std::move(detail)); }
-[[noreturn]] void corrupt(std::string detail) { throw error(Errc::corrupt_data, "am.zip.entry_corrupt", std::move(detail)); }
-Error oom() { return error(Errc::resource_exhausted, "am.zip.out_of_memory", "Allocation failed"); }
-U64 end_at(U64 offset, U64 length, U64 bound) {
-  if (offset > bound || length > bound - offset) fail("Range outside file: offset=" + std::to_string(offset));
-  return offset + length;
-}
-std::uint16_t u16(Bytes b, std::size_t p) {
-  if (p > b.size() || b.size() - p < 2) fail("Truncated 16-bit field");
-  return static_cast<std::uint16_t>(std::to_integer<unsigned>(b[p]) | (std::to_integer<unsigned>(b[p + 1]) << 8));
-}
-std::uint32_t u32(Bytes b, std::size_t p) { return static_cast<std::uint32_t>(u16(b, p)) | (static_cast<std::uint32_t>(u16(b, p + 2)) << 16); }
-U64 u64(Bytes b, std::size_t p) { return u32(b, p) | (static_cast<U64>(u32(b, p + 4)) << 32); }
-void exact(const RandomAccessSource& source, U64 offset, std::span<std::byte> output, bool entry = false) {
-  std::size_t done = 0;
-  while (done < output.size()) {
-    if (offset > std::numeric_limits<U64>::max() - done) fail("Read offset overflow");
-    auto read = source.read_at(offset + done, output.subspan(done));
-    if (!read) throw read.error();
-    if (*read > output.size() - done) fail("Source violated read span contract");
-    if (*read == 0) {
-      const auto detail = "Unexpected EOF at offset=" + std::to_string(offset + done);
-      if (entry) corrupt(detail); else fail(detail);
-    }
-    done += *read;
-  }
-}
-std::vector<std::byte> bytes(const RandomAccessSource& source, U64 offset, std::size_t length) {
-  (void)end_at(offset, length, source.size());
-  std::vector<std::byte> out(length);
-  exact(source, offset, out);
-  return out;
-}
-std::string text(Bytes bytes) {
-  return bytes.empty() ? std::string{} : std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-}
-std::string entry_detail(const EntryInfo& e) {
-  static constexpr char hex[] = "0123456789abcdef";
-  std::string out = "entry=" + std::to_string(e.index) + " local_offset=" + std::to_string(e.local_offset) +
-      " data_offset=" + std::to_string(e.data_offset) + " name_hex=";
-  for (unsigned char c : e.raw_name) { out += hex[c >> 4]; out += hex[c & 15]; }
-  return out;
-}
+using namespace detail;
 struct EndSearch { std::optional<U64> offset; bool signature_seen = false; };
 EndSearch find_end(const RandomAccessSource& source) {
   const auto count = static_cast<std::size_t>(std::min<U64>(source.size(), 22 + 65535));
@@ -175,6 +119,8 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     entry.raw_name = text(Bytes(directory).subspan(cursor, name_length));
     const auto extra = Bytes(directory).subspan(cursor + name_length, extra_length);
     entry.central_extra.assign(extra.begin(), extra.end());
+    const auto comment = Bytes(directory).subspan(cursor + name_length + extra_length, comment_length);
+    entry.comment.assign(comment.begin(), comment.end());
     std::uint32_t start_disk = u16(header, 34);
     entry.has_zip64 = extras(extra, entry.uncompressed_size, entry.compressed_size, entry.local_offset, start_disk);
     if (start_disk != 0) unsupported("Entry starts on another disk");
@@ -281,86 +227,26 @@ Result<ByteRange> ZipArchive::raw_range(std::size_t index) const {
     return ByteRange{e.data_offset, e.compressed_size};
   } catch (const std::bad_alloc&) { return oom(); }
 }
+Result<std::size_t> ZipArchive::read_raw(std::size_t index, U64 offset, std::span<std::byte> output) const {
+  try {
+    if (index >= entries().size()) return error(Errc::io_error, "am.zip.io_error", "Invalid entry index");
+    const auto& entry = entries()[index];
+    if (offset >= entry.compressed_size || output.empty()) return std::size_t{0};
+    const auto capacity = static_cast<std::size_t>(std::min<U64>(output.size(), entry.compressed_size - offset));
+    auto n = impl_->source->read_at(entry.data_offset + offset, output.first(capacity));
+    if (!n) return n.error();
+    if (*n == 0 || *n > capacity) corrupt("Unexpected raw read boundary: " + entry_detail(entry));
+    return *n;
+  } catch (const Error& e) { return e; }
+  catch (const std::bad_alloc&) { return oom(); }
+  catch (const std::exception& e) { return error(Errc::io_error, "am.zip.io_error", e.what()); }
+}
 bool ReadBudget::consume(U64 bytes) noexcept {
   auto left = remaining_.load();
   do { if (bytes > left) return false; } while (!remaining_.compare_exchange_weak(left, left - bytes));
   return true;
 }
-struct EntryStream::Impl {
-  std::shared_ptr<const RandomAccessSource> source;
-  EntryInfo entry;
-  ReadBudget* budget = nullptr;
-  U64 compressed_read = 0, produced = 0;
-  std::uint32_t crc = 0;
-  z_stream inflate_state{};
-  bool initialized = false;
-  std::array<std::byte, 65536> input{}, output{}; // Buffer sizes, not resource-policy limits.
-  std::optional<Sha256> hash;
-  std::optional<Error> failure;
-  std::optional<EntryVerification> result;
-  ~Impl() { if (initialized) inflateEnd(&inflate_state); }
-  void finish() {
-    if (produced != entry.uncompressed_size || crc != entry.crc32) corrupt("Entry size or CRC mismatch: " + entry_detail(entry));
-    EntryVerification verified{produced, crc, {}};
-    if (hash) {
-      auto digest = hash->finish(); if (!digest) throw digest.error();
-      verified.sha256 = *digest;
-    }
-    result = verified;
-  }
-  std::size_t read(std::span<std::byte> destination) {
-    if (result) return 0;
-    if (destination.empty()) throw error(Errc::io_error, "am.zip.io_error", "Output span must be nonempty before EOF");
-    const auto expected_left = entry.uncompressed_size - produced;
-    if (expected_left != 0 && budget->remaining() == 0) limit("Job read budget exhausted: " + entry_detail(entry));
-    auto capacity = static_cast<std::size_t>(std::min<U64>({destination.size(), output.size(), expected_left == 0 ? 1 : expected_left}));
-    if (expected_left != 0) capacity = static_cast<std::size_t>(std::min<U64>(capacity, budget->remaining()));
-    if (capacity == 0) limit("Job read budget exhausted: " + entry_detail(entry));
-    std::size_t count = 0;
-    bool ended = false;
-    if (entry.method == 0) {
-      if (entry.compressed_size != entry.uncompressed_size) corrupt("Stored sizes disagree: " + entry_detail(entry));
-      count = static_cast<std::size_t>(std::min<U64>(capacity, entry.compressed_size - compressed_read));
-      exact(*source, entry.data_offset + compressed_read, std::span(output).first(count), true);
-      compressed_read += count;
-      ended = compressed_read == entry.compressed_size;
-    } else {
-      for (;;) {
-        if (inflate_state.avail_in == 0 && compressed_read < entry.compressed_size) {
-          const auto n = static_cast<std::size_t>(std::min<U64>(input.size(), entry.compressed_size - compressed_read));
-          exact(*source, entry.data_offset + compressed_read, std::span(input).first(n), true);
-          compressed_read += n;
-          inflate_state.next_in = reinterpret_cast<Bytef*>(input.data()); inflate_state.avail_in = static_cast<uInt>(n);
-        }
-        inflate_state.next_out = reinterpret_cast<Bytef*>(output.data()); inflate_state.avail_out = static_cast<uInt>(capacity);
-        const auto old_in = inflate_state.avail_in;
-        const auto status = ::inflate(&inflate_state, Z_NO_FLUSH);
-        count = capacity - inflate_state.avail_out;
-        if (status == Z_MEM_ERROR) throw oom();
-        if (status != Z_OK && status != Z_STREAM_END && status != Z_BUF_ERROR) corrupt("Inflate failed: " + entry_detail(entry));
-        if (status == Z_STREAM_END) {
-          if (inflate_state.avail_in != 0 || compressed_read != entry.compressed_size) corrupt("Deflate ends before compressed_size: " + entry_detail(entry));
-          ended = true;
-          break;
-        }
-        if (count != 0) break;
-        if (old_in == inflate_state.avail_in || (inflate_state.avail_in == 0 && compressed_read == entry.compressed_size))
-          corrupt("Truncated/non-progressing Deflate stream: " + entry_detail(entry));
-      }
-    }
-    // At the declared end, a single fixed-buffer probe distinguishes EOF from
-    // the first excess byte, even when an exactly sufficient budget is empty.
-    if (count > expected_left) corrupt("Entry exceeds declared size: " + entry_detail(entry));
-    if (!budget->consume(count)) limit("Job read budget exhausted: " + entry_detail(entry));
-    produced += count;
-    crc = static_cast<std::uint32_t>(::crc32(crc, reinterpret_cast<const Bytef*>(output.data()), static_cast<uInt>(count)));
-    if (hash && count) { auto updated = hash->update(std::span(output).first(count)); if (!updated) throw updated.error(); }
-    if (ended) finish();
-    if (count == 0 && !result) corrupt("Entry did not reach a validated end");
-    if (count) std::memcpy(destination.data(), output.data(), count);
-    return count;
-  }
-};
+struct EntryStream::Impl : detail::EntryDecoder {};
 EntryStream::EntryStream(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 EntryStream::EntryStream(EntryStream&&) noexcept = default;
 EntryStream& EntryStream::operator=(EntryStream&&) noexcept = default;
@@ -373,14 +259,9 @@ Result<EntryStream> ZipArchive::open_entry(std::size_t index, ReadBudget& budget
     if (e.uncompressed_size > impl_->limits.max_entry_bytes) limit("Entry exceeds hypothesis max_entry_bytes");
     if (e.uncompressed_size != 0 && budget.remaining() == 0) limit("Job read budget exhausted: " + entry_detail(e));
     auto stream = std::make_unique<EntryStream::Impl>();
-    stream->source = impl_->source; stream->entry = e; stream->budget = &budget;
-    if (sha256) { auto hash = Sha256::create(); if (!hash) return hash.error(); stream->hash.emplace(std::move(hash).value()); }
-    if (e.method == 8) {
-      const auto status = inflateInit2(&stream->inflate_state, -MAX_WBITS);
-      if (status == Z_MEM_ERROR) return oom();
-      if (status != Z_OK) corrupt("inflateInit2 failed");
-      stream->initialized = true;
-    }
+    stream->entry = e; stream->budget = &budget;
+    stream->read_input = [source = impl_->source, start = e.data_offset](U64 offset, std::span<std::byte> bytes) { return source->read_at(start + offset, bytes); };
+    stream->initialize(sha256);
     return EntryStream(std::move(stream));
   } catch (const Error& e) { return e; }
   catch (const std::bad_alloc&) { return oom(); }
