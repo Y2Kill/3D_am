@@ -297,8 +297,10 @@ TEST(ZipWriter, SafeOpaqueNamesAreLeftForTheCallerProfileDecision) {
 #if defined(_WIN32) && defined(_DEBUG)
 namespace {
 thread_local bool fail_writer_allocation = false;
-int __cdecl writer_allocation_hook(int type, void*, std::size_t, int, long, const unsigned char*, int) {
-  if (fail_writer_allocation && (type == _HOOK_ALLOC || type == _HOOK_REALLOC)) { fail_writer_allocation = false; return 0; }
+int __cdecl writer_allocation_hook(int type, void*, std::size_t size, int, long, const unsigned char*, int) {
+  // Skip MSVC Debug iterator proxies allocated by noexcept string constructors;
+  // inject failure into the normalization buffer allocation instead.
+  if (fail_writer_allocation && size > 2 * sizeof(void*) && (type == _HOOK_ALLOC || type == _HOOK_REALLOC)) { fail_writer_allocation = false; return 0; }
   return 1;
 }
 }
