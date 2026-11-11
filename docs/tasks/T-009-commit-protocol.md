@@ -1,6 +1,6 @@
 # T-009. Протокол фиксации ZIP: журнал, проверка до замены, атомарная замена, восстановление (NTFS; спайки S5/S5+ в части NTFS)
 
-**Статус:** in_progress (после решения В-1) · **Веха:** M1 (`am_storage`, P0.4) + M0 (S5, S5+ — только NTFS) · **Основание:** ТЗ 4.6, 4.8.2, §14.2.7–8, §14.5.2–3, §19.4.7.4; ADR-0006, ADR-0025 пп. 1, 3, 4, 6, ADR-0031 пп. 3–4, ADR-0033 п. 1, ADR-0035 п. 7, ADR-0024, ADR-0032; критерии 116, 117; T-007 (читатель), T-008 (писатель, раздел «Приёмка»)
+**Статус:** review (реализация после В-1 сдана) · **Веха:** M1 (`am_storage`, P0.4) + M0 (S5, S5+ — только NTFS) · **Основание:** ТЗ 4.6, 4.8.2, §14.2.7–8, §14.5.2–3, §19.4.7.4; ADR-0006, ADR-0025 пп. 1, 3, 4, 6, ADR-0031 пп. 3–4, ADR-0033 п. 1, ADR-0035 п. 7, ADR-0024, ADR-0032; критерии 116, 117; T-007 (читатель), T-008 (писатель, раздел «Приёмка»)
 
 ## Цель
 
@@ -256,3 +256,123 @@ Total Test time (real) = 17.72 sec
    - запасной путь `MoveFileExW`: подмена цели между закрытием дескриптора и переименованием невозможна в тесте напрямую; достаточно теста, что расхождение SHA-256 после `MoveFileExW` (через хук, подменяющий файл перед переименованием) даёт `replace_failed`.
 
 Остальные требования, сценарии и критерии — без изменений. Продолжать в ветке `codex/T-009`; новый отчёт — разделом «## Отчёт исполнителя (после В-1)» в конце файла, первый отчёт не удалять.
+
+## Отчёт исполнителя (после В-1)
+
+**Ветка:** `codex/T-009`. **Коммиты:** прежний отчёт `a5429aa`, решение управляющего `b486286`; реализация и тесты `e47cb79` (`T-009: implement durable ZIP commit and identity-based recovery`); этот отчёт и статус — отдельный коммит `T-009: report NTFS commit and recovery verification`. Первоначальный отчёт сохранён.
+
+### Выполнение критериев приёмки
+
+| Критерий | Результат |
+|---|---|
+| 1. Минимальная сборка | PASS, 84/84; предупреждений MSVC/CMake нет. Поиск sqlite/ZLIB/OpenSSL/libcrypto в `build/win-debug-min/CMakeCache.txt` и `build.ninja` дал 0 совпадений. |
+| 2. CLI и offline | PASS, 165/165 в каждом; все прежние 144 проверки (включая T-006…T-008 и общие) сохранены, добавлена 21 проверка T-009. Зависимости уже установлены; скачиваний и изменений vcpkg.json нет. |
+| 3. Все сценарии | Выполнены; соответствие ниже. Каждая из 10 kill-точек пройдена трижды в каждом полном прогоне. |
+| 4. Границы модуля | Публичные заголовки используют стандартную библиотеку и API проекта; sqlite3/Win32 остаются в реализации, SQLite подключена PRIVATE. Ошибки и исключения callbacks преобразуются в Result/Error; arch_check PASS. |
+| 5. S5/S5+ | Наблюдения и ограничения для NTFS приведены ниже. |
+| 6. Отчёт и сдача | Изменены только разрешённые файлы задачи; статус review. Ветка не слита и не отправлена. |
+
+Реализованы `CommitJournal`/`StateJournal`, блокировка ассета на всю операцию, проверка base и места, FileSink/ZipWriter, полная встроенная и внешняя проверка, переходы prepared → verified → committed → indexed и восстановление. Схема `state.sql` встраивается целиком средствами CMake, без копии в исходниках; user_version остаётся 1, WAL/FULL и foreign_keys включаются на соединении.
+
+По решению В-1 размер, SHA-256 всего ZIP и SHA-256 manifest записываются вместе с verified одной транзакцией. Отказ вставки evidence отдельным SQL-триггером доказал откат и состояния, и evidence. Один дескриптор temp с GENERIC_READ | DELETE, share READ | DELETE и без share WRITE используется для хеширования, всех проверок и POSIX-переименования. В запасном пути дескриптор закрывается, а результат MoveFileExW повторно сверяется по всему файлу. При восстановлении тождество проверенным байтам подтверждается размером и полным SHA-256; `verifier_skipped` всегда false.
+
+Добавлены перегрузка `file_source(path, share_delete)` с прежним поведением по умолчанию, поля DOS времени/даты EntryInfo и их перенос в copy_raw. Ожидания тестов T-008 менять не потребовалось.
+
+### Сценарии и тесты
+
+В строках с несколькими именами без повторного префикса используется тот же набор тестов (`StateJournal` или `CommitProtocol`).
+
+| Сценарий | Тесты | Итог |
+|---|---|---|
+| 1. Create/update, фактический CommitResult, callbacks | `CommitProtocol.CreateUpdateVerifyEvidenceAndCallbacks` | PASS |
+| 2. Схема целиком, версия, переходы, видимость новым соединением; атомарность evidence/state при SQL-ошибке | `StateJournal.SchemaVersionTablesAndDurableTransitionsAcrossConnections; InvalidTransitionAndVersionDoNotModifyRows; EvidenceFailureRollsBackTheStateTransition` | PASS |
+| 3. Отказы до замены, producer/writer/verifier, CRC, чужой probe; исключения callbacks | `CommitProtocol.EveryPreReplaceInjectedErrorRollsBackWithoutChangingTarget; ProducerWriterVerifierAndBuiltinFailuresPreserveTarget; PostReplaceCallbackErrorsRemainRecoverable` | PASS |
+| 4. Чужая цель до начала и перед заменой; путь вне библиотеки | `CommitProtocol.BaseChangesAndInvalidPathsAreRejected` | PASS |
+| 5. LockFileEx другого процесса, освобождение ОС при kill | `CommitProtocol.LockHeldByAnotherProcessIsReleasedByKill` | PASS |
+| 6. Нехватка места до prepared и во время записи | `CommitProtocol.SpaceBeforeAndDuringWriteLeavesNoOperation` | PASS |
+| 7. Настоящий SQLite, TerminateProcess без деструкторов, 10 точек × 3 | `CommitProtocol.KillEveryCheckpointThreeTimesAndRecover` | PASS |
+| 8. Старый читатель со share-delete, новый читатель; kill после замены; отказ без share-delete | `CommitProtocol.OpenReaderKeepsOldBytesAndNewReadersSeeNewVersion` | PASS |
+| 9. Только неподдерживаемая функция разрешает fallback; SHA-256 после MoveFileExW | `CommitProtocol.FallbackOnlyForUnsupportedAndChecksTheMovedIdentity` | PASS |
+| 10. Возраст orphan и запрет удаления занятого файла | `CommitProtocol.OrphanAgeAndBusyHandleProtectCleanup` | PASS |
+| 11. Независимое восстановление нескольких состояний и занятой блокировки | `CommitProtocol.MixedRecoveryOperationsAndBusyAssetAreIndependent` | PASS |
+| 12. DOS timestamp raw-копии и параметры новых записей | `CommitProtocol.RawCopyPreservesDosTimeAndNewEntryOptionsStillApply` | PASS |
+| 13. 1 ГиБ нулей, потоковая проверка, пик памяти, время SHA-256 всего файла | `CommitProtocol.OneGiBVerificationMemoryAndWholeFileHashTiming` | PASS |
+| В-1: подмена/порча temp; чужой target с тем же manifest после replace/committed | `CommitProtocol.RecoveryUsesWholeFileIdentityNotOnlyManifest` | PASS |
+| В-1: запрет записи temp через другой дескриптор в трёх точках | `CommitProtocol.ProtectedTemporaryFileDeniesAnotherWriter` | PASS |
+| S5: параллельные читатели проверяют CRC всех записей и точное совпадение байтов с одной из четырёх полных версий | `CommitProtocol.ConcurrentReadersNeverObserveAnIntermediateZip; WindowsAndFilesystemEvidence` | PASS |
+
+### Kill-тесты: NTFS
+
+`am_commit_crash_helper` использует настоящий StateJournal и завершает свой процесс через TerminateProcess(GetCurrentProcess(), 91), без деструкторов. Родитель проверяет код 91, валидность ZIP до/после recover (все записи с CRC/SHA), освобождение блокировки, пустые journal и .am-tmp. В каждом из двух полных прогонов:
+
+| Точка | Исход recover | Прогонов | Цель после recover |
+|---|---|---|---|
+| `after_lock` | `no_pending_operation` | 3 | старый |
+| `after_prepared` | `rolled_back` | 3 | старый |
+| `mid_write` | `rolled_back` | 3 | старый |
+| `after_finish` | `rolled_back` | 3 | старый |
+| `after_verify` | `rolled_back` | 3 | старый |
+| `after_verified_journal` | `completed` | 3 | новый |
+| `before_replace` | `completed` | 3 | новый |
+| `after_replace` | `already_committed` | 3 | новый |
+| `after_committed_journal` | `completed` | 3 | новый |
+| `after_indexed_journal` | `cleaned` | 3 | новый |
+
+Для after_lock запись ещё не создана, поэтому отчёт пуст. Для after_indexed_journal возвращается cleaned согласно прямому правилу раздела «Восстановление» для indexed; новая цель сохраняется. Это уточняет обобщённую формулировку сценария 7 «after_replace и позже — already_committed/completed».
+
+Подмена temp на другой валидный ZIP с тем же manifest и порча одного байта после verified дают rolled_back, исходная цель сохранена. Подмена target после after_replace даёт rolled_back с пояснением о несовпадении проверенного файла; чужая цель не меняется. Подмена после committed даёт failed / am.commit.base_changed; запись удалена, чужая цель сохранена. Попытки открытия temp на запись после проверки, после verified и непосредственно перед заменой получают ERROR_SHARING_VIOLATION. Подмена перед MoveFileExW обнаруживается после переноса как am.commit.replace_failed; verified остаётся для recover.
+
+### S5/S5+: наблюдения и пределы подтверждения
+
+Фактическая среда: `ENV Windows=10.0 build=19045 filesystem=NTFS volume=D:\` (версия ядра Windows; MSVC 14.44, SDK 10.0.26100.0). Все временные библиотеки — в `.cache/commit-tests/` на этом томе.
+
+POSIX-переименование FileRenameInfoEx успешно при открытом читателе с FILE_SHARE_DELETE: старый дескриптор дочитывает все старые записи с корректными CRC/SHA, новые открытия видят новую версию. Это же подтверждено после kill в after_replace. Читатель с прежним share READ запрещает замену: replace_failed, старые байты сохранены, temp и journal удалены откатом.
+
+Параллельный наблюдатель открывал файл во время трёх замен на разные версии; каждое чтение проверяло все CRC/SHA и полное побайтное совпадение с одной из четырёх ожидаемых версий:
+
+```text
+CLI:     ATOMIC observations=577 invalid=0
+offline: ATOMIC observations=441 invalid=0
+```
+
+Промежуточного, отсутствующего или повреждённого ZIP в этих наблюдениях не было. Это экспериментальное подтверждение атомарной видимости на данном NTFS и восстановимости после завершения процесса, не испытание отключением питания. **Durability NTFS — assumed, не verified**: FULL/flush и journal-переходы задействованы, но сбои питания/контроллера/кэша не проверялись. Для ext4 остаются rename/fsync и crash/power-loss проверки; для exFAT/FAT32/SMB — поддержка замены, совместный доступ, семантика сети/сбоев и необходимость режима поколений. Эти ФС здесь не тестировались; POSIX-ветка написана условно и на Linux не собиралась/не запускалась.
+
+1 ГиБ нулей передавался/проверялся блоками 64 КиБ; размер ниже — сжатый ZIP, именно по нему делается дополнительный проход полного SHA-256:
+
+```text
+CLI:     COMMIT 1GiB: seconds=31.6445 file_hash_seconds=0.0027806 zip_bytes=1043975 peak_working_set_bytes=14946304 peak_commit_bytes=5791744
+offline: COMMIT 1GiB: seconds=31.1917 file_hash_seconds=0.0023978 zip_bytes=1043975 peak_working_set_bytes=15007744 peak_commit_bytes=5726208
+```
+
+Это замеры без порогов. Резерв свободного места max(ceil(5%), 256 МиБ) оставлен hypothesis, O-17.
+
+### Команды и фактический вывод
+
+`tools\build_min.cmd` → PASS:
+
+```text
+100% tests passed, 0 tests failed out of 84
+Total Test time (real) =  14.40 sec
+```
+
+`tools\build_cli.cmd` → PASS:
+
+```text
+100% tests passed, 0 tests failed out of 165
+Total Test time (real) = 475.72 sec
+```
+
+`tools\build_cli.cmd --offline` → PASS:
+
+```text
+100% tests passed, 0 tests failed out of 165
+Total Test time (real) = 467.65 sec
+```
+
+Предупреждений MSVC/CMake в сборке новых файлов и финальных прогонах нет. arch_check, schema_check, sql_check, unicode_tables_check и zip_writer_interop — PASS. Офлайн-режим использовал read-only binary/assets caches и x-block-origin; SHA-256 всех 81 файлов download/assets/binary/registry caches до/после совпали (`Changed cached files: 0`). Распакованные инструменты downloads/tools в этот подсчёт не входят.
+
+Логи: `.cache/t009-final-min.log`, `t009-final-cli.log`, `t009-final-offline.log`; полный stdout тестов — `.cache/t009-final-cli-tests.log` и `t009-final-offline-tests.log`; проверка кэшей — `.cache/t009-cache-audit.log`, снимки `t009-cache-before.json` / `t009-cache-after.json`. Отдельные прогоны: StateJournal — 3/3; CommitProtocol без 1 ГиБ — 17/17; все они также повторены в двух полных прогонах.
+
+### Отклонения и вопросы
+
+Функциональных отклонений от задания с решением В-1 нет. Исход cleaned для indexed и отсутствие строки after_lock пояснены выше. Схемы, ADR, спецификации, libraries.md и материалы владельца не изменены. В-1 выполнен; новых вопросов к управляющему нет.
