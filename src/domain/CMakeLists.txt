@@ -6,6 +6,7 @@ if(AM_WITH_CONTAINER)
   find_package(jsoncons CONFIG REQUIRED)
   am_add_module(domain
     SOURCES manifest/codec.cpp manifest/schema_validator.cpp
+      manifest/semantics.cpp manifest/semantics_syntax.cpp
     DEPENDS am::foundation am::contracts nlohmann_json::nlohmann_json
     FORBID storage services gui)
   target_link_libraries(am_domain PRIVATE jsoncons::jsoncons)

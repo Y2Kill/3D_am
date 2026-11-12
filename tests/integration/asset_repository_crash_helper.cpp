@@ -28,5 +28,12 @@ int main(int argc, char** argv) {
   auto repo=AssetRepository::open(root,o);if(!repo){std::cerr<<to_log_string(repo.error());return 5;}
   AssetRef ref{o.library_id,asset};auto snap=repo->snapshot(ref);if(!snap){std::cerr<<to_log_string(snap.error());return 5;}
   ChangeRequest r;r.ref=ref;r.expected_rev=snap->revision();r.ops.push_back(SetMetadata{"asset","title",Json("child")});
-  auto changed=repo->change(r);if(!changed){std::cerr<<to_log_string(changed.error());return changed.error().code==Errc::locked?14:6;}return 0;
+  VerificationReport report;
+  auto changed=repo->change(r,&report);
+  if(!changed){
+    std::cerr<<to_log_string(changed.error());
+    auto json=verification_json(report);if(json)std::cerr<<'\n'<<json->dump();
+    return changed.error().code==Errc::locked?14:6;
+  }
+  return 0;
 }
