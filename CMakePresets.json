@@ -132,6 +132,7 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/.cache/vcpkg-installed-linux",
         "VCPKG_TARGET_TRIPLET": "x64-linux"
       },
       "condition": {

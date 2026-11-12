@@ -21,27 +21,64 @@
 | Архитектурные решения | [docs/decisions/ADR_log.md](docs/decisions/ADR_log.md), [решения по открытым вопросам](docs/decisions/open_questions_resolution.md) |
 | План | [docs/plan/roadmap.md](docs/plan/roadmap.md) |
 
-## Сборка (база, без внешних зависимостей)
+## Build and CI
 
-Нужны Visual Studio 2022 (MSVC 14.4x) и CMake ≥ 3.28. GoogleTest скачивается в `.cache/` внутри проекта.
+Requirements: CMake ≥ 3.28, Ninja, Python 3.12 or later, and a C++20 compiler.
+Windows scripts find Visual Studio 2022 C++ tools with `vswhere` (Community or Build Tools).
+Linux CI uses Ubuntu 24.04 and GCC 13. Minimum builds fetch GoogleTest into `.cache/`;
+CLI builds use the exact vcpkg `builtin-baseline` from `vcpkg.json`.
 
-```bash
+Install the test modules into a project-local directory:
+
+```sh
+python -m pip install --require-hashes --no-deps --target .cache/pylib -r tools/ci/requirements-test.txt
+```
+
+Windows:
+
+```bat
 tools\build_min.cmd
-```
-
-Или вручную, из «x64 Native Tools Command Prompt»:
-
-```bash
-cmake --preset win-debug-min && cmake --build --preset win-debug-min && ctest --preset win-debug-min
-```
-
-Минимальная сборка включает тесты `arch_check` (проверка уровней ADR-0024), `schema_check` (черновая JSON Schema манифеста, ADR-0036/0037) и `sql_check` (SQL-контракты, точный `uint64` в `index.sql`, ADR-0037); нужен Python 3, для `schema_check` — модуль `jsonschema` (ищется также в `.cache/pylib`). Без модуля тест **проваливается**; явный локальный отказ — `-DAM_ALLOW_PYTHON_SKIP=ON` (тест получает SKIP); в CI `-DAM_REQUIRE_PYTHON_TESTS=ON` делает отсутствие ошибкой конфигурации. Сборка с зависимостями vcpkg (пресет `win-cli`, baseline — релиз vcpkg `2026.10.16`):
-
-```bash
+tools\ci\bootstrap_vcpkg.cmd
 tools\build_cli.cmd
+tools\build_cli.cmd --offline
 ```
 
-Скрипт ожидает клон vcpkg в `.cache/vcpkg` на теге `2026.10.16` (`bootstrap-vcpkg.bat -disableMetrics`) и держит загрузки, бинарный и asset-кэш в `.cache/`. Ключ `--offline` собирает только из кэшей проекта: загрузки из сети запрещены (`x-block-origin`). Пресеты на основе `vcpkg` запускайте **только через скрипт**: сами пресеты кэши не задают, и без скрипта vcpkg положит кэш в профиль пользователя. Пресеты `win-debug`, `win-release`, `win-full-ai`, `linux-cli` ещё не проверялись.
+Linux (including WSL):
+
+```sh
+tools/build_linux.sh min
+tools/ci/bootstrap_vcpkg.sh
+tools/build_linux.sh cli
+tools/build_linux.sh cli --offline
+```
+
+On a minimal Ubuntu installation, install `build-essential cmake ninja-build git curl zip unzip tar pkg-config autoconf automake libtool`.
+Python needs pip to install the test modules (`python3-pip` on Ubuntu; supplied by `setup-python` in CI).
+Bootstrap is idempotent and disables vcpkg metrics. Windows and Linux use separate vcpkg clones,
+installed packages and binary caches, and share the content-addressed source cache in `.cache/vcpkg-assets`.
+Linux keeps FetchContent build files in `.cache/fetchcontent/linux` so WSL can use the same checkout as Windows.
+Python modules with native wheels must also be installed separately when sharing a checkout:
+install Linux modules into `.cache/pylib-linux` and set `AM_PYTHON_EXTRA_PATH` to that directory for Linux builds.
+
+Use the scripts for vcpkg presets: they keep temporary files and caches inside the checkout.
+`--offline` makes vcpkg caches read-only and blocks origin downloads with `x-block-origin`;
+minimum builds instead require an already populated GoogleTest cache. GUI/AI presets remain unverified.
+Linux repository writes remain disabled by default under [the filesystem policy](docs/specifications/fs_support.md);
+read, validate, verify and extract commands are available.
+
+The [GitHub Actions workflow](.github/workflows/ci.yml) runs `win-debug-min`, `win-cli`, `linux-min` and `linux-cli`
+with the same scripts and `--ci`. This flag requires Python checks at configure time
+(`AM_REQUIRE_PYTHON_TESTS=ON`) and writes `build/<preset>/junit.xml`.
+It combines with `--offline` in either order; further arguments are passed to ctest, for example:
+
+```bat
+tools\build_cli.cmd --ci --offline -R cli_
+```
+
+CI runs the complete test suite and retains JUnit reports for 14 days; failed jobs also upload `LastTest.log`.
+Python checks include architecture, Unicode tables, manifest schemas and SQL contracts; CLI builds also
+check the message catalog and command-line interface. Without `--ci`, a missing `jsonschema` still fails
+`schema_check`; the explicit local opt-out is `AM_ALLOW_PYTHON_SKIP=ON` in CMake, which CI rejects.
 
 ## CLI (диагностика, этап M0)
 
