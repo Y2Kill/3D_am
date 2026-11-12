@@ -96,6 +96,7 @@ TEST(AssetRepository, CreateHistoryManifestFirstAndVerificationReport) {
   auto snap = value(repo.snapshot(created.ref)); const auto& j = snap.manifest().known(); EXPECT_EQ(snap.archive().entries()[0].raw_name,"manifest.json"); EXPECT_EQ(snap.archive().entries()[0].local_offset,0u);
   EXPECT_TRUE(std::filesystem::exists(target(root,created.ref.asset_id))); EXPECT_EQ(j["asset"]["created_at"],j["asset"]["modified_at"]); EXPECT_EQ(j["history"]["entries"].size(),1u);
   EXPECT_EQ(j["history"]["entries"][0]["operation_id"],created.op_id); EXPECT_EQ(j["asset"]["modified_at"],j["history"]["entries"][0]["timestamp"]);
+  const auto history=plain(snap)["history"]["entries"][0];EXPECT_EQ(history["details"]["creation_kind"],"user");EXPECT_EQ(history["tool"]["application_version"],"0.1.0-test");EXPECT_EQ(created.commit->op_id,created.op_id);
   EXPECT_EQ(created.verification.v1,CheckStatus::passed); EXPECT_EQ(created.verification.v2,CheckStatus::passed); EXPECT_EQ(created.verification.v3,CheckStatus::partial);
   ASSERT_EQ(created.verification.v4.size(),2u); for (const auto& s : created.verification.v4) EXPECT_EQ(s.status,StreamStatus::verified_sha256); EXPECT_EQ(created.verification.container_verification,ContainerVerification::full);
   std::cout << "CREATE_REPORT " << value(verification_json(created.verification)).dump() << '\n'; clean(root);
@@ -109,6 +110,8 @@ TEST(AssetRepository, TypedOperationsHistoryRawCopyAndRemoval) {
   ChangeRequest add; add.ref = created.ref; add.expected_rev = 2; add.ops.push_back(addition(root)); current = value(repo.change(add)); EXPECT_EQ(current.revision,3u);
   ChangeRequest replace; replace.ref = created.ref; replace.expected_rev = 3; replace.ops.push_back(ReplaceFileContent{file_id,source(root,"replacement")}); current = value(repo.change(replace)); EXPECT_EQ(current.revision,4u);
   now = value(repo.snapshot(created.ref)); const auto old_sha = now.manifest().known()["files"][0]["sha256"];EXPECT_EQ(now.manifest().known()["files"][1]["derived_from"][0]["sha256"],derived_hash);
+  const auto replacement=plain(now)["history"]["entries"][3];EXPECT_EQ(replacement["operation"],"files_changed");EXPECT_EQ(replacement["changes"][0]["old_sha256"],derived_hash);EXPECT_EQ(replacement["changes"][0]["new_sha256"],old_sha);
+  for(const auto& key:now.manifest().opaque_keys())if(key.value.starts_with("/history/"+current.op_id+"/"))std::cout<<"REPLACE_HISTORY_OWNER "<<key.value<<'\n';
   ChangeRequest remove; remove.ref = created.ref; remove.expected_rev = 4; remove.ops.push_back(RemoveFile{file_id}); current = value(repo.change(remove)); EXPECT_EQ(current.revision,5u);
   now = value(repo.snapshot(created.ref)); const auto& j = now.manifest().known(); EXPECT_EQ(j["files"].size(),2u); EXPECT_EQ(j["historical_files"][0]["last_known_sha256"],old_sha); EXPECT_EQ(j["historical_files"][0]["removed_at_revision"],5);
   EXPECT_EQ(j["history"]["entries"].size(),5u); for (const auto& e : now.archive().entries()) EXPECT_NE(e.raw_name,path); clean(root);
@@ -145,7 +148,7 @@ TEST(AssetRepository, UnknownHistoryCompactedRangesAndMissingChangesRejectRebase
 TEST(AssetRepository, PathAndFileIdCollisionsIncludeCaseAndNfc) {
   RecordProperty("req","ADR-0035");
   for(int mode=0;mode<3;++mode) {
-    const auto root=fresh(); auto repo=value(AssetRepository::open(root,options())); auto created=create(repo,root); auto a=addition(root,2);
+    const auto root=fresh(); auto repo=value(AssetRepository::open(root,options())); auto created=create(repo,root); value(repo.change(metadata(created))); auto a=addition(root,2);
     if(mode==0) { a.files[0].path="Part.bin"; a.files[1].path="part.bin"; }
     if(mode==1) { a.files[0].path="\xc3\xa9.bin"; a.files[1].path="e\xcc\x81.bin"; }
     if(mode==2) a.files[1].file_id=a.files[0].file_id;
