@@ -20,7 +20,7 @@ if not defined VSINSTALL (
 )
 echo Visual Studio: %VSINSTALL%
 call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
-set "CI_CONFIG="
+set "CI_CONFIG=-DAM_REQUIRE_PYTHON_TESTS=OFF"
 set "CI_CTEST="
 set "FETCH_CONFIG=-DFETCHCONTENT_FULLY_DISCONNECTED=OFF"
 set "CTEST_ARGS="

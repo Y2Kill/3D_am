@@ -25,6 +25,8 @@ test_args=()
 if $ci; then
   configure_args+=(-DAM_REQUIRE_PYTHON_TESTS=ON)
   test_args+=(--output-on-failure --output-junit "$root/build/$preset/junit.xml")
+else
+  configure_args+=(-DAM_REQUIRE_PYTHON_TESTS=OFF)
 fi
 if [[ -n "${AM_PYTHON_EXTRA_PATH:-}" ]]; then
   configure_args+=("-DAM_PYTHON_EXTRA_PATH=$AM_PYTHON_EXTRA_PATH")

@@ -36,7 +36,7 @@ if not exist "%VCPKG_ROOT%\vcpkg.exe" (
 for %%I in ("%VCPKG_DOWNLOADS%" "%VCPKG_REGISTRIES_CACHE%" "%VCPKG_DEFAULT_BINARY_CACHE%" "%ROOT%\.cache\vcpkg-assets") do (
   if not exist "%%~I" mkdir "%%~I" || exit /b 1
 )
-set "CI_CONFIG="
+set "CI_CONFIG=-DAM_REQUIRE_PYTHON_TESTS=OFF"
 set "CI_CTEST="
 set "CTEST_ARGS="
 :collect_args
