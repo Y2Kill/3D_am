@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128:manifest:1.0:draft",
-  "title": "AM asset manifest 1.0 (DRAFT, not normative)",
-  "description": "Working draft for TZ v1.8 section 19.4 (MF-01..MF-12), ADR-0035, ADR-0036 (R-01..R-09) and ADR-0037 (decision log v0.11, 108 principles). Not a published schema: format 1.0 is published only together with a positive S7, the V1-V4 validator and golden ZIP fixtures. Semantic rules (reference resolution, history coverage, units) are V3 and not expressible here.",
+  "title": "AM asset manifest 1.0 (release candidate, not yet published)",
+  "description": "Release candidate for TZ v1.8 section 19.4 (MF-01..MF-12), ADR-0035, ADR-0036 (R-01..R-09), ADR-0037 (decision log v0.11, 108 principles) and ADR-0039 (report 08: X-01, X-02, O-14, O-15, O-18 sub-details closed). Not a published schema: format 1.0 is published only together with a positive S7, the V1-V4 validator and golden ZIP fixtures. Semantic rules (reference resolution, history coverage, units) are V3 and not expressible here.",
   "type": "object",
   "required": ["format", "asset", "files", "history"],
   "additionalProperties": false,
@@ -59,7 +59,7 @@
     "unit": {
       "type": "string",
       "minLength": 1,
-      "description": "UCUM code for known units; unknown units are kept verbatim (X-02). The UCUM engine is OPEN."
+      "description": "UCUM code for known units; unknown units are kept verbatim (X-02). Unit conversion is an implementation capability, not part of the format (ADR-0039 item 3)."
     },
     "storagePath": {
       "type": "string",
@@ -318,7 +318,7 @@
           "type": "object",
           "required": ["id"],
           "additionalProperties": false,
-          "properties": {"id": {"type": "string"}, "by": {"enum": ["signature", "extension", "user"]}}
+          "properties": {"id": {"type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_-]+)*$", "description": "Open type identifier; the value registry is not part of the format (ADR-0039 item 10)."}, "by": {"enum": ["signature", "extension", "user"]}}
         },
         "derived_from": {"type": "array", "items": {"$ref": "#/$defs/fileRefWithHash"}},
         "generation": {
@@ -326,7 +326,7 @@
           "required": ["tool"],
           "additionalProperties": false,
           "properties": {
-            "tool": {"type": "string", "minLength": 1, "description": "Stable handler ID; grammar is OPEN (O-14)."},
+            "tool": {"description": "Stable handler ID: core:<Key> or plugin:<PluginID>:<Key> (ADR-0039 item 8).", "anyOf": [{"type": "string", "pattern": "^core:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$"}, {"type": "string", "pattern": "^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$"}]},
             "tool_version": {"type": "string"},
             "params": {
               "type": "object",
@@ -404,9 +404,8 @@
         "scopes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["asset", "group", "file"]}},
         "description": {"type": "string"},
         "dimension": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Semantic dimension key (X-02 item 3); grammar and registry are OPEN."
+          "description": "Semantic dimension key (X-02 item 3, ADR-0039 item 1): base key or plugin:<PluginID>:<Key>. Unknown valid keys are preserved; conversions exist only for the base registry.",
+          "anyOf": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "string", "pattern": "^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$"}]
         },
         "unit": {"$ref": "#/$defs/unit"},
         "constraints": {"description": "Closed structure per core type (X-02 item 6); opaque JSON for plugin types."},
@@ -424,7 +423,7 @@
           }
         },
         "default": {
-          "description": "Recommendation only; checked like a value by V3. Physical default form is OPEN (X-02 item 9)."
+          "description": "Recommendation only; checked like a value by V3. Integer/decimal fields with a physical dimension use {value, unit} (ADR-0039 item 2)."
         }
       },
       "allOf": [
@@ -432,6 +431,7 @@
           "if": {"properties": {"type": {"const": "integer"}}, "required": ["type"]},
           "then": {
             "properties": {
+              "default": {"anyOf": [{"$ref": "#/$defs/int64String"}, {"type": "object", "required": ["value", "unit"], "additionalProperties": false, "properties": {"value": {"$ref": "#/$defs/int64String"}, "unit": {"$ref": "#/$defs/unit"}}}]},
               "constraints": {
                 "type": "object",
                 "additionalProperties": false,
@@ -458,6 +458,7 @@
           "if": {"properties": {"type": {"const": "decimal"}}, "required": ["type"]},
           "then": {
             "properties": {
+              "default": {"anyOf": [{"$ref": "#/$defs/decimalString"}, {"type": "object", "required": ["value", "unit"], "additionalProperties": false, "properties": {"value": {"$ref": "#/$defs/decimalString"}, "unit": {"$ref": "#/$defs/unit"}}}]},
               "constraints": {
                 "type": "object",
                 "additionalProperties": false,
@@ -666,6 +667,7 @@
         "target": {},
         "relation": {"enum": ["supports_selected", "alternative", "rejected"]},
         "value": {},
+        "unit": {"$ref": "#/$defs/unit", "description": "Unit of value for a physical integer/decimal custom field; required there by V3 (ADR-0039 item 4)."},
         "method": {"type": "string", "minLength": 1},
         "evidence": {
           "type": "array",
@@ -1118,9 +1120,8 @@
         "operation_id": {"$ref": "#/$defs/uuid4"},
         "timestamp": {"$ref": "#/$defs/timestamp"},
         "operation": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Base vocabulary in SPEC 11 (O-18 item 4); other names are preserved as opaque."
+          "description": "Base vocabulary in SPEC 11 (O-18 item 4); other valid names and plugin:<PluginID>:<Key> are preserved with unknown semantics (ADR-0039 item 6).",
+          "anyOf": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "string", "pattern": "^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$"}]
         },
         "details": {"type": "object", "description": "Opaque operation parameters; exact-number guarantee applies."},
         "tool": {
@@ -1149,8 +1150,11 @@
             "type": "object",
             "required": ["kind"],
             "additionalProperties": true,
-            "properties": {"kind": {"type": "string"}, "target": {"type": "string"}},
-            "description": "changes[].kind vocabulary is OPEN (O-18); extra keys are opaque."
+            "properties": {
+              "kind": {"anyOf": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "string", "pattern": "^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$"}]},
+              "target": {"type": "string"}
+            },
+            "description": "changes[].kind: base vocabulary in SPEC 11 (ADR-0039 item 5); other valid names and plugin kinds are preserved with unknown semantics; extra keys are opaque."
           }
         }
       }

@@ -192,7 +192,7 @@ def with_input(completeness="complete", obj_extra=None, entry=None, drop=None):
 def gen_file(origin_kind, with_generation):
     f = {"id": FILE1, "storage_path": "generated/p.png", "size_bytes": "1", "sha256": SHA, "origin_kind": origin_kind}
     if with_generation:
-        f["generation"] = {"tool": "am.preview.mesh", "params": {"w": 1024}}
+        f["generation"] = {"tool": "core:preview.mesh", "params": {"w": 1024}}
     return lambda d: d.__setitem__("files", [f])
 
 
@@ -390,6 +390,71 @@ NEW_CASES = [
      mutate(MINIMAL, history_with_range({"revision_count": 2, "note": "x"}))),
 ]
 CASES.extend(NEW_CASES)
+
+
+# ADR-0039 (report 08): sub-details of X-01, X-02, O-14, O-15, O-18 closed.
+def fdef_x(type_, **extra):
+    d = {"id": "user:" + UUID, "schema_revision": 1, "name": "n", "type": type_, "scopes": ["asset"]}
+    d.update(extra)
+    return lambda doc: doc.__setitem__("field_definitions", [d])
+
+
+def set_operation(name):
+    return lambda d: d["history"]["entries"][0].__setitem__("operation", name)
+
+
+def set_change_kind(kind):
+    return lambda d: d["history"]["entries"][0].__setitem__("changes", [{"kind": kind}])
+
+
+def file_type(type_id):
+    f = {"id": FILE1, "storage_path": "content/" + UUID + "/a.stl", "size_bytes": "1", "sha256": SHA,
+         "origin_kind": "user_added", "type": {"id": type_id, "by": "signature"}}
+    return lambda d: d.__setitem__("files", [f])
+
+
+def gen_tool(tool):
+    f = {"id": FILE1, "storage_path": "generated/p.png", "size_bytes": "1", "sha256": SHA,
+         "origin_kind": "generated", "generation": {"tool": tool}}
+    return lambda d: d.__setitem__("files", [f])
+
+
+PLUGIN_KEY = "plugin:org.example.slicer:density"
+ADR0039_CASES = [
+    ("F1-1", "ADR-0039.1", "base dimension key", True, mutate(MINIMAL, fdef_x("decimal", dimension="length"))),
+    ("F1-2", "ADR-0039.1", "unknown but valid dimension key", True, mutate(MINIMAL, fdef_x("decimal", dimension="density"))),
+    ("F1-3", "ADR-0039.1", "plugin dimension key", True, mutate(MINIMAL, fdef_x("decimal", dimension=PLUGIN_KEY))),
+    ("F1-4", "ADR-0039.1", "dimension with upper case", False, mutate(MINIMAL, fdef_x("decimal", dimension="Length"))),
+    ("F1-5", "ADR-0039.1", "dimension with space", False, mutate(MINIMAL, fdef_x("decimal", dimension="linear size"))),
+    ("F2-1", "ADR-0039.2", "decimal default {value, unit}", True,
+     mutate(MINIMAL, fdef_x("decimal", dimension="length", default={"value": "1.5", "unit": "mm"}))),
+    ("F2-2", "ADR-0039.2", "decimal default plain string", True, mutate(MINIMAL, fdef_x("decimal", default="1.5"))),
+    ("F2-3", "ADR-0039.2", "decimal default object without unit", False,
+     mutate(MINIMAL, fdef_x("decimal", default={"value": "1.5"}))),
+    ("F2-4", "ADR-0039.2", "integer default object with extra key", False,
+     mutate(MINIMAL, fdef_x("integer", default={"value": "2", "unit": "mm", "note": "x"}))),
+    ("F2-5", "ADR-0039.2", "integer default with decimal value", False,
+     mutate(MINIMAL, fdef_x("integer", default={"value": "2.5", "unit": "mm"}))),
+    ("F4-1", "ADR-0039.4", "claim with unit", True,
+     mutate(MINIMAL, lambda d: meta(d).__setitem__("claims", [claim({"kind": "custom", "field_id": "user:" + UUID},
+                                                                     relation="alternative", value="12.5", unit="mm")]))),
+    ("F4-2", "ADR-0039.4", "claim with empty unit", False,
+     mutate(MINIMAL, lambda d: meta(d).__setitem__("claims", [claim({"kind": "custom", "field_id": "user:" + UUID},
+                                                                     relation="alternative", value="12.5", unit="")]))),
+    ("F5-1", "ADR-0039.5", "base change kind", True, mutate(MINIMAL, set_change_kind("file_add"))),
+    ("F5-2", "ADR-0039.5", "unknown valid change kind is preserved", True, mutate(MINIMAL, set_change_kind("preview_set_primary"))),
+    ("F5-3", "ADR-0039.5", "plugin change kind", True, mutate(MINIMAL, set_change_kind(PLUGIN_KEY))),
+    ("F5-4", "ADR-0039.5", "change kind with upper case", False, mutate(MINIMAL, set_change_kind("FileAdd"))),
+    ("F6-1", "ADR-0039.6", "plugin operation", True, mutate(MINIMAL, set_operation(PLUGIN_KEY))),
+    ("F6-2", "ADR-0039.6", "operation with space", False, mutate(MINIMAL, set_operation("files changed"))),
+    ("F8-1", "ADR-0039.8", "generation.tool core:", True, mutate(MINIMAL, gen_tool("core:preview.mesh"))),
+    ("F8-2", "ADR-0039.8", "generation.tool plugin:", True, mutate(MINIMAL, gen_tool("plugin:org.example.slicer:gcode"))),
+    ("F8-3", "ADR-0039.8", "generation.tool without namespace", False, mutate(MINIMAL, gen_tool("am.preview.mesh"))),
+    ("F8-4", "ADR-0039.8", "generation.tool empty core key", False, mutate(MINIMAL, gen_tool("core:"))),
+    ("F10-1", "ADR-0039.10", "files[].type.id dotted", True, mutate(MINIMAL, file_type("mesh.stl.binary"))),
+    ("F10-2", "ADR-0039.10", "files[].type.id with upper case", False, mutate(MINIMAL, file_type("Mesh.STL"))),
+]
+CASES.extend(ADR0039_CASES)
 
 # Negative cases kept from the ADR-0035 schema check (mutations of the full example).
 LEGACY_NEGATIVE = {

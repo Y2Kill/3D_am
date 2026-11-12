@@ -601,7 +601,7 @@ TEST(ManifestSemantics, LargeGraphAndClaimsMeasurement) {
                           {"size_bytes", "0"},
                           {"sha256", std::string(64, '0')},
                           {"origin_kind", "generated"},
-                          {"generation", {{"tool", "test.generator"}}}});
+                          {"generation", {{"tool", "core:test.generator"}}}});
     claims.push_back(
         {{"id", make_id(i)},
          {"target",

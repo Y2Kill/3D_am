@@ -174,7 +174,7 @@
         }
       ],
       "generation": {
-        "tool": "am.preview.mesh",
+        "tool": "core:preview.mesh",
         "tool_version": "0.1.0",
         "params": {
           "width": 1024,

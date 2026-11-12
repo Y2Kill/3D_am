@@ -161,7 +161,7 @@ TEST(AssetRepository, O13PreservesIndependentNumericLexemesAndPaths) {
   const auto root=fresh(); auto repo=value(AssetRepository::open(root,options())); auto created=create(repo,root,2); auto initial=value(repo.snapshot(created.ref)); auto j=plain(initial);
   j["extensions"]["org.test.one"]={{"schema_version","1"},{"data","OPAQUE_ONE"},{"dependencies",{{"state","none"},{"refs",Json::array()}}}};
   j["extensions"]["org.test.two"]={{"schema_version","1"},{"data","OPAQUE_TWO"},{"dependencies",{{"state","none"},{"refs",Json::array()}}}};
-  j["history"]["entries"][0]["details"]="OPAQUE_HISTORY"; j["files"][0]["origin_kind"]="generated"; j["files"][0]["generation"]={{"tool","test.generator"},{"params","OPAQUE_PARAMS"}};
+  j["history"]["entries"][0]["details"]="OPAQUE_HISTORY"; j["files"][0]["origin_kind"]="generated"; j["files"][0]["generation"]={{"tool","core:test.generator"},{"params","OPAQUE_PARAMS"}};
   const std::string fragment=R"({"numbers":[12345678901234567890.000000000000000001,184467440737095516160,-92233720368547758090,1e400,-1E-400,-0,-0.0,1.500],"nested":[{"long":0.)"+std::string(2048,'1')+R"(,"exponent":1e+)"+std::string(1024,'9')+"}]}";
   auto text=j.dump(); for(const auto& name:{"OPAQUE_ONE","OPAQUE_TWO","OPAQUE_HISTORY","OPAQUE_PARAMS"}) text=replace_token(text,name,fragment);
   fixture(repo,root,created.ref,text); auto old=value(repo.snapshot(created.ref)); auto before=opaque_numbers(old.manifest_text()); EXPECT_GE(before.size(),40u);
@@ -187,7 +187,7 @@ TEST(AssetRepository, RemovedOpaqueOwnersAreExactlyThoseOfExplicitlyRemovedFiles
   RecordProperty("req","ADR-0038|ADR-0025");
   const auto root=fresh(); auto repo=value(AssetRepository::open(root,options())); auto created=create(repo,root,2); auto old=value(repo.snapshot(created.ref)); auto j=plain(old);
   const auto generated=j["files"][0]["id"].get<std::string>(), plugin=j["files"][1]["id"].get<std::string>();
-  j["files"][0]["origin_kind"]="generated"; j["files"][0]["generation"]={{"tool","test.generator"},{"params",{{"value",123}}}};
+  j["files"][0]["origin_kind"]="generated"; j["files"][0]["generation"]={{"tool","core:test.generator"},{"params",{{"value",123}}}};
   j["field_definitions"]=Json::array({Json{{"id","plugin:org.test.one:opaque"},{"schema_revision",1},{"name","Opaque"},{"type","plugin:org.test.one:opaque"},{"scopes",Json::array({"file"})}}});
   j["files"][1]["metadata"]["custom_values"]=Json::array({Json{{"field_id","plugin:org.test.one:opaque"},{"value",{{"n",456}}}}});
   j["extensions"]["org.test.one"]={{"schema_version","1"},{"data",{{"keep",789}}},{"dependencies",{{"state","none"},{"refs",Json::array()}}}};
