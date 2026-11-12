@@ -4,6 +4,7 @@
 #include <functional>
 #include <variant>
 #include "am/domain/manifest/codec.hpp"
+#include "am/domain/manifest/semantics.hpp"
 #include "am/storage/commit/protocol.hpp"
 
 namespace am::repository {
@@ -26,6 +27,9 @@ struct VerificationReport {
   FormatSupport format_support = FormatSupport::supported;
   CheckStatus v1 = CheckStatus::not_performed, v2 = CheckStatus::not_performed, v3 = CheckStatus::not_performed;
   std::vector<std::string> v3_rules;
+  bool v3_complete = false;
+  std::vector<manifest::Finding> v3_findings;
+  std::vector<manifest::DeferredRule> v3_deferred_rules;
   std::vector<Error> violations;
   std::vector<StreamReport> v4;
   CheckStatus plugin_validation = CheckStatus::not_performed;
@@ -34,14 +38,16 @@ struct VerificationReport {
 };
 Result<Json> verification_json(const VerificationReport& report);
 struct SemanticContext { AssetRef ref; std::optional<std::string> new_operation_id; };
-struct SemanticResult { bool complete = false; std::vector<std::string> checked_rules; std::vector<Error> violations; };
+struct SemanticResult : manifest::SemanticReport { std::vector<Error> violations; };
 class SemanticValidator {
  public:
   virtual ~SemanticValidator() = default;
   virtual Result<SemanticResult> validate(const manifest::ManifestDocument&, const asset_zip::ZipArchive&, const SemanticContext&) const = 0;
 };
-// The T-010 validator checks repository invariants only; T-011 supplies full V3.
+// Test-only partial validator. Production defaults include domain semantics.
 Result<std::shared_ptr<const SemanticValidator>> repository_invariants();
+enum class DriveKind { unknown, fixed, removable, ramdisk, remote, optical };
+Result<StorageCapabilities> classify_storage_capabilities(DriveKind drive, std::string_view filesystem);
 Result<StorageCapabilities> detect_storage_capabilities(const std::filesystem::path& root);
 
 class AssetSnapshot {

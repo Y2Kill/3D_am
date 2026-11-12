@@ -31,8 +31,17 @@ template<class T> T take(Result<T> r) { if (!r) throw r.error(); return std::mov
 void take(Result<void> r) { if (!r) throw r.error(); }
 template<class T, class F> Result<T> guard(F&& f) {
   try { return f(); } catch (const Error& e) {
-    if (e.message_id.starts_with("am.zip.") || (e.message_id.starts_with("am.commit.") && e.message_id != "am.commit.base_changed"))
-      return error(e.code,"am.repo.io_error",e.ctx.detail).caused_by(e);
+    const auto& id = e.message_id;
+    std::string mapped;
+    if (id == "am.commit.locked") mapped = "am.repo.locked";
+    else if (id == "am.commit.insufficient_space") mapped = "am.repo.insufficient_space";
+    else if (id == "am.commit.replace_failed") mapped = "am.repo.target_in_use";
+    else if (id == "am.commit.journal_error" || id == "am.commit.journal_version") mapped = "am.repo.journal_error";
+    else if (id == "am.commit.out_of_memory" || (id.starts_with("am.zip.") && e.code == Errc::resource_exhausted)) mapped = "am.repo.limit_exceeded";
+    else if (id.starts_with("am.zip.") && e.code == Errc::corrupt_data) mapped = "am.repo.corrupt_container";
+    else if (id.starts_with("am.zip.") && e.code == Errc::unsupported) mapped = "am.repo.unsupported_container";
+    else if (id.starts_with("am.zip.") || (id.starts_with("am.commit.") && id != "am.commit.base_changed" && id != "am.commit.verification_failed")) mapped = "am.repo.io_error";
+    if (!mapped.empty()) return error(e.code,std::move(mapped),e.ctx.detail).caused_by(e);
     return e;
   }
   catch (const std::bad_alloc&) { return error(Errc::resource_exhausted, "am.repo.out_of_memory", "Allocation failed"); }
@@ -104,62 +113,54 @@ std::set<std::string> opaque_paths(const Json& j, const asset_zip::ZipArchive& z
 }
 class Invariants final : public SemanticValidator {
  public:
+  explicit Invariants(bool full = false) : full_(full) {}
   Result<SemanticResult> validate(const manifest::ManifestDocument& doc, const asset_zip::ZipArchive& zip, const SemanticContext& context) const override {
     return guard<SemanticResult>([&] {
-      SemanticResult result; const auto& j = doc.known();
-      auto check = [&](bool passed, std::string_view rule) { if (!passed) result.violations.push_back(error(Errc::corrupt_data, "am.manifest." + std::string(rule), "Repository invariant failed: " + std::string(rule))); };
-      result.checked_rules = {"format_asset_identity", "unique_ids", "paths_and_inputs", "history_coverage"};
-      if (context.new_operation_id) result.checked_rules.push_back("history_operation_id");
-      check(classify(j) == FormatSupport::supported && j.contains("asset") && string(j["asset"], "id") == context.ref.asset_id, "format_asset_identity");
-      std::set<std::string> file_ids, input_ids, attachment_ids;
-      for (const auto& f : array(j,"files")) check(!string(f,"id").empty() && file_ids.insert(string(f,"id")).second, "unique_ids");
-      for (const auto& f : array(j,"historical_files")) check(!string(f,"id").empty() && file_ids.insert(string(f,"id")).second, "unique_ids");
-      for (const auto& i : array(j,"inputs")) check(!string(i,"id").empty() && input_ids.insert(string(i,"id")).second, "unique_ids");
-      if (j.contains("extensions") && j["extensions"].is_object()) for (auto ext = j["extensions"].begin(); ext != j["extensions"].end(); ++ext)
-        for (const auto& a : array(ext.value(),"attachments")) {
-          check(!string(a,"id").empty() && attachment_ids.insert(string(a,"id")).second, "unique_ids");
-          check(string(a,"path").starts_with("extensions/" + ext.key() + "/"), "paths_and_inputs");
-        }
-      for (const auto& f : array(j,"files")) {
-        const auto p = string(f,"storage_path"); bool valid = p.starts_with("generated/");
-        if (p.starts_with("content/")) { auto slash = p.find('/',8); if (slash != std::string::npos) valid = input_ids.contains(p.substr(8, slash-8)); }
-        check(valid, "paths_and_inputs");
+      SemanticResult result;
+      if (full_) static_cast<manifest::SemanticReport&>(result) = take(manifest::validate_semantics(doc));
+      const auto& j = doc.known();
+      auto check = [&](bool passed, std::string_view rule, std::string pointer) {
+        if (!passed) result.findings.push_back({std::string(rule),manifest::FindingSeverity::error,std::move(pointer),"am.manifest."+std::string(rule),"Repository invariant failed"});
+      };
+      result.checked_rules.push_back("format_asset_identity");
+      check(classify(j) == FormatSupport::supported && j.contains("asset") && string(j["asset"],"id") == context.ref.asset_id,"format_asset_identity","/asset/id");
+      result.checked_rules.push_back("zip_paths");
+      std::set<std::string> used;
+      for (const auto& e : zip.entries()) check(e.raw_name.size() <= 200 && paths::check_container_path(e.raw_name).ok() && used.insert(unicode::path_collision_key(e.raw_name)).second,"zip_paths","");
+      if (context.new_operation_id) {
+        result.checked_rules.push_back("history_operation_id");
+        const auto& h = j.contains("history") ? array(j["history"],"entries") : empty_array();
+        check(!h.empty() && string(h.back(),"operation_id") == *context.new_operation_id,"history_operation_id","/history/entries");
       }
-      std::set<std::string> registered_paths;
-      for (const auto& f : registered(j)) check(!f.path.empty() && f.path.size() <= 200 && paths::check_container_path(f.path).ok() && registered_paths.insert(unicode::path_collision_key(f.path)).second,"paths_and_inputs");
-      std::set<std::string> paths;
-      for (const auto& e : zip.entries()) check(e.raw_name.size() <= 200 && paths::check_container_path(e.raw_name).ok() && paths.insert(unicode::path_collision_key(e.raw_name)).second, "paths_and_inputs");
-      std::vector<std::pair<U64,U64>> ranges; U64 last = 0; const auto total = revision(j);
-      if (j.contains("history") && j["history"].is_object()) {
-        const auto& h = j["history"]; const auto& entries = array(h,"entries");
-        for (const auto& e : entries) { auto r = e.contains("revision") ? number(e["revision"]).value_or(0) : 0; check(r > last && r <= total,"history_coverage"); last = r; ranges.emplace_back(r,r); }
-        U64 previous = 0;
-        for (const auto& r : array(h,"compacted_ranges")) {
-          const auto first = r.contains("from_revision") ? number(r["from_revision"]).value_or(0) : 0;
-          const auto end = r.contains("to_revision") ? number(r["to_revision"]).value_or(0) : 0;
-          check(first > previous && end >= first && end <= total,"history_coverage"); previous = first; ranges.emplace_back(first,end);
-        }
-        check(!entries.empty(),"history_coverage");
-        if (!entries.empty() && j.contains("asset")) {
-          const auto& a = j["asset"];
-          check(entries.front().contains("revision") && number(entries.front()["revision"]) == 1 && string(entries.front(),"operation") == "asset_created" && string(entries.front(),"timestamp") == string(a,"created_at"), "history_coverage");
-          check(last == total && string(entries.back(),"timestamp") == string(a,"modified_at"),"history_coverage");
-          if (context.new_operation_id) check(string(entries.back(),"operation_id") == *context.new_operation_id,"history_operation_id");
-        }
-      } else check(false,"history_coverage");
-      std::sort(ranges.begin(),ranges.end()); U64 expected = 1;
-      for (const auto& [first,end] : ranges) { check(first == expected,"history_coverage"); expected = end + 1; }
-      check(total > 0 && expected == total + 1,"history_coverage"); return result;
+      return result;
     });
   }
+ private:
+  bool full_;
 };
+const char* severity_name(manifest::FindingSeverity s) {
+  switch (s) { case manifest::FindingSeverity::error:return "error";case manifest::FindingSeverity::warning:return "warning";default:return "unverifiable"; }
+}
 const char* status_name(CheckStatus s) { switch(s) { case CheckStatus::passed:return "passed"; case CheckStatus::partial:return "partial"; case CheckStatus::failed:return "failed"; case CheckStatus::not_applicable_newer_minor:return "not_applicable_newer_minor"; default:return "not_performed"; } }
 const char* stream_name(StreamStatus s) { switch(s) { case StreamStatus::verified_sha256:return "verified_sha256"; case StreamStatus::verified_crc_size_only:return "verified_crc_size_only"; case StreamStatus::unverifiable:return "unverifiable"; case StreamStatus::unsupported:return "unsupported"; default:return "failed"; } }
 } // namespace
 Result<std::shared_ptr<const SemanticValidator>> repository_invariants() { return guard<std::shared_ptr<const SemanticValidator>>([] { return std::shared_ptr<const SemanticValidator>(std::make_shared<Invariants>()); }); }
 Result<Json> verification_json(const VerificationReport& r) {
-  return guard<Json>([&] { Json out{{"format_support", r.format_support == FormatSupport::supported ? "supported" : "newer_minor"},{"v1",status_name(r.v1)},{"v2",status_name(r.v2)},{"v3",status_name(r.v3)},{"v3_rules",r.v3_rules},{"plugin_validation",status_name(r.plugin_validation)},{"container_verification",r.container_verification == ContainerVerification::full ? "full" : "partial"},{"v4",Json::array()}};
+  return guard<Json>([&] { Json out{{"format_support", r.format_support == FormatSupport::supported ? "supported" : "newer_minor"},{"v1",status_name(r.v1)},{"v2",status_name(r.v2)},{"v3",status_name(r.v3)},{"v3_rules",r.v3_rules},{"v3_complete",r.v3_complete},{"v3_findings",Json::array()},{"v3_deferred_rules",Json::array()},{"plugin_validation",status_name(r.plugin_validation)},{"container_verification",r.container_verification == ContainerVerification::full ? "full" : "partial"},{"v4",Json::array()}};
+    for (const auto& f : r.v3_findings) out["v3_findings"].push_back({{"rule",f.rule},{"severity",severity_name(f.severity)},{"pointer",f.pointer},{"message_id",f.message_id},{"detail",f.detail}});
+    for (const auto& d : r.v3_deferred_rules) out["v3_deferred_rules"].push_back({{"rule",d.rule},{"reason",d.reason}});
     for (const auto& s : r.v4) out["v4"].push_back({{"id",s.id},{"path",s.path},{"status",stream_name(s.status)}}); if (r.error) out["error"] = r.error->message_id; return out; });
+}
+Result<StorageCapabilities> classify_storage_capabilities(DriveKind drive, std::string_view filesystem) {
+  return guard<StorageCapabilities>([&] {
+    StorageCapabilities caps; caps.filesystem = filesystem; caps.remote = drive == DriveKind::remote;
+    if (filesystem == "FAT32") caps.max_file_size = 0xffffffffULL;
+    if (drive == DriveKind::fixed && filesystem == "NTFS") {
+      caps.mode = StorageMode::full; caps.posix_rename = true; caps.replace_file = true;
+      caps.locks_reliable = true; caps.durability = Durability::assumed;
+    }
+    return caps;
+  });
 }
 Result<StorageCapabilities> detect_storage_capabilities(const Path& root) {
   return guard<StorageCapabilities>([&] {
@@ -172,9 +173,13 @@ Result<StorageCapabilities> detect_storage_capabilities(const Path& root) {
     const auto bytes = WideCharToMultiByte(CP_UTF8,0,name.data(),static_cast<int>(name.size()),nullptr,0,nullptr,nullptr);
     if (bytes <= 0) fail(Errc::io_error,"am.repo.io_error","Filesystem name conversion failed"); caps.filesystem.resize(static_cast<std::size_t>(bytes));
     if (!WideCharToMultiByte(CP_UTF8,0,name.data(),static_cast<int>(name.size()),caps.filesystem.data(),bytes,nullptr,nullptr)) fail(Errc::io_error,"am.repo.io_error","Filesystem name conversion failed");
-    if (caps.filesystem == "FAT32") caps.max_file_size = 0xffffffffULL;
-    const bool local = drive_type == DRIVE_FIXED || drive_type == DRIVE_REMOVABLE || drive_type == DRIVE_RAMDISK;
-    if (caps.filesystem == "NTFS" && local) { caps.mode = StorageMode::full; caps.posix_rename = true; caps.replace_file = true; caps.locks_reliable = true; caps.durability = Durability::assumed; }
+    DriveKind drive = DriveKind::unknown;
+    switch (drive_type) {
+      case DRIVE_FIXED:drive=DriveKind::fixed;break;case DRIVE_REMOTE:drive=DriveKind::remote;break;
+      case DRIVE_REMOVABLE:drive=DriveKind::removable;break;case DRIVE_RAMDISK:drive=DriveKind::ramdisk;break;
+      case DRIVE_CDROM:drive=DriveKind::optical;break;default:break;
+    }
+    caps = take(classify_storage_capabilities(drive,caps.filesystem));
 #else
     (void)root; // No non-Windows FS has been verified by fs_support.md v0.1.
 #endif
@@ -244,8 +249,16 @@ struct AssetRepository::Impl {
       auto semantic = options.semantic_validator->validate(doc,zip,{ref,op});
       if (semantic) {
         report.v3_rules = semantic->checked_rules; report.violations = semantic->violations;
-        report.v3 = report.violations.empty() ? (semantic->complete ? CheckStatus::passed : CheckStatus::partial) : CheckStatus::failed;
-        for (const auto& e : report.violations) record_error(e);
+        report.v3_complete = semantic->complete; report.v3_findings = semantic->findings;
+        report.v3_deferred_rules = semantic->deferred_rules;
+        report.v3 = semantic->complete ? CheckStatus::passed : CheckStatus::partial;
+        for (const auto& f : report.v3_findings) {
+          if (f.severity == manifest::FindingSeverity::error) {
+            report.v3 = CheckStatus::failed;
+            record_error(error(Errc::corrupt_data,f.message_id,f.detail));
+          } else if (f.severity == manifest::FindingSeverity::unverifiable && report.v3 == CheckStatus::passed) report.v3 = CheckStatus::partial;
+        }
+        for (const auto& e : report.violations) { report.v3 = CheckStatus::failed; record_error(e); }
       } else { report.v3 = CheckStatus::failed; record_error(semantic.error()); }
     } else { report.v2 = CheckStatus::not_applicable_newer_minor; report.v3 = CheckStatus::not_performed; }
     std::map<std::string,const asset_zip::EntryInfo*> entries;
@@ -257,8 +270,8 @@ struct AssetRepository::Impl {
       if (wanted && f.size && !f.id.empty() && !f.path.empty() && f.sha.size() == 64) {
         auto result = guard<asset_zip::EntryVerification>([&]() -> Result<asset_zip::EntryVerification> {
           auto it = entries.find(f.path); if (it == entries.end()) return error(Errc::corrupt_data,"am.manifest.missing_stream",f.path);
-          auto verified = zip.verify_entry(it->second->index,budget,true); if (!verified) return verified;
-          if (verified->size != *f.size || !verified->sha256 || hex(*verified->sha256) != f.sha) return error(Errc::corrupt_data,"am.manifest.stream_mismatch",f.path);
+          auto verified = take(zip.verify_entry(it->second->index,budget,true));
+          if (verified.size != *f.size || !verified.sha256 || hex(*verified.sha256) != f.sha) return error(Errc::corrupt_data,"am.manifest.stream_mismatch",f.path);
           return verified;
         });
         if (result) item.status = StreamStatus::verified_sha256;
@@ -274,7 +287,7 @@ struct AssetRepository::Impl {
       if (allowed_opaque && !allowed_opaque->contains(e.raw_name)) {
         item.status = StreamStatus::failed; item.error = error(Errc::corrupt_data,"am.manifest.unregistered_stream",e.raw_name); record_error(*item.error);
       } else if (level == VerifyLevel::full) {
-        auto verified = zip.verify_entry(e.index,budget,false);
+        auto verified = guard<asset_zip::EntryVerification>([&] { return take(zip.verify_entry(e.index,budget,false)); });
         if (verified) item.status = StreamStatus::verified_crc_size_only;
         else { item.status = verified.error().code == Errc::unsupported ? StreamStatus::unsupported : StreamStatus::failed; item.error = verified.error(); record_error(verified.error()); }
       }
@@ -296,7 +309,7 @@ Result<AssetRepository> AssetRepository::open(const Path& root, RepositoryOption
     if (options.mode == LibraryMode::read_write && caps.mode == StorageMode::read_only_default)
       throw Error::make(Errc::read_only,"Storage is read-only by default",caps.filesystem).in("storage.repository").id("am.repo.storage_read_only").allow(ErrorAction::open_read_only);
     if (!options.clock) fail(Errc::invalid_argument,"am.repo.invalid_operation","Clock is missing");
-    if (!options.semantic_validator) options.semantic_validator = take(repository_invariants());
+    if (!options.semantic_validator) options.semantic_validator = std::make_shared<Invariants>(true);
     std::string schema; for (const auto part : manifest_schema_parts) schema += part;
     auto state = std::make_shared<Impl>(std::filesystem::weakly_canonical(std::filesystem::absolute(root)),std::move(options),std::move(caps),take(manifest::SchemaValidator::create(schema)));
     if (state->options.mode == LibraryMode::read_write) state->journal = take(db::StateJournal::open(state->root));
@@ -373,6 +386,14 @@ void add_files(Json& j, Plan& plan, const AddFiles& add, const std::set<std::str
   const auto input_id = string(add.input,"id"); if (!uuid4(input_id)) fail(Errc::invalid_argument,"am.repo.invalid_operation","InputID must be UUIDv4");
   if (!j.contains("inputs")) j["inputs"] = Json::array();
   std::set<std::string> ids; for (const auto& f : array(j,"files")) ids.insert(string(f,"id")); for (const auto& f : array(j,"historical_files")) ids.insert(string(f,"id"));
+  std::set<std::string> used{unicode::path_collision_key("manifest.json")};
+  for (const auto& record : registered(j)) used.insert(unicode::path_collision_key(record.path));
+  for (const auto& name : opaque) used.insert(unicode::path_collision_key(name));
+  for (const auto& f : add.files) {
+    const auto path = "content/"+input_id+"/"+f.path;
+    if (!used.insert(unicode::path_collision_key(path)).second) fail(Errc::conflict,"am.repo.path_collision",path);
+    if (path.size()>200 || !paths::check_container_path(path)) fail(Errc::invalid_argument,"am.repo.invalid_operation","Unsafe or oversized container path");
+  }
   for (const auto& f : add.files) {
     if (f.origin_kind != "imported" && f.origin_kind != "user_added") fail(Errc::invalid_argument,"am.repo.invalid_operation","AddFiles origin must be imported or user_added");
     const auto id = identifier(f.file_id), path = "content/" + input_id + "/" + f.path;
@@ -386,7 +407,26 @@ void add_files(Json& j, Plan& plan, const AddFiles& add, const std::set<std::str
   for (const auto& i : j["inputs"]) if (string(i,"id") == input_id) fail(Errc::invalid_argument,"am.repo.invalid_operation","InputID already exists");
   j["inputs"].push_back(add.input);
 }
+void precheck_add_paths(const Json& j, const std::vector<ChangeOperation>& operations, const std::set<std::string>& opaque) {
+  std::map<std::string,std::string> current;
+  std::set<std::string> used{unicode::path_collision_key("manifest.json")};
+  for (const auto& f : registered(j)) { auto key=unicode::path_collision_key(f.path); current.emplace(f.id,key); used.insert(key); }
+  for (const auto& p : opaque) used.insert(unicode::path_collision_key(p));
+  for (const auto& op : operations) {
+    if (const auto* remove=std::get_if<RemoveFile>(&op)) {
+      auto found=current.find(remove->file_id); if (found!=current.end()) { used.erase(found->second); current.erase(found); }
+    }
+    if (const auto* add=std::get_if<AddFiles>(&op)) for (const auto& f : add->files) {
+      const auto path="content/"+string(add->input,"id")+"/"+f.path;
+      auto key=unicode::path_collision_key(path);
+      if (!used.insert(key).second) fail(Errc::conflict,"am.repo.path_collision",path);
+      if (path.size()>200 || !paths::check_container_path(path)) fail(Errc::invalid_argument,"am.repo.invalid_operation","Unsafe or oversized container path");
+      if (f.file_id) current.emplace(*f.file_id,std::move(key));
+    }
+  }
+}
 void apply(Json& j, Plan& plan, const std::vector<ChangeOperation>& operations, U64 new_revision, const std::set<std::string>& opaque) {
+  precheck_add_paths(j,operations,opaque);
   static const std::set<std::string> fields{"title","description","authors","publisher","license","tags","categories","links","dates"};
   for (const auto& operation : operations) std::visit([&](const auto& op) {
     using T = std::decay_t<decltype(op)>;
@@ -542,6 +582,8 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
     return guard<void>([&]() -> Result<void> {
       auto actual = read_manifest(zip,repo.options,budget);
       result.verification = repo.check(ref,zip,actual.document,VerifyLevel::full,{},budget,allowed,op);
+      if (!result.verification.error && !result.verification.v3_complete)
+        result.verification.error = error(Errc::corrupt_data,"am.manifest.incomplete","Semantic validation did not complete");
       if (failure_report) *failure_report = result.verification;
       if (result.verification.error) return *result.verification.error;
       if (repo.options.test_hooks.verifier_barrier) repo.options.test_hooks.verifier_barrier(); return {};
@@ -568,11 +610,20 @@ Result<ChangeResult> AssetRepository::create(const CreateRequest& request, Verif
   if (failure_report) *failure_report = {};
   return guard<ChangeResult>([&] {
     impl_->require_write(); AssetRef ref{impl_->options.library_id,identifier(request.asset_id)}; Impl::Lease lock(*impl_,ref);
-    if (std::filesystem::exists(paths::native(impl_->path(ref)))) fail(Errc::conflict,"am.repo.asset_exists","Asset already exists");
+    if (std::filesystem::exists(paths::native(impl_->path(ref)))) {
+      if (request.op_id) {
+        auto old = take(snapshot(ref));
+        for (const auto& entry : array(old.manifest().known()["history"],"entries"))
+          if (string(entry,"operation_id") == *request.op_id) fail(Errc::conflict,"am.repo.duplicate_operation_id","OperationID already exists in history");
+      }
+      fail(Errc::conflict,"am.repo.asset_exists","Asset already exists");
+    }
     if (request.creation_kind != "user" && request.creation_kind != "import") fail(Errc::invalid_argument,"am.repo.invalid_operation","Invalid creation kind");
     const auto now = timestamp(impl_->options.clock()), op = identifier(request.op_id);
     Json j{{"format",{{"id",format_id},{"version",{{"major",1},{"minor",0}}}}},{"asset",{{"id",ref.asset_id},{"revision",1},{"created_at",now},{"modified_at",now}}},{"files",Json::array()},{"history",{{"entries",Json::array()}}}};
     if (request.metadata) j["asset"]["metadata"] = *request.metadata;
+    std::vector<ChangeOperation> paths_to_check; for (const auto& add : request.files) paths_to_check.emplace_back(add);
+    precheck_add_paths(j,paths_to_check,{});
     Plan plan; for (const auto& add : request.files) add_files(j,plan,add,{});
     auto doc = take(manifest::parse_manifest(j.dump(),impl_->options.codec_limits));
     auto result = guard<ChangeResult>([&] { return commit_update(*impl_,ref,std::move(doc),std::move(plan),nullptr,op,"asset_created",Json{{"creation_kind",request.creation_kind}},failure_report); });
@@ -590,6 +641,8 @@ Result<ChangeResult> AssetRepository::change(const ChangeRequest& request, Verif
     const auto op = identifier(request.op_id);
     for (int attempt = 0; attempt < 2; ++attempt) {
       auto old = take(snapshot(request.ref)); if (!old.writable()) fail(Errc::unsupported,"am.repo.write_unsupported_version","Format is read-only");
+      if (request.op_id) for (const auto& entry : array(old.manifest().known()["history"],"entries"))
+        if (string(entry,"operation_id") == op) fail(Errc::conflict,"am.repo.duplicate_operation_id","OperationID already exists in history");
       rebase(old,request,impl_->options.codec_limits);
       auto doc = take(manifest::parse_manifest(old.manifest_text(),impl_->options.codec_limits)); Plan plan;
       apply(doc.known(),plan,request.ops,old.revision()+1,opaque_paths(old.manifest().known(),old.archive()));

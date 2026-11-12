@@ -35,6 +35,7 @@ if(AM_WITH_CONTAINER)
   find_package(ZLIB REQUIRED)
   find_package(unofficial-sqlite3 CONFIG REQUIRED)
   target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp unit/test_manifest_wide.cpp
+    unit/test_manifest_semantics.cpp
     unit/zip_builder.cpp unit/test_zip_reader.cpp unit/test_zip_stream.cpp unit/test_zip_probe.cpp
     unit/test_zip_writer.cpp unit/test_zip_writer_large.cpp unit/test_zip_writer_interop.cpp
     unit/test_state_journal.cpp unit/test_commit_protocol.cpp unit/test_asset_repository.cpp)

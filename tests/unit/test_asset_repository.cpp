@@ -7,6 +7,7 @@
 #include <atomic>
 #include <barrier>
 #include <condition_variable>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <algorithm>
@@ -97,7 +98,7 @@ TEST(AssetRepository, CreateHistoryManifestFirstAndVerificationReport) {
   EXPECT_TRUE(std::filesystem::exists(target(root,created.ref.asset_id))); EXPECT_EQ(j["asset"]["created_at"],j["asset"]["modified_at"]); EXPECT_EQ(j["history"]["entries"].size(),1u);
   EXPECT_EQ(j["history"]["entries"][0]["operation_id"],created.op_id); EXPECT_EQ(j["asset"]["modified_at"],j["history"]["entries"][0]["timestamp"]);
   const auto history=plain(snap)["history"]["entries"][0];EXPECT_EQ(history["details"]["creation_kind"],"user");EXPECT_EQ(history["tool"]["application_version"],"0.1.0-test");EXPECT_EQ(created.commit->op_id,created.op_id);
-  EXPECT_EQ(created.verification.v1,CheckStatus::passed); EXPECT_EQ(created.verification.v2,CheckStatus::passed); EXPECT_EQ(created.verification.v3,CheckStatus::partial);
+  EXPECT_EQ(created.verification.v1,CheckStatus::passed); EXPECT_EQ(created.verification.v2,CheckStatus::passed); EXPECT_EQ(created.verification.v3,CheckStatus::passed);
   ASSERT_EQ(created.verification.v4.size(),2u); for (const auto& s : created.verification.v4) EXPECT_EQ(s.status,StreamStatus::verified_sha256); EXPECT_EQ(created.verification.container_verification,ContainerVerification::full);
   std::cout << "CREATE_REPORT " << value(verification_json(created.verification)).dump() << '\n'; clean(root);
 }
@@ -187,6 +188,7 @@ TEST(AssetRepository, RemovedOpaqueOwnersAreExactlyThoseOfExplicitlyRemovedFiles
   const auto root=fresh(); auto repo=value(AssetRepository::open(root,options())); auto created=create(repo,root,2); auto old=value(repo.snapshot(created.ref)); auto j=plain(old);
   const auto generated=j["files"][0]["id"].get<std::string>(), plugin=j["files"][1]["id"].get<std::string>();
   j["files"][0]["origin_kind"]="generated"; j["files"][0]["generation"]={{"tool","test.generator"},{"params",{{"value",123}}}};
+  j["field_definitions"]=Json::array({Json{{"id","plugin:org.test.one:opaque"},{"schema_revision",1},{"name","Opaque"},{"type","plugin:org.test.one:opaque"},{"scopes",Json::array({"file"})}}});
   j["files"][1]["metadata"]["custom_values"]=Json::array({Json{{"field_id","plugin:org.test.one:opaque"},{"value",{{"n",456}}}}});
   j["extensions"]["org.test.one"]={{"schema_version","1"},{"data",{{"keep",789}}},{"dependencies",{{"state","none"},{"refs",Json::array()}}}};
   fixture(repo,root,created.ref,j.dump()); old=value(repo.snapshot(created.ref)); std::set<manifest::OpaqueKey> removed;
@@ -320,7 +322,7 @@ TEST(AssetRepository, KillEveryRepositoryCheckpointThreeTimesWithOpenSnapshot) {
     SCOPED_TRACE(std::string(commit::point_name(points[i]))+" "+std::to_string(n));const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root);auto old=value(repo.snapshot(created.ref));
     Process child("crash",root,created.ref.asset_id,std::string(commit::point_name(points[i])));ASSERT_EQ(child.wait(),91u);
     auto initial=value(repo.verify(created.ref));EXPECT_FALSE(initial.error);auto report=value(repo.recover());ASSERT_EQ(report.size(),1u);
-    auto current=value(repo.snapshot(created.ref));EXPECT_EQ(current.revision(),i<2?1u:2u);auto verified=value(repo.verify(created.ref));EXPECT_FALSE(verified.error);EXPECT_EQ(verified.container_verification,ContainerVerification::full);EXPECT_EQ(verified.v3,CheckStatus::partial);
+    auto current=value(repo.snapshot(created.ref));EXPECT_EQ(current.revision(),i<2?1u:2u);auto verified=value(repo.verify(created.ref));EXPECT_FALSE(verified.error);EXPECT_EQ(verified.container_verification,ContainerVerification::full);EXPECT_EQ(verified.v3,CheckStatus::passed);
     asset_zip::ReadBudget budget(10000000);for(const auto& e:old.archive().entries())EXPECT_TRUE(old.archive().verify_entry(e.index,budget,true));EXPECT_EQ(old.revision(),1u);
     std::cout<<"REPO_KILL "<<commit::point_name(points[i])<<" outcome="<<commit::outcome_name(report[0].outcome)<<" revision="<<current.revision()<<" run="<<n<<'\n';clean(root);EXPECT_TRUE(commit::AssetLock::acquire(root,created.ref.asset_id));
   }
@@ -344,7 +346,7 @@ TEST(AssetRepository, AttachmentIdentityBoundaryAndPathCollisionAreInvariants) {
       if(fault==1){auto ext=dom["extensions"]["org.test.one"];dom["extensions"].erase("org.test.one");dom["extensions"]["org.test.other"]=ext;}
       if(fault==2)dom["extensions"]["org.test.one"]["attachments"][1]["path"]="extensions/org.test.one/a.bin";};
     auto repo=value(AssetRepository::open(root,o));auto bad=repo.change(metadata(created));ASSERT_FALSE(bad);EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before);clean(root);
-    EXPECT_EQ(bad.error().message_id,fault==0?"am.manifest.unique_ids":fault==1?"am.manifest.paths_and_inputs":"am.repo.path_collision");
+    EXPECT_EQ(bad.error().message_id,fault==0?"am.manifest.unique_ids":fault==1?"am.manifest.storage_paths":"am.repo.path_collision");
   }
 }
 TEST(AssetRepository, QuickVerificationDoesNotSpendThePayloadBudget) {
@@ -365,4 +367,105 @@ TEST(AssetRepository, OneGiBIncompressibleRawCopyVerificationAndMemory) {
   PROCESS_MEMORY_COUNTERS_EX memory{};memory.cb=sizeof(memory);ASSERT_TRUE(GetProcessMemoryInfo(GetCurrentProcess(),reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory),sizeof(memory)));std::cout<<" peak_working_set_bytes="<<memory.PeakWorkingSetSize<<" peak_commit_bytes="<<memory.PeakPagefileUsage;
 #endif
   std::cout<<'\n';clean(root);EXPECT_TRUE(std::filesystem::remove(path));EXPECT_TRUE(std::filesystem::remove(target(root,created.ref.asset_id)));
+}
+
+namespace {
+class ReportValidator final : public SemanticValidator {
+ public:
+  bool incomplete=false,warning=false;
+  Result<SemanticResult> validate(const manifest::ManifestDocument& doc,const asset_zip::ZipArchive&,const SemanticContext&) const override {
+    auto r=manifest::validate_semantics(doc);if(!r)return r.error();SemanticResult out;static_cast<manifest::SemanticReport&>(out)=std::move(r).value();
+    if(incomplete)out.complete=false;
+    if(warning)out.findings.push_back({"test_warning",manifest::FindingSeverity::warning,"/asset/metadata","am.manifest.test_warning","Synthetic injected warning for report serialization"});
+    return out;
+  }
+};
+void physical_fixture(Json& j) {
+  const auto field_id="user:"+id();
+  j["field_definitions"]=Json::array({Json{{"id",field_id},{"schema_revision",1},{"name","Length"},{"type","decimal"},{"scopes",Json::array({"asset"})},{"dimension","length"},{"constraints",{{"maximum",{{"value","1"},{"unit","cm"}}}}}}});
+  j["asset"]["metadata"]["custom_values"]=Json::array({Json{{"field_id",field_id},{"value","2"},{"unit","mm"}}});
+}
+}
+TEST(AssetRepository, SemanticErrorsReturnFindingsAndProtectExistingBytes) {
+  RecordProperty("req","ADR-0035|R-05");
+  const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root);auto before=bytes(target(root,created.ref.asset_id));
+  auto request=metadata(created,"license",Json{{"spdx","MIT OR OR BSD"}});VerificationReport report;auto bad=repo.change(request,&report);ASSERT_FALSE(bad);
+  EXPECT_EQ(bad.error().message_id,"am.manifest.license_spdx");EXPECT_EQ(bad.error().code,Errc::corrupt_data);EXPECT_EQ(report.v3,CheckStatus::failed);EXPECT_TRUE(report.v3_complete);
+  ASSERT_EQ(report.v3_findings.size(),1u);EXPECT_EQ(report.v3_findings[0].pointer,"/asset/metadata/license/spdx");EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before);
+  auto json=value(verification_json(report));EXPECT_EQ(json["v3_findings"][0]["severity"],"error");std::cout<<"V3_ERROR_REPORT "<<json.dump()<<'\n';clean(root);
+}
+TEST(AssetRepository, UnverifiableSemanticsCanCommitAndRetainPartialReport) {
+  RecordProperty("req","ADR-0035|X-02");const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root);auto j=plain(value(repo.snapshot(created.ref)));physical_fixture(j);fixture(repo,root,created.ref,j.dump());
+  auto changed=value(repo.change(metadata(created)));EXPECT_TRUE(changed.commit);EXPECT_EQ(changed.verification.v3,CheckStatus::partial);EXPECT_TRUE(changed.verification.v3_complete);EXPECT_FALSE(changed.verification.error);
+  ASSERT_EQ(changed.verification.v3_findings.size(),1u);EXPECT_EQ(changed.verification.v3_findings[0].severity,manifest::FindingSeverity::unverifiable);
+  auto json=value(verification_json(changed.verification));EXPECT_EQ(json["v3_findings"][0]["severity"],"unverifiable");std::cout<<"V3_UNVERIFIABLE_REPORT "<<json.dump()<<'\n';clean(root);
+}
+TEST(AssetRepository, IncompleteValidatorCannotCommitAndWarningsDoNotBlock) {
+  RecordProperty("req","ADR-0035");for(bool incomplete:{true,false}){
+    const auto root=fresh();auto initial=value(AssetRepository::open(root,options()));auto created=create(initial,root);auto before=bytes(target(root,created.ref.asset_id));
+    auto validator=std::make_shared<ReportValidator>();validator->incomplete=incomplete;validator->warning=!incomplete;auto o=options();o.semantic_validator=validator;auto repo=value(AssetRepository::open(root,o));VerificationReport report;auto result=repo.change(metadata(created),&report);
+    if(incomplete){ASSERT_FALSE(result);EXPECT_EQ(result.error().message_id,"am.manifest.incomplete");EXPECT_EQ(report.v3,CheckStatus::partial);EXPECT_FALSE(report.v3_complete);EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before);}
+    else{ASSERT_TRUE(result);EXPECT_EQ(result->verification.v3,CheckStatus::passed);auto json=value(verification_json(result->verification));EXPECT_EQ(json["v3_findings"][0]["severity"],"warning");std::cout<<"V3_SYNTHETIC_WARNING_REPORT "<<json.dump()<<'\n';}
+    clean(root);
+  }
+}
+TEST(AssetRepository, PartialRepositoryInvariantsRemainTestOnly) {
+  RecordProperty("req","ADR-0035");const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root);auto o=options();o.semantic_validator=value(repository_invariants());auto partial=value(AssetRepository::open(root,o));
+  EXPECT_EQ(value(partial.verify(created.ref)).v3,CheckStatus::partial);VerificationReport report;EXPECT_FALSE(partial.change(metadata(created),&report));EXPECT_FALSE(report.v3_complete);clean(root);
+}
+TEST(AssetRepository, OldInvalidV3RemainsReadableAndVerifyReturnsReport) {
+  RecordProperty("req","ADR-0035|R-05");const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root);auto j=plain(value(repo.snapshot(created.ref)));j["asset"]["metadata"]["license"]={{"spdx","MIT OR OR BSD"}};fixture(repo,root,created.ref,j.dump());
+  EXPECT_TRUE(repo.snapshot(created.ref));auto report=value(repo.verify(created.ref));EXPECT_EQ(report.v3,CheckStatus::failed);EXPECT_TRUE(report.v3_complete);ASSERT_EQ(report.v3_findings.size(),1u);EXPECT_EQ(report.v3_findings[0].rule,"license_spdx");EXPECT_FALSE(repo.change(metadata(created)));clean(root);
+}
+TEST(AssetRepository, DuplicateOperationIdFailsBeforePreflightJournalOrTemp) {
+  RecordProperty("req","ADR-0035|O-18");const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));CreateRequest c;c.asset_id=id();c.op_id=id();auto created=value(repo.create(c));auto before=bytes(target(root,created.ref.asset_id));unsigned preflights=0;auto o=options();o.test_hooks.after_preflight=[&]{++preflights;};auto changing=value(AssetRepository::open(root,o));
+  auto r=metadata(created);r.op_id=c.op_id;auto bad=changing.change(r);ASSERT_FALSE(bad);EXPECT_EQ(bad.error().message_id,"am.repo.duplicate_operation_id");EXPECT_EQ(bad.error().code,Errc::conflict);bad=changing.create(c);ASSERT_FALSE(bad);EXPECT_EQ(bad.error().message_id,"am.repo.duplicate_operation_id");EXPECT_EQ(preflights,0u);EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before);clean(root);
+}
+TEST(AssetRepository, DriveClassifierGrantsFullOnlyForFixedNtfs) {
+  RecordProperty("req","ADR-0031");for(auto drive:{DriveKind::fixed,DriveKind::removable,DriveKind::ramdisk,DriveKind::remote,DriveKind::unknown,DriveKind::optical})for(auto fs:{"NTFS","FAT32","exFAT","ReFS","unknown"}){
+    const auto caps=value(classify_storage_capabilities(drive,fs));const bool full=drive==DriveKind::fixed&&std::string_view(fs)=="NTFS";EXPECT_EQ(caps.mode,full?StorageMode::full:StorageMode::read_only_default);EXPECT_EQ(caps.durability,full?Durability::assumed:Durability::unknown);EXPECT_EQ(caps.remote,drive==DriveKind::remote);if(std::string_view(fs)=="FAT32")EXPECT_EQ(caps.max_file_size,0xffffffffULL);
+  }
+}
+TEST(AssetRepository, AllAddPathsCheckedBeforeAnySourceOpen) {
+  RecordProperty("req","ADR-0035");for(int mode=0;mode<5;++mode){
+    const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto a=addition(root,2);for(auto& f:a.files)f.source=root/"does-not-exist";
+    if(mode==0)a.files[1].path="../bad";if(mode==1)a.files[1].path=std::string(201,'a');if(mode==2)a.files[1].path="FILE-0.BIN";
+    CreateRequest c;
+    if(mode<3)c.files.push_back(a);else{auto b=a;b.files.resize(1);a.files.resize(1);if(mode==3)b.files[0].path="../bad";else b.files[0].path="FILE-0.BIN";c.files={a,b};}
+    auto failed=repo.create(c);ASSERT_FALSE(failed);EXPECT_EQ(failed.error().message_id,(mode==2||mode==4)?"am.repo.path_collision":"am.repo.invalid_operation");clean(root);
+  }
+}
+TEST(AssetRepository, LowerLayerErrorMappingsPreserveCodeAndCause) {
+  RecordProperty("req","ADR-0032");const auto root=fresh();auto initial=value(AssetRepository::open(root,options()));auto created=create(initial,root);auto before=bytes(target(root,created.ref.asset_id));
+  auto o=options();o.test_hooks.commit.free_space=[](const Path&)->Result<std::uint64_t>{return 0;};auto limited=value(AssetRepository::open(root,o));auto failed=limited.change(metadata(created));ASSERT_FALSE(failed);EXPECT_EQ(failed.error().message_id,"am.repo.insufficient_space");EXPECT_EQ(failed.error().code,Errc::insufficient_space);ASSERT_TRUE(failed.error().cause);EXPECT_EQ(failed.error().cause->message_id,"am.commit.insufficient_space");
+#ifdef _WIN32
+  const auto marker=root/"lock.ready";Process holder("hold",root,created.ref.asset_id,marker.string());ready(marker);failed=initial.change(metadata(created));ASSERT_FALSE(failed);EXPECT_EQ(failed.error().message_id,"am.repo.locked");EXPECT_EQ(failed.error().code,Errc::locked);ASSERT_TRUE(failed.error().cause);EXPECT_EQ(failed.error().cause->message_id,"am.commit.locked");holder.kill();
+#endif
+  EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before);clean(root);
+  const auto path=target(root,created.ref.asset_id);std::filesystem::remove(path);{std::ofstream out(path,std::ios::binary);out<<"corrupt zip";}
+  auto snap=initial.snapshot(created.ref);ASSERT_FALSE(snap);EXPECT_EQ(snap.error().message_id,"am.repo.corrupt_container");EXPECT_EQ(snap.error().code,Errc::corrupt_data);ASSERT_TRUE(snap.error().cause);EXPECT_TRUE(snap.error().cause->message_id.starts_with("am.zip."));
+}
+TEST(AssetRepository, UnsupportedPayloadMethodReturnsMappedReportError) {
+  RecordProperty("req","ADR-0032");const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root);auto snap=value(repo.snapshot(created.ref));auto all=bytes(target(root,created.ref.asset_id));const auto path=snap.manifest().known()["files"][0]["storage_path"].get<std::string>();const auto info=entry(snap,path);
+  all[static_cast<std::size_t>(info.local_offset)+8]=std::byte{99};all[static_cast<std::size_t>(info.local_offset)+9]=std::byte{0};
+  for(std::size_t i=0;i+46+path.size()<=all.size();++i)if(all[i]==std::byte{0x50}&&all[i+1]==std::byte{0x4b}&&all[i+2]==std::byte{1}&&all[i+3]==std::byte{2}&&std::memcmp(all.data()+i+46,path.data(),path.size())==0){all[i+10]=std::byte{99};all[i+11]=std::byte{0};}
+  std::filesystem::remove(target(root,created.ref.asset_id));{std::ofstream out(target(root,created.ref.asset_id),std::ios::binary);out.write(reinterpret_cast<const char*>(all.data()),static_cast<std::streamsize>(all.size()));}
+  auto r=value(repo.verify(created.ref));ASSERT_TRUE(r.error);EXPECT_EQ(r.error->message_id,"am.repo.unsupported_container");EXPECT_EQ(r.error->code,Errc::unsupported);ASSERT_TRUE(r.error->cause);EXPECT_TRUE(r.error->cause->message_id.starts_with("am.zip."));
+}
+TEST(AssetRepository, RemainingLowerLayerMappingsAtCommitBoundary) {
+  RecordProperty("req","ADR-0032");
+  struct Case {const char* original;Errc code;const char* mapped;};
+  const std::array cases{
+    Case{"am.commit.replace_failed",Errc::io_error,"am.repo.target_in_use"},
+    Case{"am.commit.journal_error",Errc::io_error,"am.repo.journal_error"},
+    Case{"am.commit.journal_version",Errc::unsupported,"am.repo.journal_error"},
+    Case{"am.commit.out_of_memory",Errc::resource_exhausted,"am.repo.limit_exceeded"},
+    Case{"am.zip.read_budget",Errc::resource_exhausted,"am.repo.limit_exceeded"},
+    Case{"am.zip.io_error",Errc::io_error,"am.repo.io_error"},
+    Case{"am.commit.io_error",Errc::io_error,"am.repo.io_error"}};
+  for(const auto& c:cases){
+    SCOPED_TRACE(c.original);const auto root=fresh();auto initial=value(AssetRepository::open(root,options()));auto created=create(initial,root);auto before=bytes(target(root,created.ref.asset_id));
+    auto o=options();o.test_hooks.commit.point=[&](commit::FaultPoint p)->Result<void>{if(p==commit::FaultPoint::after_lock)return Error::make(c.code,"Injected boundary failure").id(c.original);return {};};
+    auto repo=value(AssetRepository::open(root,o));auto failed=repo.change(metadata(created));ASSERT_FALSE(failed);EXPECT_EQ(failed.error().message_id,c.mapped);EXPECT_EQ(failed.error().code,c.code);ASSERT_TRUE(failed.error().cause);EXPECT_EQ(failed.error().cause->message_id,c.original);EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before);clean(root);
+  }
 }
