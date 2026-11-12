@@ -227,8 +227,9 @@ TEST(AssetRepository, ReadOnlyCapabilitiesSizeAndSpaceAreCheckedBeforeCommit) {
 TEST(AssetRepository, SourceChangeAndInvalidOperationsNeverReplaceTarget) {
   RecordProperty("req","ADR-0025");
   const auto root=fresh(); auto repo=value(AssetRepository::open(root,options())); auto created=create(repo,root); auto before=bytes(target(root,created.ref.asset_id)); auto a=addition(root); const auto path=a.files[0].source;
-  auto o=options(); o.test_hooks.after_preflight=[&]{std::ofstream out(path,std::ios::binary|std::ios::trunc);out<<"CHANGED";}; auto changing=value(AssetRepository::open(root,o));
+  unsigned pass=0;auto o=options(); o.test_hooks.after_preflight=[&]{std::ofstream out(path,std::ios::binary|std::ios::trunc);out<<(pass++==0?"CHANGED":"REHASH!");}; auto changing=value(AssetRepository::open(root,o));
   ChangeRequest r; r.ref=created.ref; r.expected_rev=1; r.ops.push_back(a); auto bad=changing.change(r); ASSERT_FALSE(bad); EXPECT_EQ(bad.error().message_id,"am.repo.source_changed");
+  bad=changing.change(r);ASSERT_FALSE(bad);EXPECT_EQ(bad.error().message_id,"am.repo.source_changed");EXPECT_EQ(pass,2u);
   r=metadata(created); r.ops.push_back(RemoveFile{id()}); bad=repo.change(r); ASSERT_FALSE(bad); EXPECT_EQ(bad.error().message_id,"am.repo.mixed_operations");
   r=metadata(created,"custom_values",Json::array()); bad=repo.change(r); ASSERT_FALSE(bad); EXPECT_EQ(bad.error().message_id,"am.repo.invalid_operation");
   r=metadata(created); std::get<SetMetadata>(r.ops[0]).scope="file:"+id(); EXPECT_FALSE(repo.change(r)); EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before); clean(root);
