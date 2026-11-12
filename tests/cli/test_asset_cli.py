@@ -157,8 +157,8 @@ class AssetCli(unittest.TestCase):
         with zipfile.ZipFile(target) as archive:
             self.assertEqual((output / "manifest.json").read_bytes(), archive.read("manifest.json"))
 
-    @unittest.skipUnless(os.name == "nt", "create requires a verified Windows fixed NTFS filesystem")
     def test_create_refusals(self):
+        # Argument/path refusals need no verified filesystem and run on Linux too.
         existing = self.root / "existing.zip"
         existing.write_bytes(b"keep")
         result = self.run_am("asset", "create", self.files[0], "-o", existing, expected=4, json_output=True)

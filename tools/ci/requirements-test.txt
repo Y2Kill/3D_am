@@ -21,4 +21,3 @@ rpds-py==2026.9.1 \
 
 typing-extensions==4.15.0 ; python_version < "3.13" \
     --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
-

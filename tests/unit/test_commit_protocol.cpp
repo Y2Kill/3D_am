@@ -45,6 +45,10 @@ void valid(const Path& path) {
 }
 CommitRequest request(const Path& root, const std::string& asset, asset_zip::ReadBudget& budget) {
   CommitRequest r(budget); r.library_root = root; r.target_path = root / "asset.zip"; r.asset_id = asset; r.op_id = id(); r.estimated_size = 6000; r.hooks.mid_write_after_bytes = 2250;
+#ifndef _WIN32
+  // Synthetic protocol tests do not certify the filesystem (fs_support.md v0.2).
+  r.capabilities.mode = StorageMode::full;
+#endif
   if (std::filesystem::exists(r.target_path)) r.base = value(inspect_zip(r.target_path, budget)); else r.kind = "create";
   r.producer = [](asset_zip::ZipWriter& w) -> Result<void> { produce(w); return {}; }; return r;
 }
@@ -100,6 +104,8 @@ TEST(CommitProtocol, CreateUpdateVerifyEvidenceAndCallbacks) {
   auto created = commit_zip(r); ASSERT_TRUE(created) << created.error().ctx.detail; EXPECT_EQ(calls, 2); EXPECT_EQ(created->op_id, r.op_id); EXPECT_EQ(created->size, std::filesystem::file_size(root / "asset.zip"));
 #ifdef _WIN32
   EXPECT_EQ(created->replacement, Replacement::posix_rename);
+#else
+  EXPECT_EQ(created->replacement, Replacement::rename);
 #endif
   auto actual = value(inspect_zip(root / "asset.zip", budget)); EXPECT_EQ(actual.manifest_sha256, created->manifest_sha256); EXPECT_EQ(actual.mtime_ns, created->mtime_ns); valid(root / "asset.zip"); clean(root);
   auto update = request(root, asset, budget); update.producer = [](auto& w) -> Result<void> { produce(w, "two", 't'); return {}; };
@@ -348,5 +354,7 @@ TEST(CommitProtocol, WindowsAndFilesystemEvidence) {
   EXPECT_EQ(std::wstring(filesystem.data()), L"NTFS"); OSVERSIONINFOW version{}; version.dwOSVersionInfoSize = sizeof(version);
   using Version = LONG(WINAPI*)(OSVERSIONINFOW*); Version query = nullptr; auto address = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"); std::memcpy(&query, &address, sizeof(query)); ASSERT_NE(query, nullptr); ASSERT_EQ(query(&version), 0);
   std::wcout << L"ENV Windows=" << version.dwMajorVersion << L'.' << version.dwMinorVersion << L" build=" << version.dwBuildNumber << L" filesystem=" << filesystem.data() << L" volume=" << volume.data() << L'\n';
+#else
+  GTEST_SKIP() << "Win32 OS and NTFS evidence APIs";
 #endif
 }

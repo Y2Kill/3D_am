@@ -29,6 +29,13 @@ constexpr const char* library_id = "550e8400-e29b-41d4-a716-446655440000";
 Path fresh() { auto p = Path(AM_REPO_TEST_ROOT) / id(); std::filesystem::create_directories(p); return p; }
 RepositoryOptions options() {
   RepositoryOptions o; o.library_id = library_id; o.application_version = "0.1.0-test";
+#ifndef _WIN32
+  // fs_support.md v0.2 keeps production Linux storage read-only; these tests exercise
+  // the protocol with explicit synthetic capabilities, not a filesystem certification.
+  o.capabilities.emplace();
+  o.capabilities->mode = StorageMode::full;
+  o.capabilities->filesystem = "synthetic unit-test capabilities";
+#endif
   o.clock = [] { return std::chrono::system_clock::time_point(std::chrono::seconds(1794441600)) + std::chrono::milliseconds(123); }; return o;
 }
 AssetRef ref(const std::string& asset) { return {library_id,asset}; }
@@ -219,6 +226,10 @@ TEST(AssetRepository, ReadOnlyCapabilitiesSizeAndSpaceAreCheckedBeforeCommit) {
   const auto root=fresh(); auto repo=value(AssetRepository::open(root,options())); auto created=create(repo,root); auto caps=value(detect_storage_capabilities(root));
 #ifdef _WIN32
   EXPECT_EQ(caps.filesystem,"NTFS"); EXPECT_EQ(caps.mode,StorageMode::full); EXPECT_EQ(caps.durability,Durability::assumed);
+#else
+  EXPECT_EQ(caps.mode,StorageMode::read_only_default);
+  // The size-limit scenario uses the same explicit test override as other writes.
+  caps=*options().capabilities;
 #endif
   auto readonly=options(); readonly.mode=LibraryMode::read_only; auto ro=value(AssetRepository::open(root,readonly)); EXPECT_FALSE(value(ro.snapshot(created.ref)).writable());
   auto bad=ro.change(metadata(created)); ASSERT_FALSE(bad); EXPECT_EQ(bad.error().message_id,"am.repo.read_only"); EXPECT_FALSE(ro.create(CreateRequest{})); EXPECT_FALSE(ro.recover());

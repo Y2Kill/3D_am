@@ -23,7 +23,8 @@
 
 ## Build and CI
 
-Requirements: CMake ≥ 3.28, Ninja, Python 3.12 or later, and a C++20 compiler.
+Requirements: CMake ≥ 3.28, Ninja, Python 3.12 and a C++20 compiler.
+The test wheel hashes also cover Python 3.14 on Windows for local builds.
 Windows scripts find Visual Studio 2022 C++ tools with `vswhere` (Community or Build Tools).
 Linux CI uses Ubuntu 24.04 and GCC 13. Minimum builds fetch GoogleTest into `.cache/`;
 CLI builds use the exact vcpkg `builtin-baseline` from `vcpkg.json`.
@@ -52,7 +53,7 @@ tools/build_linux.sh cli
 tools/build_linux.sh cli --offline
 ```
 
-On a minimal Ubuntu installation, install `build-essential cmake ninja-build git curl zip unzip tar pkg-config autoconf automake libtool`.
+On a minimal Ubuntu installation, install `build-essential cmake ninja-build git curl zip unzip tar pkg-config perl`.
 Python needs pip to install the test modules (`python3-pip` on Ubuntu; supplied by `setup-python` in CI).
 Bootstrap is idempotent and disables vcpkg metrics. Windows and Linux use separate vcpkg clones,
 installed packages and binary caches, and share the content-addressed source cache in `.cache/vcpkg-assets`.
