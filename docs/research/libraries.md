@@ -144,7 +144,7 @@ OpenSSL 3.6 — не LTS-ветка (в таблице 17.6 ориентир 3.5
 | Юнит-тесты | **GoogleTest/GMock** | 1.17 | BSD-3 | ✅ |
 | Бенчмарки | Google Benchmark | 1.9 | Apache-2.0 | 🔵 |
 | Логи | **spdlog** (+fmt) | 1.15+ | MIT | ✅ |
-| CLI | **CLI11** | 2.5 | BSD-3 | ✅ |
+| CLI | **CLI11** | 2.7.2 (vcpkg baseline) | BSD-3 | ✅ — сверено для T-012: только заголовки; `App::ensure_utf8(argv)` (2.3+) даёт аргументы в UTF-8 на Windows из `GetCommandLineW`, поэтому ручной `CommandLineToArgvW` в `main.cpp` удаляется; подкоманды, группы опций и собственный форматтер справки. В минимальной сборке без vcpkg недоступна — исполняемый `am` собирается только при `AM_WITH_CONTAINER` (T-012). |
 | Fuzzing парсеров (STL, DXF, манифест, имена в ZIP) | libFuzzer (clang) / MSVC `/fsanitize=fuzzer` | — | Apache-2.0 | 🔵 |
 | Санитайзеры | ASan (MSVC и clang), UBSan (clang/gcc) | — | — | ✅ preset `win-asan` |
 | Проверка архитектуры | собственный `tools/arch_check` (Python, `cmake --graphviz`) | — | — | ✅ (ADR-0024); альтернативы — include-what-you-use, cmake-graphviz + скрипты; отдельный инструмент не нужен |
@@ -160,6 +160,7 @@ OpenSSL 3.6 — не LTS-ветка (в таблице 17.6 ориентир 3.5
 - **Спецификации:** APPNOTE.TXT (PKWARE ZIP, вкл. ZIP64, бит 11, extra 0x7075), RFC 9562 (UUIDv7), 3MF Core Spec, AppleDouble (RFC 1740), RAR5 technote (rarlab), формат CTB (описание из UVtools).
 - **UVtools** — референс форматов фотополимерных файлов (AGPL; только документация, код не используем).
 - **SPDX License Expression** (`license.spdx`, O-14 п. 3; T-011) — собственный разбор грамматики SPDX 2.3 Annex D в `am_domain`, без библиотеки: грамматика небольшая, а готовые разборщики на C++ в vcpkg не найдены и тянули бы список лицензий. Принадлежность идентификатора к списку лицензий SPDX не проверяется: нет данных списка и правила их обновления; при необходимости — отдельное решение с данными SPDX License List (CC0).
+- **Каталог сообщений CLI** (T-012) — английский TOML-ресурс `resources/messages/en.toml`, разбирается toml++ 3.4 (уже в `vcpkg.json`), встраивается в исполняемый файл при сборке (без поиска файла при запуске). Отсутствующий ключ — откат к `Error::message` (ADR-0032 п. 3); полнота проверяется тестом.
 - **UCUM** (единицы X-02) — движок **не выбран** (открытая поддеталь X-02). До выбора V3 сравнивает единицы только как точные строки, разные единицы — `unverifiable` (T-011).
 
 ---

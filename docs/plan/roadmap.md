@@ -139,7 +139,7 @@
   - `Verifier`: режимы `quick|selective|full` поверх V1–V4;
   - проверка свободного места и `max_file_size` до и во время фиксации (ADR-0033), `LibraryMode`/`StorageCapabilities` (ADR-0031);
   - защита от архивных атак при чтении: пути, лимиты, специальные объекты (К-128).
-- CLI:
+- CLI — задача [T-012](../tasks/T-012-cli-asset.md) (фасад `am_application`, каталог сообщений, коды выхода, `CHANGELOG.md`):
   - `am asset create <files…> -o x.zip`;
   - `am asset inspect`;
   - `am asset validate`;
