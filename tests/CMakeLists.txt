@@ -37,11 +37,15 @@ if(AM_WITH_CONTAINER)
   target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp unit/test_manifest_wide.cpp
     unit/zip_builder.cpp unit/test_zip_reader.cpp unit/test_zip_stream.cpp unit/test_zip_probe.cpp
     unit/test_zip_writer.cpp unit/test_zip_writer_large.cpp unit/test_zip_writer_interop.cpp
-    unit/test_state_journal.cpp unit/test_commit_protocol.cpp)
+    unit/test_state_journal.cpp unit/test_commit_protocol.cpp unit/test_asset_repository.cpp)
   add_executable(am_commit_crash_helper integration/commit_crash_helper.cpp)
   target_link_libraries(am_commit_crash_helper PRIVATE am::storage)
   am_apply_defaults(am_commit_crash_helper)
   add_dependencies(am_unit_tests am_commit_crash_helper)
+  add_executable(am_repository_crash_helper integration/asset_repository_crash_helper.cpp)
+  target_link_libraries(am_repository_crash_helper PRIVATE am::storage)
+  am_apply_defaults(am_repository_crash_helper)
+  add_dependencies(am_unit_tests am_repository_crash_helper)
   target_link_libraries(am_unit_tests PRIVATE unofficial::sqlite3::sqlite3)
   target_link_libraries(am_unit_tests PRIVATE ZLIB::ZLIB)
   target_compile_definitions(am_unit_tests PRIVATE
@@ -50,6 +54,8 @@ if(AM_WITH_CONTAINER)
     AM_ZIP_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/zip"
     AM_ZIP_CACHE="${PROJECT_SOURCE_DIR}/.cache/zip-tests"
     AM_COMMIT_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/commit-tests"
+    AM_REPO_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/repo-tests"
+    AM_REPO_HELPER="$<TARGET_FILE:am_repository_crash_helper>"
     AM_COMMIT_HELPER="$<TARGET_FILE:am_commit_crash_helper>")
   if(WIN32)
     target_compile_definitions(am_unit_tests PRIVATE _WIN32_WINNT=0x0A00)
