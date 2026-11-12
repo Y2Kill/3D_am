@@ -1,6 +1,6 @@
 # T-010. `AssetRepository`: снимки, запросы изменений, ревизии и история, проверка перед фиксацией (V1, V2, V4 и инварианты V3)
 
-**Статус:** ready · **Веха:** M1 (`am_storage`, P0.4) · **Основание:** ТЗ §12.7, §14.2.7–8, §14.5, §19.4.2, §19.4.4, §19.4.7, §19.4.13, §19.4.15, §19.4.16; ADR-0024, ADR-0025 пп. 1–6, ADR-0031 пп. 2–3, ADR-0032, ADR-0033 п. 1, ADR-0035 пп. 2, 7, 8, ADR-0036, ADR-0037, ADR-0038; [спецификация формата 1.0](../specifications/container_manifest_v1.md) §§1–4, 6, 10–12; [`fs_support.md`](../specifications/fs_support.md) v0.1; T-006…T-009 вместе с разделами «Приёмка»
+**Статус:** review (В-1, В-2 решены управляющим 2026-11-12, продолжать в той же ветке) · **Веха:** M1 (`am_storage`, P0.4) · **Основание:** ТЗ §12.7, §14.2.7–8, §14.5, §19.4.2, §19.4.4, §19.4.7, §19.4.13, §19.4.15, §19.4.16; ADR-0024, ADR-0025 пп. 1–6, ADR-0031 пп. 2–3, ADR-0032, ADR-0033 п. 1, ADR-0035 пп. 2, 7, 8, ADR-0036, ADR-0037, ADR-0038; [спецификация формата 1.0](../specifications/container_manifest_v1.md) §§1–4, 6, 10–12; [`fs_support.md`](../specifications/fs_support.md) v0.1; T-006…T-009 вместе с разделами «Приёмка»
 
 ## Цель
 
@@ -187,3 +187,285 @@
 - Импорт (`inputs[].entries[]`, `ZipPathMapper`, переименования), группы, превью, claims, `field_definitions`, `custom_values`, операции над расширениями.
 - Компактизация истории (P0 её не выполняет), независимая копия, миграция формата.
 - Индекс, `IEventBus`, `library.lock`, `am-library.toml`, корзина, перемещение между библиотеками, режим поколений, ФС кроме NTFS — M2 и далее.
+
+## Отчёт исполнителя
+
+**2026-11-12. Ветка:** `codex/T-010`, создана от `main` на `d5b400b` после приёмки T-009. Отчёт и статус — коммит `T-010: report opaque-owner and future-version contract questions`.
+
+**Реализация остановлена при сверке контракта с кодеком и схемой.** Статус review означает передачу вопросов управляющему, а не готовность AssetRepository к приёмке. Исходники, публичные API, тесты проекта и CMake не менялись.
+
+Основание — п. 3 [`AGENTS.md`](../../AGENTS.md): «Если для выполнения нужно выйти за рамки или задача противоречит ADR, спецификации или коду, **остановись** и опиши вопрос в отчёте (раздел „Вопросы“). Не принимай архитектурных решений сам».
+
+### Найденные противоречия
+
+**1. Разрешение изменений непрозрачных владельцев задано уже, чем нужно операциям T-010.**
+
+П. 10 «Решений» утверждает, что типизированные операции не затрагивают непрозрачные корни, IntendedChanges пуст, исключение — только details новой записи истории. Фактический контракт T-006/ADR-0038 требует большего:
+
+- Кодек считает непрозрачными все дополнительные поля `history.entries[].changes[]`, кроме kind и target (`src/domain/manifest/codec.cpp`, Analysis). Следовательно, `metadata_set.field`, `file_replace.old_sha256` и `file_replace.new_sha256` — отдельные непрозрачные владельцы. Для нового `field` требуется make_opaque, а для добавления этого владельца — отдельный ключ IntendedChanges. Разрешение только нового details не пропускает даже SetMetadata(title) с требуемой историей.
+- RemoveFile удаляет запись files[] целиком. У корректного generated-файла может быть непрозрачный `generation.params`; у файла также могут быть непрозрачные данные метаданных. Удаление такого FileID удаляет владельцев. В historical_files разрешены только id, removed_at_revision и last_known_*; generation туда не входит (спецификация §6, `$defs/historicalFile` схемы). Пустой IntendedChanges отклоняет удаление владельца. Утверждение «не затрагиваются» для такой операции неверно.
+- Проверка сохранности в T-006 отклоняет как исчезновение прежнего владельца, так и появление нового неразрешённого. Менять кодек либо ослаблять проверку без решения управляющего нельзя.
+
+**2. Обязательная V2 и инвариант format=1.0 противоречат чтению будущей версии из сценария 11.**
+
+- Пп. 4, 11–12 требуют ManifestDocument после V1/V2, SchemaValidator::validate и инвариант V3 format=1.0; отчёт V1/V2 для обычного пути — passed.
+- П. 10 и сценарий 11 требуют, чтобы snapshot и verify работали при minor=1 или неизвестном ключе ядра, а запись отклонялась отдельно.
+- Утверждённая схема принимает строго minor=0 и запрещает дополнительные корневые ключи. Реальный SchemaValidator::validate такие документы отклоняет как am.manifest.schema_violation. `versioning.md` отдельно говорит: 1.x читается с частичными V2–V4 и не проходит схему 1.0. Неизвестные ключи ядра формата 1.0 также запрещены §2 спецификации.
+- Нужен отдельный явно заданный путь чтения/отчёта для этих случаев. Подменять minor, удалять неизвестные поля, молча пропускать V2 либо объявлять её passed — самостоятельное изменение контракта. Схемы и кодек менять в T-010 запрещено.
+
+### Воспроизведение на фактическом API
+
+Диагностика `.cache/t010_contract_proof.cpp` собрана MSVC 14.44 с уже имеющимися `build/win-cli/lib/am_domain.lib` и `am_foundation.lib`. Использует реальные parse_manifest, make_opaque, write_manifest, verify_preserved и SchemaValidator::validate с исходной схемой проекта. Новые библиотеки не скачивались; исходники и артефакты диагностики находятся только в .cache.
+
+Команда: `.cache\t010_contract_proof.cmd`. Лог: `.cache/t010-contract-proof.log`. Фактический вывод:
+
+```text
+schema_1_0=PASS
+schema_minor_1=am.manifest.schema_violation
+schema_unknown_core=am.manifest.schema_violation
+ordinary_history_field=am.manifest.write_blocked: Binary handles must occupy exactly the opaque roots
+new_owner=/history/550e8400-e29b-41d4-a716-446655440002/changes/0/field
+new_owner=/history/550e8400-e29b-41d4-a716-446655440002/details
+preserve_with_only_details_authorized=am.manifest.preservation_failed
+preserve_with_all_new_history_owners_authorized=PASS
+changed_v2=PASS
+generated_v2=PASS
+removed_v2=PASS
+remove_file_preservation=am.manifest.preservation_failed
+remove_file_preservation_detail=owner=/files/550e8400-e29b-41d4-a716-446655440003/generation/params path=/o:files/a:0/o:generation/o:params
+```
+
+Таким образом, добавление корректного field и удаление корректного generated-файла не отвергаются V2 сами по себе: отказ возникает именно в правилах непрозрачных владельцев. Пример с разрешением всех новых владельцев истории — только демонстрация необходимого изменения контракта; это разрешение не добавлено в продукт.
+
+### Критерии приёмки и проверки
+
+| Критерий | Фактическое состояние |
+|---|---|
+| 1. Минимальная сборка | На исходном коде PASS, 84/84; без предупреждений MSVC/CMake. |
+| 2. CLI и offline | Для реализации T-010 не запускались: репозитория ещё нет. Диагностика кодека не заменяет эти прогоны. |
+| 3. Сценарии 1–14 и kill | Не реализованы и не запускались. Подтверждена только диагностика контрактов выше. |
+| 4. Границы модулей | Новых заголовков/кода нет; исходный arch_check прошёл в минимальном прогоне. |
+| 5. Правила V3, VerificationReport, замеры 1 ГиБ | Реализации и результатов нет; статус будущих версий требует решения В-2. |
+| 6. Отчёт | Ветка, воспроизведение, команды, отклонения и вопросы приведены здесь. Собственные изменения ограничены документацией задачи. |
+
+```text
+tools\build_min.cmd
+100% tests passed, 0 tests failed out of 84
+Total Test time (real) =  15.34 sec
+```
+
+Лог — `.cache/t010-min.log`. arch_check, unicode_tables_check, schema_check и sql_check — PASS. Это проверка исходной базы, не выполненного AssetRepository.
+
+### Отклонения
+
+Вместо реализации переданы вопросы согласно п. 3 AGENTS.md. Схемы, ADR, спецификации, fs_support.md, libraries.md, зависимости и код T-006…T-009 не менялись. В main не сливал, push и переписывание истории не выполнял. Посторонний `3D_am_open_questions_e2472e9.zip` сохранён без изменений и не включён в коммит.
+
+### Вопросы
+
+**В-1. Какой точный набор изменений непрозрачных владельцев разрешён типизированным операциям?**
+
+Нужно уточнить п. 10:
+
+- разрешается ли создавать через make_opaque дополнительные поля changes[] новой записи истории (field, old_sha256, new_sha256) и объявлять их владельцев в IntendedChanges наряду с details;
+- для явного RemoveFile разрешается ли объявлять удаление всех владельцев удаляемого FileID в IntendedChanges, либо такую операцию при наличии непрозрачных данных следует блокировать отдельным исходом. Если требуется сохранять эти данные, нужно определить допустимое место/контракт их сохранения: существующая historical_files их не принимает.
+
+Рекомендуемое уточнение для новой истории — разрешить только владельцев её нового operation_id, не затрагивая прежние записи. Политику удаления данных файла должен определить управляющий; самостоятельного разрешения потери владельцев нет.
+
+**В-2. Как работают snapshot/verify и какие статусы возвращаются для minor>0 и неизвестного ключа ядра?**
+
+Нужно согласовать пп. 4, 10–12 и сценарий 11 с versioning.md: какие проверки выполняются вместо неподходящей схемы 1.0, как отражаются непройденная V2 и неприменимый инвариант format=1.0, отдельно ли обрабатывается неизвестный ключ в заявленном 1.0. Либо скорректировать требование успешного snapshot/verify. Схему 1.0 нельзя применять с объявлением passed к документу, который она отклоняет.
+
+Продолжить можно в той же ветке после уточнения В-1 и В-2.
+
+## Решение управляющего по В-1 и В-2
+
+**2026-11-12.** Оба вопроса обоснованы, остановка по п. 3 `AGENTS.md` правильная. П. 10 «Решений» не учёл, что кодек T-006 считает непрозрачными дополнительные ключи `changes[]` и данные внутри `files[]`. Сценарий 11 противоречил схеме 1.0 и `versioning.md`. Ниже — замена соответствующих мест ТЗ.
+
+### В-1. Разрешённые изменения непрозрачных владельцев
+
+Разрешение вычисляется **разностью множеств** `opaque_keys()` старого и нового документа, а не перечнем, заданным заранее. Ключи берутся только из `opaque_keys()`, сами ключи не конструируются.
+
+1. **Новые владельцы — только внутри новой записи истории.** Все ключи `new − old` обязаны лежать в области `history`/`<operation_id новой записи>` (префикс ключа, который кодек выдаёт для этой записи: `details` и дополнительные ключи `changes[i]`, например `field`, `old_sha256`, `new_sha256`). Значения создаются через `make_opaque`. Эти ключи объявляются в `IntendedChanges`. Владелец нового ключа вне этой области — ошибка реализации: `Errc::internal`, `am.repo.unexpected_opaque_change`, фиксации нет. Прежние записи истории не меняются.
+2. **Исчезающие владельцы — только данные явно удаляемого файла.** Все ключи `old − new` обязаны лежать в области `files`/`<FileID>` файла из `RemoveFile` этого запроса (`generation/params`, `custom_values/<id>/value`, `claims/<id>/value` и др.). Это данные, описывающие сам файл; явное удаление файла по спецификации §6 их удаляет, а `historical_files` их не хранит. Ключи объявляются в `IntendedChanges`. Любое другое исчезновение — `am.repo.unexpected_opaque_change`.
+   - Список удалённых владельцев возвращается в `ChangeResult::removed_opaque_owners`, чтобы вызывающий код или UI могли показать, что удалено вместе с файлом.
+   - Правило п. 13 «Решений» (расширения с неизвестными зависимостями блокируют удаление) применяется **до** этого шага и не ослабляется.
+3. **Изменённые владельцы** (ключ есть в обоих документах, значение другое) не разрешаются никогда: `verify_preserved` с объявленными выше ключами отвергает их сам.
+4. **`ReplaceFileContent` для файла с `origin_kind = generated`** → `Errc::invalid_argument`, `am.repo.invalid_operation`. При новых байтах `generation.params` перестали бы описывать файл, а пересоздание производного файла — дело обработчиков (M5), не репозитория.
+5. Дополнительные тесты к разделу «Тесты»:
+   - `SetMetadata(title)` и `ReplaceFileContent` дают записи истории с `changes[].field`/`old_sha256`/`new_sha256`, сохранность проходит, ключи в отчёте теста;
+   - `RemoveFile` у `generated`-файла с `generation.params` и у файла с plugin-значением `custom_values` — фиксация проходит, `removed_opaque_owners` перечисляет ровно их, остальные непрозрачные данные (O-13) сохранены;
+   - хук, который подменяет непрозрачное значение другого владельца перед `write_manifest`, → `unexpected_opaque_change` или `preservation_failed`, цель не изменена;
+   - `ReplaceFileContent` у `generated` → `invalid_operation`.
+
+### В-2. Будущие версии и манифест, не прошедший V2
+
+Заменяет пп. 4, 11–12 (в части статусов) и сценарий 11. Основание — матрица `versioning.md`.
+
+1. **Классификация до V2** — по `format` после V1:
+   - `major = 1, minor = 0` → `supported`;
+   - `major = 1, minor > 0` → `newer_minor`: чтение без записи;
+   - `major ≥ 2` или `format.id` не совпадает → снимок и `verify` получают `Errc::unsupported`, `am.repo.unsupported_version` (матрица: `read` — нет).
+2. **`supported` (1.0):** V2 обязательна.
+   - **Снимок** создаётся только после пройденной V2. Объявленный 1.0 с неизвестным ключом ядра или иным нарушением схемы — повреждённый контейнер: `snapshot` возвращает исходную ошибку `am.manifest.schema_violation` (`Errc::corrupt_data`), `change` — то же.
+   - **`verify`** не требует пройденной V2: возвращает отчёт с `v2: failed`, V3-инварианты и V4 выполняются, насколько позволяет структура (`files[]` с полями `id`/`storage_path`/`size_bytes`/`sha256` нужных типов; иначе поток `unverifiable`). Итог — ошибка отчёта, без исключения из API.
+3. **`newer_minor`:**
+   - Снимок создаётся. `AssetSnapshot::format_support = newer_minor`, `writable = false`.
+   - V2: статус `not_applicable_newer_minor`, **не** `passed` и не `failed`; схема 1.0 не применяется.
+   - V3-инварианты: статус `not_performed`. Инвариант «`format` = 1.0» — условие **записи**, а не чтения.
+   - V4: те же проверки по `files[]` и `attachments[]`, насколько поля читаемы по правилам 1.0; нечитаемые — `unverifiable`.
+   - `container_verification = partial`.
+   - `change` → `Errc::unsupported`, `am.repo.write_unsupported_version` (миграции нет — лениво и не в T-010).
+4. **`VerificationReport`** получает поле `format_support ∈ {supported, newer_minor}`; статусы уровней дополняются `not_applicable_newer_minor` и `not_performed`. Поле `v1_v2` разделяется на `v1` и `v2`.
+5. **Сценарий 11 заменяется:**
+   - `minor = 1` (с неизвестным ключом ядра) → снимок с `newer_minor` и `writable = false`; `verify(full)` → `v2: not_applicable_newer_minor`, V4 `verified_sha256` по читаемым файлам, итог `partial`; `change` → `write_unsupported_version`; файл не изменён;
+   - объявленный 1.0 с неизвестным ключом ядра → `snapshot`/`change` → `am.manifest.schema_violation`; `verify` → отчёт с `v2: failed`;
+   - `major = 2` → `unsupported_version` для снимка и `verify`.
+
+Остальные требования, сценарии и критерии — без изменений. Продолжать в ветке `codex/T-010`; новый отчёт — разделом «## Отчёт исполнителя (после В-1, В-2)» в конце файла, первый отчёт не удалять. Диагностику `.cache/t010_contract_proof.*` в продукт не переносить.
+
+## Отчёт исполнителя (после В-1, В-2)
+
+**2026-11-12. Ветка:** `codex/T-010`. Исходный отчёт `314cb82` и решение управляющего `0a1792c` сохранены. Реализация — `9d40540`; дополнительные проверки истории/устаревших коллизий — `5089eb2`, подмены источника с прежним размером — `5b6e7e8`. Отчёт и статус review — отдельный коммит `T-010: report repository verification and handoff`.
+
+### Выполнение критериев приёмки
+
+| Критерий | Результат |
+|---|---|
+| 1. Минимальная сборка | PASS, 84/84; без предупреждений MSVC/CMake. В минимальных CMakeCache.txt/build.ninja нет sqlite/ZLIB/OpenSSL/libcrypto/jsoncons/nlohmann (0 совпадений). |
+| 2. CLI и offline | PASS, 189/189 в каждом полном прогоне; прежние 165 тестов сохранены без изменения ожиданий, добавлены 24 теста репозитория. Предупреждений нет. |
+| 3. Сценарии и kill | Все сценарии 1–14 и дополнения В-1/В-2 выполнены. Таблицы ниже. |
+| 4. Границы | arch_check PASS; публичные заголовки без Windows/sqlite/zlib/OpenSSL/jsoncons, nlohmann — через разрешённый API кодека. Исключения callbacks перехватываются. |
+| 5. V3, примеры отчётов, память | Закрытый перечень правил V3, фактические VerificationReport и замеры 1 ГиБ приведены ниже. V3 не объявляется полной. |
+| 6. Сдача | Только разрешённые файлы; собственные изменения закоммичены; слияния, push и переписывания истории нет. |
+
+### Реализованное поведение
+
+AssetRepository выдаёт перемещаемые снимки, удерживающие ZIP с share-delete, манифест, ревизию и base. При гонке открытия не смешиваются разные версии манифеста и base. Операции типизированы; внутренний commit_update не открыт как публичный мутатор. Новый manifest пишется первым; предварительные размер/SHA-256 новых источников сверяются с результатом записи. Неизменённые потоки, вложения и разрешённые opaque ZIP-записи переносятся raw с временем DOS и политикой T-008. Поиск старых потоков использует индекс имён; проверка коллизий не перестраивается после каждого файла в одном AddFiles.
+
+Мьютекс на AssetRef держится на время изменения, записи таблицы мьютексов удаляются после последнего держателя. Снимки мьютекс не берут. Межпроцессная блокировка и фиксация — T-009. Устаревшие операции проверяются по всем промежуточным записям; unknown operation, нечитаемые changes и compacted_ranges дают конфликт. При base_changed — один повтор на свежем снимке. Разные ассеты проходят verifier одновременно. No-op не пишет новую ревизию, history, journal и temp. on_indexed вызывается после indexed; исключение наблюдателя не отменяет фиксацию.
+
+Схема V2 встраивается из исходного файла CMake при конфигурации, с разбиением на части из-за лимита строковых литералов MSVC; копии схемы в исходниках нет. StorageCapabilities расширены аддитивно: поведение commit_zip не менялось. Локальный NTFS — full/assumed по fs_support.md, остальные типы по умолчанию read-only, FAT32 ограничен 4 ГиБ − 1. Пробных записей для определения свойств ФС нет.
+
+**В-1:** IntendedChanges вычисляется из разности opaque_keys старого и нового документов. Разрешены только новые владельцы новой записи history и исчезнувшие владельцы явно удалённых файлов; последние возвращаются как removed_opaque_owners. Значения новых полей истории создаются make_opaque. Прежние владельцы не разрешаются к изменению; чужая подмена отклоняется. Зависимости расширений проверяются до удаления; none и declared без ссылки на удаляемый файл разрешены, неизвестные/ссылающиеся — needs_decision. Замена generated-файла запрещена.
+
+**В-2:** supported 1.0 требует V2 для snapshot/change; verify возвращает ошибку в отчёте при V2 failed и продолжает доступные проверки. Для newer_minor снимок read-only, V2 not_applicable_newer_minor, V3 not_performed, читаемые потоки проверяются V4, итог partial; запись запрещена. Чужой format.id и major≥2 — unsupported_version. Подмены версии/удаления неизвестных ключей для прохождения схемы нет.
+
+При отказе фиксации исходные am.manifest/am.repo коды проверки возвращаются из обёртки T-009; ошибки ZIP/журнала сохраняются в cause. create/change принимают необязательный выходной VerificationReport*, чтобы получить фактический отчёт также при ошибке Result. CLI/GUI-команды записи не добавлялись.
+
+### Проверяемая часть V3
+
+- format 1.0 и AssetID, совпадающий с ref/именем ZIP;
+- уникальные FileID в текущих и исторических файлах, без пересечения; уникальные InputID и AttachmentID;
+- уникальные безопасные пути с лимитом формата 200 байт и path_collision_key (регистр/NFC); content принадлежит существующему InputID либо путь находится в generated; вложение принадлежит своему ExtensionID;
+- точное покрытие ревизий 1…current записями и диапазонами, без пропусков/пересечений, порядок обоих массивов; отдельные первая asset_created и последняя записи; created_at/modified_at совпадают с соответствующими timestamps;
+- для новой фиксации operation_id последней записи равен op_id журнала.
+
+SemanticValidator возвращает нарушения/список правил и признак полноты. Реализация T-010 возвращает complete=false, в отчёте v3=partial. Полные claims, группы, происхождение, поля и единицы, лицензии/даты/теги — T-011. Транзакционная часть O-13 выполнена; часть CI остаётся T-005. Матрицы требований самостоятельно не менялись.
+
+### Сценарии и тесты
+
+Все имена ниже относятся к набору AssetRepository.
+
+| Сценарий | Тесты | Итог |
+|---|---|---|
+| 1. Создание, раскладка assets/xx, revision=1, время, history, первый manifest | `CreateHistoryManifestFirstAndVerificationReport` | PASS |
+| 2. SetMetadata/AddFiles/ReplaceFileContent/RemoveFile, история, raw-копия, historical_files, сохранность derived_from | `TypedOperationsHistoryRawCopyAndRemoval` | PASS |
+| 3. O-13: непрозрачные числа, два расширения, details, generation.params; независимая сверка лексем и JSON-путей | `O13PreservesIndependentNumericLexemesAndPaths` | PASS |
+| 4. No-op: прежние ревизия, байты, mtime; отсутствие commit/journal/temp | `NoOpDoesNotChangeBytesMtimeOrRevision` | PASS |
+| 5. expected_rev, переприменение, одинаковое/разные поля, stale AddFiles, регистр/NFC/FileID, fail-closed history | `StaleMetadataRebasesAndConflictsAreFailClosed; UnknownHistoryCompactedRangesAndMissingChangesRejectRebase; PathAndFileIdCollisionsIncludeCaseAndNfc` | PASS |
+| 6. Один ассет в потоках/процессах, разные ассеты параллельно, один повтор base_changed | `SameAssetThreadsSerializeAndDifferentAssetsOverlapInVerifier; AnotherProcessLockPreventsLostRevisionAndIsReleasedByKill; BaseChangeRetriesOnceAndPreservesOtherProcessHistory` | PASS |
+| 7. Старый снимок сохраняет все потоки после изменения и kill после замены | `OldSnapshotRetainsEveryStreamAcrossCommit; KillEveryRepositoryCheckpointThreeTimesWithOpenSnapshot` | PASS |
+| 8. Kill через репозиторий: 5 точек × 3 повтора | `KillEveryRepositoryCheckpointThreeTimesWithOpenSnapshot` | PASS |
+| 9. Подмена источника, V2, все группы инвариантов V3, порча временного потока | `SourceChangeAndInvalidOperationsNeverReplaceTarget; PrecommitV2AndEveryInvariantRejectInvalidManifest; AttachmentIdentityBoundaryAndPathCollisionAreInvariants; CorruptedTemporaryPayloadReturnsFailedV4AndRollsBack` | PASS |
+| 10. Opaque ZIP-запись, вложение, неизвестные/объявленные зависимости расширения | `OpaqueAttachmentsAndDependenciesHaveExplicitVerification` | PASS |
+| 11. Будущая minor, неверный V2 у 1.0, major=2/чужой format.id | `FutureMinorAndInvalidV2HaveDifferentReadReports` | PASS |
+| 12. read_only, storage_read_only, NTFS capabilities, max_file_size, insufficient_space | `ReadOnlyCapabilitiesSizeAndSpaceAreCheckedBeforeCommit` | PASS |
+| 13. quick/selective/full и бюджет полезных потоков | `QuickSelectiveFullRespectTheirPayloadReadScope; QuickVerificationDoesNotSpendThePayloadBudget` | PASS |
+| 14. Несжимаемый 1 ГиБ, raw-копия, полный V4, время SHA-256 всего ZIP и пик памяти | `OneGiBIncompressibleRawCopyVerificationAndMemory` | PASS |
+| В-1: точная разность владельцев, удаление generated/plugin-данных; отказ замены generated и чужих изменений | `RemovedOpaqueOwnersAreExactlyThoseOfExplicitlyRemovedFiles; UnknownOpaqueMutationIsNeverAuthorized` | PASS |
+
+Подмена источника проверена и при другом размере, и при прежнем размере с другим SHA-256. Оба случая дополнительно собраны/выполнены обычным tools\build_cli.cmd -R AssetRepository.SourceChange и повторены в полном офлайн-прогоне. После этого код и тесты не менялись.
+
+### Kill-тесты через репозиторий
+
+Реальный am_repository_crash_helper выполняет change и TerminateProcess(GetCurrentProcess(),91), без деструкторов. В каждом полном прогоне:
+
+| Точка | Исход recover | Ревизия после recover | Прогонов |
+|---|---|---|---|
+| `after_prepared` | `rolled_back` | 1 | 3 |
+| `after_verify` | `rolled_back` | 1 | 3 |
+| `after_verified_journal` | `completed` | 2 | 3 |
+| `after_replace` | `already_committed` | 2 | 3 |
+| `after_committed_journal` | `completed` | 2 | 3 |
+
+Во всех 15 случаях снимок прежней ревизии оставался открытым, все его потоки дочитаны с CRC/SHA. Цель до восстановления — корректная старая либо новая версия. После recover: V1/V2 пройдены, инварианты V3 partial без нарушений, V4 full, журнал/temp пусты, блокировка свободна. Прежние 30 kill-сценариев T-009 также прошли в полных прогонах.
+
+### Примеры VerificationReport
+
+Фактический вывод теста 1 (офлайн-прогон):
+
+```json
+{"format_support":"supported","v1":"passed","v2":"passed","v3":"partial","v3_rules":["format_asset_identity","unique_ids","paths_and_inputs","history_coverage","history_operation_id"],"plugin_validation":"not_performed","container_verification":"full","v4":[{"id":"bd0ef0f8-f844-486f-b4ed-f37111402ef5","path":"content/546d4725-b03a-40d8-858e-4f1e6d6c9394/file-0.bin","status":"verified_sha256"},{"id":"86803d23-7e62-4926-a73f-8b2da1b46de8","path":"content/546d4725-b03a-40d8-858e-4f1e6d6c9394/file-1.bin","status":"verified_sha256"}]}
+```
+
+Тест 10: два полезных файла и вложение verified_sha256, legacy.bin verified_crc_size_only, итог partial:
+
+```json
+{"format_support":"supported","v1":"passed","v2":"passed","v3":"partial","v3_rules":["format_asset_identity","unique_ids","paths_and_inputs","history_coverage","history_operation_id"],"plugin_validation":"not_performed","container_verification":"partial","v4":[{"id":"9f96062b-df6c-4568-b132-53f4fd791040","path":"content/5260e235-0861-49bc-b04c-7bae76a54e32/file-0.bin","status":"verified_sha256"},{"id":"282190f9-ef8a-4318-995d-07a3adccdb6c","path":"content/5260e235-0861-49bc-b04c-7bae76a54e32/file-1.bin","status":"verified_sha256"},{"id":"16255c1c-8557-4283-8d6f-ec80dfbabd0d","path":"extensions/org.test.one/a.bin","status":"verified_sha256"},{"id":"","path":"legacy.bin","status":"verified_crc_size_only"}]}
+```
+
+Фактические ключи владельцев новой истории и удалённых файлов (В-1, офлайн):
+
+```text
+REPLACE_HISTORY_OWNER /history/cbb56dd7-27ff-403f-8f96-74bc4d8c2305/changes/0/new_sha256
+REPLACE_HISTORY_OWNER /history/cbb56dd7-27ff-403f-8f96-74bc4d8c2305/changes/0/old_sha256
+REPLACE_HISTORY_OWNER /history/cbb56dd7-27ff-403f-8f96-74bc4d8c2305/details
+HISTORY_OWNER /history/2fdab2da-411b-4632-99ab-433130ae80f4/changes/0/field
+HISTORY_OWNER /history/2fdab2da-411b-4632-99ab-433130ae80f4/details
+REMOVED_OWNER /files/997390f1-8203-412f-8054-7a43d4af6948/generation/params
+REMOVED_OWNER /files/eccd034a-d472-40b1-b878-3dfb583e81f5/custom_values/plugin:org.test.one:opaque/value
+```
+
+### Ресурсы и пределы подтверждения
+
+Среда полного прогона: `ENV Windows=10.0 build=19045 filesystem=NTFS volume=D:\`. Несжимаемые данные 1 ГиБ генерируются фиксированным xorshift-состоянием блоками 64 КиБ; после теста источник 1 ГиБ и итоговый ZIP удаляются. Переход SetMetadata выполняет raw-копию и полный V4. file_hash_seconds — отдельный проход SHA-256 по всему ZIP в T-009, теперь по ZIP размером около 1 ГиБ, а не сжатому мегабайту нулей:
+
+```text
+CLI:     REPO 1GiB: create_seconds=24.5195 update_seconds=22.3326 file_hash_seconds=3.5991 zip_bytes=1073742727 peak_working_set_bytes=21438464 peak_commit_bytes=9748480
+offline: REPO 1GiB: create_seconds=30.3815 update_seconds=24.9584 file_hash_seconds=3.9253 zip_bytes=1073742729 peak_working_set_bytes=21438464 peak_commit_bytes=9801728
+```
+
+Порогов/нормативов не назначалось. Память потоковых проходов ограничена буферами; отдельно хранится манифест/каталог и отчёт по числу записей. ReadBudget задаётся параметром, значение по умолчанию помечено hypothesis, O-17. Новых испытаний отключением питания и других ФС не было; durability NTFS остаётся assumed, полный V3 не заявлен.
+
+### Команды и фактические результаты
+
+`tools\build_min.cmd` → PASS:
+
+```text
+100% tests passed, 0 tests failed out of 84
+Total Test time (real) =  14.11 sec
+```
+
+`tools\build_cli.cmd` → PASS:
+
+```text
+100% tests passed, 0 tests failed out of 189
+Total Test time (real) = 613.56 sec
+```
+
+`tools\build_cli.cmd --offline` → PASS:
+
+```text
+100% tests passed, 0 tests failed out of 189
+Total Test time (real) = 643.94 sec
+```
+
+Дополнительно tools\build_cli.cmd -R AssetRepository.SourceChange — PASS, 1/1 (оба варианта подмены источника). Целевой набор без 1 ГиБ перед полными прогонами — 23/23; замер 1 ГиБ отдельно — 1/1. arch_check, schema_check, sql_check, unicode_tables_check и zip_writer_interop — PASS. Новые C++-файлы собраны без предупреждений; UTF-8 без BOM, git diff --check чистый.
+
+Офлайн-режим: binary/assets caches read-only, x-block-origin; SHA-256 всех 81 файла download/assets/binary/registry caches до/после совпали, Changed cached files: 0. Распакованные инструменты downloads/tools не входят в этот подсчёт. Новых зависимостей/скачиваний нет.
+
+Логи: .cache/t010-final-min.log, t010-final-cli.log, t010-final-source-race.log, t010-final-offline.log; stdout полных тестов — .cache/t010-final-cli-tests.log и t010-final-offline-tests.log; кэши — .cache/t010-cache-audit.log и t010-cache-before/after.json. Тестовые библиотеки и генерируемые данные T-010 — .cache/repo-tests; реальная коллекция не использовалась.
+
+### Отклонения и вопросы
+
+Функциональных отклонений от задания с решениями В-1/В-2 нет. Схемы, спецификации, ADR, fs_support.md, библиотеки, матрицы и код T-006…T-009 (кроме разрешённого аддитивного расширения StorageCapabilities в заголовке) не изменены. Первоначальный отчёт и решение управляющего сохранены. В-1 и В-2 выполнены; новых вопросов нет.

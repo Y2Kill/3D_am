@@ -10,7 +10,16 @@ enum class FaultPoint { after_lock, after_prepared, mid_write, after_finish, aft
 std::string_view point_name(FaultPoint point) noexcept;
 enum class Replacement { posix_rename, move_file_ex, rename };
 std::string_view replacement_name(Replacement method) noexcept;
-struct StorageCapabilities { std::uint64_t max_file_size = UINT64_MAX; };
+enum class StorageMode { full, write_with_limits, read_only_default };
+enum class Durability { unknown, assumed, verified };
+struct StorageCapabilities {
+  std::uint64_t max_file_size = UINT64_MAX;
+  StorageMode mode = StorageMode::read_only_default;
+  std::optional<bool> posix_rename, replace_file, locks_reliable;
+  Durability durability = Durability::unknown;
+  std::string filesystem;
+  bool remote = false;
+};
 // Optional injection surfaces; empty in normal operation. Mid-write counts sink
 // bytes emitted while the producer is active, excluding header backpatches.
 struct FaultHooks {
