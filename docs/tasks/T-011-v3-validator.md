@@ -1,0 +1,276 @@
+# T-011. Валидатор V3 (семантика манифеста 1.0) и замечания приёмки T-010
+
+**Статус:** ready · **Веха:** M1 (`am_domain`, `am_storage`; P0.4) · **Основание:** ТЗ §19.4.3–§19.4.7, §19.4.10–§19.4.16, §19.4.19; ADR-0024, ADR-0032, ADR-0035 п. 7, ADR-0036, ADR-0037, ADR-0038; [спецификация формата 1.0](../specifications/container_manifest_v1.md) §§4–12; [свод R-01…R-09](../tz/R01-R09_approved_handoff.md) (R-05, §7.2 M-01…M-10); [журнал решений v0.11](../tz/RC1_decisions_after_e2472e9_v0.11.md) (O-01, O-02, O-12, O-14, O-18, X-01, X-02); [`fs_support.md`](../specifications/fs_support.md) v0.2; T-006 и T-010 вместе с разделами «Приёмка»
+
+## Цель
+
+1. Реализовать **полную семантическую проверку V3** манифеста формата 1.0 на уровне `domain`. Это функция над `ManifestDocument`: она не читает ZIP и не знает о библиотеке.
+2. Подключить её к `AssetRepository` (T-010) через существующий интерфейс `SemanticValidator`, чтобы:
+   - отчёт проверки перестал быть `v3: partial` из-за неполноты правил;
+   - фиксация выполнялась только при пройденной V3 (ADR-0035 п. 7).
+3. Устранить четыре замечания приёмки T-010.
+
+Пользовательские команды записи (CLI) в эту задачу **не входят**: это следующая задача. После T-011 для их открытия больше нет препятствий со стороны проверки.
+
+## Решения управляющего (не пересматривать в задаче)
+
+1. **Размещение.**
+   - V3 — в `include/am/domain/manifest/semantics.hpp`, `src/domain/manifest/semantics.cpp`. Допускается разбить на несколько `.cpp` в `src/domain/manifest/`: значения и типы, SPDX, время, история.
+   - Зависимости — только `foundation`, `contracts` и уже подключённые к `am_domain` библиотеки. Новых внешних зависимостей нет.
+   - Правила, которым нужен контекст хранилища, остаются в `storage::repository`: совпадение `asset.id` со ссылкой и именем ZIP, пути записей ZIP, `operation_id` последней записи равен `op_id` журнала, незарегистрированные потоки, повтор `op_id` (п. 12).
+
+2. **API.** Сигнатуры — на усмотрение исполнителя, состав обязателен:
+   - `validate_semantics(const ManifestDocument&, const SemanticOptions&) -> Result<SemanticReport>`; `Result` с ошибкой — только при внутренней ошибке или нехватке памяти, нарушения возвращаются в отчёте;
+   - `SemanticReport`:
+     - `complete` — все правила каталога выполнены;
+     - `checked_rules` — идентификаторы выполненных правил;
+     - `deferred_rules` — отложенные правила с причиной (п. 9);
+     - `findings`;
+     - признак наличия plugin-данных;
+   - `Finding`:
+     - `rule` — идентификатор из каталога;
+     - `severity`: `error`, `warning` или `unverifiable`;
+     - `pointer` — JSON Pointer места, только для диагностики; в формат он не попадает;
+     - `message_id` — `am.manifest.<rule>`;
+     - `detail` — английский технический текст для журнала, не для пользователя (ADR-0032);
+   - `SemanticOptions` — лимиты (O-17, значения по умолчанию помечены `hypothesis`) и флаг прекращения проверки после N находок.
+
+3. **Свод уровня V3.**
+   - Есть находка `error` → `failed`.
+   - Есть `unverifiable` и нет `error` → `partial`.
+   - Только `warning` или ничего → `passed`.
+   - `complete = false` всегда даёт не выше `partial`.
+
+   В `VerificationReport` (T-010) добавить:
+   - `v3_findings` вместо плоского `violations` либо рядом с ним (решает исполнитель, но в JSON отчёта находки идут с `severity`, `rule` и `pointer`);
+   - `v3_complete`;
+   - `v3_deferred_rules`.
+
+4. **Правило фиксации** (ADR-0035 п. 7). Перед заменой ZIP `AssetRepository` требует одновременно:
+   - V3 без находок `error`;
+   - `complete = true`.
+
+   `unverifiable` и `warning` фиксацию не блокируют, но попадают в отчёт. Это та же логика, что у V4: `verified_crc_size_only` — не ошибка. Отказ возвращает `message_id` первой находки `error` (`Errc::corrupt_data`) и фактический отчёт через выходной параметр.
+
+5. **Значения по умолчанию.**
+   - `RepositoryOptions::semantic_validator` по умолчанию становится полным валидатором: V3 уровня domain плюс правила хранилища.
+   - `repository_invariants()` остаётся для тестов и не заменяет полный валидатор.
+   - Правила T-010 уровня манифеста (уникальность ID, пути и входы, покрытие истории) переезжают в domain; повторно в хранилище не проверяются, каждое нарушение сообщается один раз.
+
+6. **Plugin-данные** (R-09.4, R-09.7, M-08):
+   - значения plugin-типов, `data` расширений, `constraints`/`default` plugin-типов V3 не интерпретирует;
+   - при наличии plugin-данных `plugin_validation = not_performed`, и это не находка V3;
+   - V3 проверяет вокруг них только нормативное: разрешимость FieldID и `dependencies`, область применения.
+
+7. **Числа.**
+   - Сравнения `integer`/`decimal` с границами — точные, по десятичной строке, без `double`. `1.500 == 1.5`, `-0 == 0`.
+   - `int64` вне диапазона — `error`.
+   - Хранимые строки V3 не изменяет: функция только читает документ.
+
+8. **Время.**
+   - `timestamp` (RFC 3339 с `Z`) и `date` (`YYYY-MM-DD`) проверяются на календарную допустимость: високосные годы, длина месяца, часы 00–23, минуты 00–59, секунды 00–60 (RFC 3339 допускает 60).
+   - Правило применяется ко всем полям этих типов в манифесте: `created_at`, `modified_at`, `imported_at`, `retrieved_at`, `published_at`, `review.at`, `claims[].created_at`, `history.entries[].timestamp`, `dates.*`, значения и границы полей `date`/`datetime`.
+   - Упорядоченность времён **не** проверяется: авторитетный порядок — ревизия (§4).
+
+9. **Открытые поддетали не закрываются допущениями** (CLAUDE.md). Соответствующие места реализуются так:
+   - **O-08** (алгоритм поискового ключа тегов): предупреждение о совпадающем поисковом ключе **не реализуется**. Правило `tags_search_key` — в `deferred_rules` с причиной `O-08`. На `complete` оно не влияет, так как даёт только предупреждение. Точный дубль тега проверяет V2 (`uniqueItems`).
+   - **UCUM** (X-02, движок открыт): единицы сравниваются только как точные строки. Граница и значение с **одинаковой** строкой единицы сравниваются числом. С **разными** — находка `unverifiable` (`x02_unit_conversion_open`), без пересчёта. Неизвестных для ядра единиц нет: любая непустая строка (V2) сохраняется.
+   - **`dimension`** (грамматика открыта): физическая величина — поле `integer`/`decimal` с `dimension`, отличной от `dimensionless`. Отсутствие `dimension` — нефизическая величина.
+   - **Физический `default`** (открыт): для физического числового поля `default` проверяется только как представление типа. Сравнение с границами не выполняется: находка `unverifiable` (`x02_physical_default_open`).
+   - **Единица значения в claim.** В `claims[]` формата 1.0 нет поля `unit`, поэтому значение `alternative`/`rejected` для физического числового поля нельзя сопоставить с единицей. Проверяется только представление типа, плюс находка `unverifiable` (`claim_value_unit_unexpressible`). Это пробел формата: вынесен владельцу (раздел «Вне объёма»), в задаче не решается.
+   - **Словарь `changes[].kind` и plugin-`operation`** (O-18, открыты): цели `changes[]` не разрешаются, неизвестная `operation` — не ошибка.
+   - **`included_renamed`/`excluded` для каталогов** (X-01, открыт) и **грамматика `generation.tool`** (O-14, открыт) не проверяются сверх V2.
+
+10. **SPDX.**
+    - `license.spdx` проверяется по грамматике SPDX License Expression, SPDX 2.3, Annex D:
+      - `idstring = 1*(ALPHA / DIGIT / "-" / ".")`;
+      - `license-id` и `license-id+`;
+      - `LicenseRef-<idstring>` и `DocumentRef-<idstring>:LicenseRef-<idstring>`;
+      - `<simple> WITH <exception-id>`;
+      - `AND`, `OR`, скобки;
+      - приоритет `WITH` > `AND` > `OR`;
+      - операторы — только в верхнем регистре, пробелы между токенами.
+    - Принадлежность идентификатора к списку лицензий SPDX **не** проверяется: в проекте нет данных списка и правила их обновления. Это не отложенное правило: спецификация требует только грамматику (O-14 п. 3).
+    - Собственный разбор, без библиотеки. Управляющий вносит его в `libraries.md`.
+
+11. **Каталог правил V3.** Каталог ниже **закрыт**: исполнитель реализует ровно его.
+    - Каждое правило — отдельный идентификатор `rule` с тестом «нарушение → находка» и проверкой, что эталон `schemas/examples/manifest-1.0.example.json` его проходит.
+    - Если правило противоречит схеме или эталону, или в источниках (спецификация §§4–12, R-05/§7.2, журнал v0.11) найдено нормативное правило V3, которого нет в каталоге, — остановка по п. 3 `AGENTS.md`, без самостоятельного расширения.
+
+12. **Замечания приёмки T-010:**
+    1. **Коды ошибок нижних слоёв.** `guard` в `repository.cpp` переводит их по таблице. `Errc` сохраняется, исходная ошибка — в `cause`.
+
+       | Исходный `message_id` / условие | Новый `message_id` |
+       |---|---|
+       | `am.commit.locked` | `am.repo.locked` |
+       | `am.commit.insufficient_space` | `am.repo.insufficient_space` |
+       | `am.commit.replace_failed` | `am.repo.target_in_use` |
+       | `am.commit.journal_error`, `am.commit.journal_version` | `am.repo.journal_error` |
+       | `am.commit.out_of_memory`, `am.zip.*` с `Errc::resource_exhausted` | `am.repo.limit_exceeded` |
+       | `am.zip.*` с `Errc::corrupt_data` | `am.repo.corrupt_container` |
+       | `am.zip.*` с `Errc::unsupported` | `am.repo.unsupported_container` |
+       | прочие `am.zip.*` и `am.commit.*`, кроме `base_changed` и `verification_failed` (п. 4 T-010) | `am.repo.io_error` |
+
+    2. **Повтор `op_id`.**
+       - V3 domain проверяет уникальность `history.entries[].operation_id` (правило `history_operation_id_unique`).
+       - `AssetRepository::change` и `create` до записи отклоняют `op_id`, который уже есть в `history.entries[].operation_id` текущего снимка: `Errc::conflict`, `am.repo.duplicate_operation_id`, без журнала и временного файла. Идемпотентный ответ не вводится.
+    3. **Съёмные NTFS-тома.** `detect_storage_capabilities` для `DRIVE_REMOVABLE` возвращает `read_only_default`, `durability = unknown`. Строка внесена в `fs_support.md` v0.2. `full` остаётся только у `DRIVE_FIXED` с NTFS. Испытывался только встроенный диск, а `DRIVE_RAMDISK` никто не испытывал, поэтому он тоже переходит в `read_only_default`.
+    4. **`AddFiles`.** Безопасность пути, длина и коллизии (с текущими путями и между файлами запроса) проверяются **до** хеширования источников.
+
+## Каталог правил V3
+
+Идентификатор правила — `rule`; `message_id` = `am.manifest.<rule>`. Если не указано иное, тяжесть — `error`. Ссылки «→» означают «разрешается в».
+
+### A. Идентичность и уникальность
+
+| `rule` | Проверка |
+|---|---|
+| `unique_ids` | Уникальны в пределах манифеста: FileID в `files ∪ historical_files` (и `files ∩ historical_files = ∅`), GroupID, PreviewItemID, InputID, InputObjectID, SourceEntryID, SourceID, AttachmentID, ClaimID (включая claims источников), FieldID. Уникальны внутри владельца: OptionID в поле; `authors[].id` в одном массиве `authors`; `field_id` в `custom_values` одной `metadata`; `index` томов в объекте |
+| `storage_paths` | `files[].storage_path` и `attachments[].path` уникальны по `path_collision_key` (регистр и NFC), безопасны (`paths::check_container_path`), не длиннее 200 байт; путь `content/<X>/…` → `X` — существующий InputID; вложение лежит в `extensions/<свой ExtensionID>/` |
+| `history_operation_id_unique` | `history.entries[].operation_id` уникальны |
+
+### B. Файлы и происхождение (§5, §6, X-01)
+
+| `rule` | Проверка |
+|---|---|
+| `historical_files` | `removed_at_revision` ∈ [2, `asset.revision`] |
+| `derived_from` | `file_id` → `files ∪ historical_files`. Несовпадение `sha256` или исторический FileID — **не** находка: это вычисляемое состояние `stale`/`source_missing` (§6) |
+| `input_source_refs` | `inputs[].source_refs[]` → `origin.sources[].id` |
+| `input_entry_object` | `entries[].object_id` → объект **того же** Input |
+| `input_entry_file` | `file_id` есть только у `entry_kind = file` с `result` ∈ {`included`, `included_renamed`}; у таких записей он обязателен; → `files ∪ historical_files` |
+| `input_nesting` | `parent_object_id` и `parent_entry_id` заданы вместе; родительский объект — в том же Input; родительская запись принадлежит родительскому объекту и имеет `entry_kind = file`; циклов вложенности нет; у объекта с `nested_action = exclude` родительская запись не имеет `file_id` |
+
+### C. Группы и превью (§7)
+
+| `rule` | Проверка |
+|---|---|
+| `group_refs` | `parent_id` → GroupID; циклов нет; `file_refs[]` → текущий FileID (`files`) |
+| `preview_refs` | `items[].file_id` → текущий FileID; `group_refs[]` → GroupID; `primary_id` → `items[].id` |
+
+### D. Поля и значения (§8, §9.2, X-02, R-09)
+
+| `rule` | Проверка |
+|---|---|
+| `field_options` | `enum`/`multi_enum`: OptionID уникальны (дубль внутри поля — здесь, если V2 его не ловит) |
+| `field_constraints_unit` | `integer`/`decimal` с физической `dimension`: у каждой границы `minimum`/`maximum` есть `unit` (X-02 п. 7) |
+| `field_default` | `default` базового типа проходит те же проверки представления, вариантов и ограничений, что и значение (`value_*`), с учётом п. 9 «Решений» для физического поля |
+| `custom_value_field` | `custom_values[].field_id` → `field_definitions` (M-04/M-07); область владельца (`asset`, `group`, `file`) входит в `scopes` поля |
+| `value_representation` | Значение соответствует базовому типу: `integer` — строка int64; `decimal` — строка без экспоненты; `boolean` — JSON-логическое; `string`/`text` — строка; `date`, `datetime` — п. 8; `enum` — строка; `multi_enum` — массив строк без повторов; `url` — абсолютный URI (как `$defs/url` схемы); `file_ref` — строка |
+| `value_options` | `enum`/`multi_enum` → OptionID поля; `deprecated` не делает значение невалидным |
+| `value_file_ref` | `file_ref` → текущий FileID |
+| `value_constraints` | `min`/`max` для `integer`/`decimal` (п. 7, единицы — п. 9), `min_length`/`max_length` в кодовых точках без нормализации, `minimum`/`maximum` для `date`/`datetime`, `min_items`/`max_items` по уникальным OptionID |
+| `value_unit_required` | `integer`/`decimal` с физической `dimension`: у значения есть `unit` (X-02 п. 4) |
+| `value_dependencies_scope` | `custom_values[].dependencies` есть только у значений plugin-типов (§9.2) |
+| `x02_unit_conversion_open` | `unverifiable`: граница и значение с разными строками единиц (п. 9) |
+| `x02_physical_default_open` | `unverifiable`: `default` физического числового поля не сравнивается с границами (п. 9) |
+
+### E. Метаданные и claims (§9.1, §9.3, R-05, O-01, O-02)
+
+| `rule` | Проверка |
+|---|---|
+| `claim_target_standard` | `standard`: при `supports_selected` поле присутствует в той же `metadata` (M-01). Для claims источника — в объекте источника |
+| `claim_target_item` | `standard_item`: `item_id` → `authors[].id` той же `metadata` (M-05) |
+| `claim_target_custom` | `custom`: `field_id` → `field_definitions`, область владельца входит в `scopes`; при `supports_selected` — значение с этим `field_id` есть в той же `metadata` |
+| `claim_value_type` | `alternative`/`rejected` с `custom` базового типа: `value` проходит `value_representation` и `value_options` поля. `value_constraints` к claim **не** применяется: отклонённое или альтернативное значение может нарушать текущие границы |
+| `claim_value_unit_unexpressible` | `unverifiable`: то же для физического числового поля (п. 9) |
+| `claim_evidence` | `evidence[]`: `file_id` → `files ∪ historical_files`; `source_entry_id` → SourceEntryID любого Input; `input_object_id` → InputObjectID; `source_id` → SourceID |
+| `license_file_ref` | `license.file_ref` → текущий FileID |
+| `license_spdx` | `license.spdx` проходит грамматику п. 10 |
+| `tags_search_key` | `warning` — **отложено** (O-08, п. 9) |
+
+Типы `value` для стандартных полей, сочетания `relation`/`value`/`review`/`target.kind` и реестры адресатов проверяет V2 (схема, `$defs.claim`/`sourceClaim`). V3 их не дублирует. Если тест покажет, что какое-то из этих сочетаний V2 пропускает, — остановка по п. 3 `AGENTS.md`.
+
+### F. Расширения и зависимости (§10, O-12)
+
+| `rule` | Проверка |
+|---|---|
+| `dependency_refs` | Для `extensions.*.dependencies` и `custom_values[].dependencies`: `file` → `files ∪ historical_files` (исторический FileID или несовпадение `sha256` — вычисляемое `stale`/`source_missing`, **не** находка); `group` → GroupID; `field_value{owner_scope, owner_id, field_id}` → существующее значение `custom_values` с этим `field_id` у владельца `owner_scope`/`owner_id` (`asset` — владелец ассета) |
+
+### G. Время и история (§4, §11, O-14, O-18)
+
+| `rule` | Проверка |
+|---|---|
+| `timestamps` | Календарная допустимость всех `timestamp`/`date` (п. 8) |
+| `asset_times` | `asset.created_at` = `timestamp` записи ревизии 1; `asset.modified_at` = `timestamp` последней записи |
+| `history_coverage` | Ревизии `1..asset.revision` покрыты ровно один раз записями `entries[]` и диапазонами `compacted_ranges[]` без пропусков и пересечений; оба массива упорядочены по начальной ревизии; ревизия 1 — отдельная запись `asset_created`, последняя — отдельная запись с `revision = asset.revision`; ни одна из них не входит в диапазон. Без развёртывания диапазонов в память (O-18 п. 1) |
+| `history_compacted_summary` | `summary.revision_count = to_revision − from_revision + 1`; `operation_counts`, если есть, — неотрицательные счётчики, сумма равна `revision_count`; среди ключей нет защищённых операций (`asset_created`, `format_migrated`, `provenance_changed`, `history_compacted`) |
+
+## Требования
+
+### 1. Domain (`include/am/domain/manifest/semantics.hpp`)
+
+- API по п. 2 «Решений». Функция потокобезопасна для разных документов и не изменяет документ.
+- Значения, скрытые кодеком как непрозрачные, V3 не раскрывает и не разбирает. Их наличие и FieldID проверяются по известной части DOM.
+- Пределы:
+  - число находок ограничено опцией, после неё — одна сводная находка `limit_exceeded` (`Errc::resource_exhausted` не возвращается);
+  - глубина групп и вложенности объектов — без рекурсии по стеку либо с ограничением (O-17).
+- Сложность — не хуже O(n log n) по числу объектов: индексы ID строятся один раз.
+
+### 2. Storage (`AssetRepository`)
+
+- Полный валидатор по п. 5, правило фиксации по п. 4, свод V3 и поля отчёта по п. 3.
+- Отчёт `verify` для ассета, созданного до T-011 и не проходящего полную V3, возвращается без исключения: `v3: failed` с находками. Снимок и чтение такой ассет не блокирует: V3 не входит в условие снимка (В-2 T-010). Запись блокирует.
+- Замечания пп. 12.1–12.4.
+
+### 3. Попутно
+
+- `docs/specifications/container_manifest_v1.md` §12 и ADR **не менять**. Каталог правил живёт в этом файле задачи. Расхождение со спецификацией — вопрос по п. 3 `AGENTS.md`.
+
+## Контекст (что прочитать)
+
+- Спецификация §§4–12; эталон `schemas/examples/manifest-1.0.example.json`; схема `schemas/manifest-1.0.draft.schema.json` (`$defs.claim`, `claimCore`, `sourceClaim`, `metadata`, `fieldDefinition`, `dependencies`).
+- `include/am/domain/manifest/codec.hpp`: что кодек считает непрозрачным (`custom_values` и `claims[].value` полей plugin-типа или неизвестного поля, `generation.params`, `data` расширений, `default`/`constraints` plugin-полей, `details` и дополнительные ключи `changes[]`).
+- `src/storage/repository/repository.cpp`: класс `Invariants`, `check`, `guard`.
+- T-010: раздел «Приёмка» (замечания 1–4).
+
+## Тесты
+
+1. **Эталон и созданные репозиторием ассеты.**
+   - `manifest-1.0.example.json` проходит V3 без `error` и `unverifiable`: `passed`, `complete`.
+   - Ассет, созданный и изменённый всеми операциями T-010, проходит V3 перед фиксацией. Тестовые фикстуры T-010 можно доработать, ожидания проверок T-009/T-010 — не ослаблять.
+2. **Каждое правило каталога:** минимальная мутация эталона → ровно ожидаемая находка с верными `rule`, `severity`, `message_id` и `pointer`; без посторонних находок. Сценарии M-01…M-08 из §7.2 свода R-01…R-09 — отдельными именованными тестами.
+3. **Числа:** `1.500` против `maximum 1.5` — проходит; `1.5000001` — `error`; int64 на границах ±2⁶³ − 1/−2⁶³ и за ними; `-0`; отрицательные decimal.
+4. **Единицы:** физическая величина без `unit` у значения — `error`; граница без `unit` — `error`; одинаковые строки — сравнение; `mm` против `cm` — `unverifiable`, без пересчёта; безразмерная — без требования единицы.
+5. **Время:** 29 февраля в високосный и обычный год, 2100 год, `24:00:00`, `:60`, 31 апреля, дробные секунды, сравнение `datetime` с границами.
+6. **Строки:** длина в кодовых точках (комбинирующие символы, суррогатные пары, NFC/NFD не нормализуются).
+7. **SPDX:** положительные — `MIT`, `GPL-2.0-or-later`, `Apache-2.0 WITH LLVM-exception`, `(MIT OR Apache-2.0) AND BSD-3-Clause`, `LicenseRef-my.custom-1`, `DocumentRef-x:LicenseRef-y`, `GPL-2.0+`; отрицательные — пустая, `mit or apache-2.0`, незакрытая скобка, `WITH` без исключения, двойной оператор, `LicenseRef-` без idstring, недопустимый символ.
+8. **История:** пропуск, пересечение, диапазон с ревизией 1 или последней, неверный `revision_count`, сумма `operation_counts`, защищённая операция в счётчиках, повтор `operation_id`; диапазон `1..2⁵³` проверяется без выделения памяти по размеру диапазона.
+9. **Plugin:** значение plugin-типа без обработчика — V3 `passed`, `plugin_validation = not_performed` (M-08); неопределённый FieldID — `error`; `dependencies` у значения базового типа — `error`.
+10. **Репозиторий:**
+    - фиксация с V3 `error` отклоняется, файл не изменён, отчёт с находками получен через выходной параметр;
+    - фиксация с только `unverifiable` проходит, отчёт `v3: partial`;
+    - `verify` старого ассета, не проходящего V3, — отчёт без исключения;
+    - повтор `op_id` — `am.repo.duplicate_operation_id` без журнала и temp.
+11. **Коды ошибок (п. 12.1):** `locked` (помощник держит блокировку), нехватка места (подстановка T-009), повреждённый ZIP, неподдерживаемый метод — новые `message_id` при прежнем `Errc` и наличии `cause`.
+12. **Возможности ФС (п. 12.3):** классификация по типу диска и имени ФС — модульным тестом чистой функции (тип диска и имя ФС на входе), без реального съёмного носителя.
+13. **`AddFiles` (п. 12.4):** недопустимый путь и коллизия отклоняются до чтения источника: источник — несуществующий файл или файл, открытие которого учитывается подстановкой.
+14. **Производительность (замер, без норматива, O-17):** V3 манифеста с 100 000 файлов, 10 000 групп и 100 000 claims — время и пик памяти в отчёте.
+
+Пометки `RecordProperty("req", …)`: `R-05`, `M-01`…`M-08`, `O-01`, `O-02`, `O-12`, `O-14`, `O-18`, `X-01`, `X-02` — по смыслу теста.
+
+## Файлы (что можно менять)
+
+- Новые: `include/am/domain/manifest/semantics.hpp`, `src/domain/manifest/*.cpp` (V3), `tests/unit/test_manifest_semantics*.cpp`, фикстуры `tests/fixtures/manifest/` (синтетика).
+- Изменяемые: `src/domain/CMakeLists.txt`, `include/am/storage/repository/repository.hpp`, `src/storage/repository/repository.cpp`, `tests/unit/test_asset_repository.cpp`, `tests/integration/asset_repository_crash_helper.cpp`, `tests/CMakeLists.txt`, этот файл (отчёт), строка T-011 в `docs/tasks/README.md` (статус).
+- **Не менять:** схему, эталон, спецификацию, ADR, `fs_support.md`, `libraries.md`, матрицы, код T-006…T-009, кодек.
+
+## Критерии приёмки
+
+1. `tools\build_min.cmd` — PASS, без новых внешних зависимостей минимальной сборки.
+2. `tools\build_cli.cmd` и `tools\build_cli.cmd --offline` — PASS, все прежние тесты сохранены, ожидания не ослаблены (кроме перехода `v3: partial` → `passed` там, где теперь работает полный валидатор).
+3. Тесты 1–14 выполнены; каждое правило каталога покрыто положительным и отрицательным случаем.
+4. `arch_check` PASS: `am_domain` не зависит от `storage`; публичные заголовки без Windows, sqlite, zlib.
+5. В отчёте:
+   - таблица «правило каталога → тесты»;
+   - примеры JSON `VerificationReport` с находками всех трёх тяжестей;
+   - замер теста 14;
+   - перечень отложенных правил с причинами.
+6. Сдача по `AGENTS.md`: только разрешённые файлы, коммиты в `codex/T-011`, без слияния и переписывания истории.
+
+## Вне объёма
+
+- CLI `am asset …` и `am library …` — следующая задача.
+- Принадлежность к списку лицензий SPDX, движок UCUM и пересчёт единиц, поисковый ключ тегов (O-08), грамматика `dimension`, физический `default`, словарь `changes[].kind`.
+- **Единица значения в claim** для физических полей — пробел формата 1.0. Управляющий выносит его владельцу вместе с открытыми вопросами X-02.
+- Компактизация истории (вне P0; проверяется только структура).
+- Независимая копия (R-07) и транзакционные запреты удаления зависимых объектов, кроме уже реализованных в T-010.
