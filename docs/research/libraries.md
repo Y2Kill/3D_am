@@ -147,6 +147,8 @@ OpenSSL 3.6 — не LTS-ветка (в таблице 17.6 ориентир 3.5
 | CLI | **CLI11** | 2.7.2 (vcpkg baseline) | BSD-3 | ✅ — сверено для T-012: только заголовки; `App::ensure_utf8(argv)` (2.3+) даёт аргументы в UTF-8 на Windows из `GetCommandLineW`, поэтому ручной `CommandLineToArgvW` в `main.cpp` удаляется; подкоманды, группы опций и собственный форматтер справки. В минимальной сборке без vcpkg недоступна — исполняемый `am` собирается только при `AM_WITH_CONTAINER` (T-012). |
 | Fuzzing парсеров (STL, DXF, манифест, имена в ZIP) | libFuzzer (clang) / MSVC `/fsanitize=fuzzer` | — | Apache-2.0 | 🔵 |
 | Санитайзеры | ASan (MSVC и clang), UBSan (clang/gcc) | — | — | ✅ preset `win-asan` |
+| CI | **GitHub Actions** (`windows-2022`, `ubuntu-24.04`); только `actions/checkout`, `actions/setup-python`, `actions/cache`, `actions/upload-artifact`, закреплённые полным SHA | — | MIT (actions) | ✅ — выбор владельца 2026-11-12 (T-005). Окружение MSVC/vcpkg настраивают скрипты проекта, сторонние actions для vcpkg/MSVC не используются; бинарный кэш vcpkg — `files` + `actions/cache`. SHA и версии actions вносятся по итогам T-005. |
+| Тестовые модули Python | `jsonschema` 4.26.0 (+ `referencing`, `jsonschema-specifications`, `attrs`, `rpds-py`) в `.cache/pylib` | — | MIT | ✅ — только для `schema_check`; в CI ставится из `tools/ci/requirements-test.txt` с хешами (T-005) |
 | Проверка архитектуры | собственный `tools/arch_check` (Python, `cmake --graphviz`) | — | — | ✅ (ADR-0024); альтернативы — include-what-you-use, cmake-graphviz + скрипты; отдельный инструмент не нужен |
 | Крэш-дампы | MiniDumpWriteDump (Windows) / **crashpad** 🔵 | — | Apache-2.0 | ✅ |
 | Установщик | CPack + **WiX v4** (MSI) и ZIP для портативной версии | — | MS-RL | ✅ |

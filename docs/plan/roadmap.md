@@ -281,7 +281,7 @@
 - Возможности: предложения тегов и категорий, поиск на естественном языке, обобщение метаданных.
 
 ## CI (ТЗ §12.9.10, поэтапно)
-- С P0.1 (M0): GitHub Actions или GitLab CI.
+- С P0.1 (M0): **GitHub Actions** (выбор владельца 2026-11-12) — задача [T-005](../tasks/T-005-ci-github.md).
   - Матрица: `win-debug-min`, `win-cli`, `linux-min`, далее `linux-cli`.
   - ctest, включая `arch_check` и `schema_check` (черновая схема манифеста, ADR-0036 п. 8).
   - Конфигурация с `-DAM_REQUIRE_PYTHON_TESTS=ON` и установленным `jsonschema`: отсутствие Python-проверок — ошибка, а не SKIP.
