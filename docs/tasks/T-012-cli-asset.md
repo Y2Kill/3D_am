@@ -147,4 +147,179 @@
 
 ## Отчёт исполнителя
 
-*(заполняет исполнитель)*
+**2026-11-12. Ветка:** `codex/T-012`, создана от `main` после приёмки T-011. Реализация и тесты — `48c6c91`, `3d5a5e0`; отчёт и статус — отдельный коммит `T-012: report CLI validation and hand off for review`.
+
+### Выполнение критериев приёмки
+
+1. **Минимальная сборка PASS, 84/84.** Новых зависимостей нет. В выводе `cmake --build --preset win-debug-min --target help` цели `am_cli` нет. При `AM_WITH_CONTAINER=OFF` фасадные исходники и CLI не подключаются, `am_application` остаётся прежней INTERFACE-целью; в контейнерной сборке это STATIC-библиотека с фасадом.
+2. **CLI и offline PASS, 278/278 каждый.** Все 262 прежних теста сохранены; их имена сверены с полным логом T-011. Старые проверки/ожидания не ослаблены, в `test_asset_repository.cpp` добавлены только два новых теста. CLI11 2.7.2 и toml++ 3.4 взяты из существующего vcpkg, манифест зависимостей не изменён.
+3. Тесты 1–12 выполнены: процессные сценарии CLI, прямые вызовы фасада без CLI, гонка публикации и отказ после публикации, UTF-8/кириллица/пробелы, строгий JSON, коды 0–4, режимы проверки, SHA-256 при извлечении, новый minor, каталог сообщений и прежние диагностические команды. Таблицы ниже.
+4. **`arch_check` PASS.** CLI содержит только проектные заголовки `application`; бизнес-операции — в фасаде, общий V1–V4 — в storage. Добавлено точечное правило запрета `am/storage/…` в `src/application/cli/`. Публичные заголовки фасада без Windows/sqlite/zlib/CLI11/toml++.
+5. Примеры вывода, исключения каталога и граница фасада приведены ниже; `docs/user/cli.md` и `CHANGELOG.md` написаны на английском. Справка CLI11 содержит команды M1, `Development`, коды выхода и поведение прерванного create.
+6. Изменены только разрешённые файлы. Коммиты — в `codex/T-012`, без push, слияния и переписывания истории. Статус строки T-012 — `review`.
+
+### Граница фасада и интерфейса
+
+Публичный `asset_service.hpp` предоставляет запросы, `AssetOutcome` (структурированные JSON-данные, статус, диагностика), `ExitCode` и `Result`-функции. CLI переводит UTF-8-аргументы в запрос, вызывает фасад, форматирует stdout/stderr; сам не открывает ZIP и не выполняет операции с файлами.
+
+| Команда | Функция фасада | Реализация операции |
+|---|---|---|
+| create | `create_asset(CreateAssetOptions)` | Маппер foundation, один AddFiles, служебная библиотека на том же томе, `AssetRepository::create`, перенос без замены, общий full verify, очистка |
+| inspect | `inspect_asset(path)` | Общий `verify_container` с `streams=false, semantics=false`, сводка из прочитанного документа |
+| validate | `validate_asset(path)` | Общий `verify_container`, `streams=false` |
+| verify | `verify_asset(path, VerifyAssetOptions)` | Общий `verify_container`, quick/selective/full |
+| extract | `extract_asset(path, ExtractAssetOptions)` | Общий V1–V3, разрешение FileID до записи, безопасные пути, временные файлы, CRC/size/SHA-256, публикация без замены |
+
+`verify_container` и `AssetRepository::Impl::check` используют один `check_container`; логика V1–V4 не копировалась в application. Необязательный `ContainerContents` сохраняет тот же открытый ZIP, документ, исходные байты манифеста и общий бюджет для последующего inspect/extract. Отдельное имя ZIP не сверяется с AssetID, правило последней операции не вызывается. Библиотечные проверки и фиксация сохраняют свой контекст.
+
+Старые команды вызывают `development_command`, поэтому CLI не включает storage/processing/services. Механизм сообщений разбирает встроенный TOML один раз; `message_text(Error)` использует каталог, затем `Error::message`, затем сам ID. Прямая зависимость объекта `messages.cpp` от TOML/генерируемого ресурса обеспечивает пересборку после правки каталога.
+
+`zip_paths.detail` содержит исходное имя без изменений для корректного UTF-8, pointer пуст. Для недопустимых байтов имени используется диагностическое экранирование `\xHH`; тот же способ применяется к диагностическому пути V4, чтобы JSON повреждённого ZIP оставался корректным. Байты самого ZIP и пути для чтения не меняются.
+
+### Команды и тесты
+
+| Команда/требование | Процессные тесты | Прямой API / storage |
+|---|---|---|
+| create, inspect, полный verify, Unicode round-trip | `cli_create_roundtrip` | `AssetService.CreateInspectValidateVerifyExtractRoundTrip` |
+| create: существующий выход, коллизия A/a, каталог, отсутствующий файл, очистка | `cli_create_refusals` | `CreateRefusalsAndPublishRaceNeverReplaceOutput` |
+| create: цель появилась перед переносом; провал после переноса | — | `CreateRefusalsAndPublishRaceNeverReplaceOutput`, `PostCreateFailureDeletesOnlyTheNewOutput` |
+| validate/verify: passed, error, unverifiable, повреждённые потоки | `cli_validate_verify` | `ValidationAndExtractionUseSharedV3AndPreserveSuccessfulFiles`, `StreamScopesMinorAndCorruption` |
+| quick/selective, повтор `--file`, отсутствие FileID | `cli_validate_verify` | `StreamScopesMinorAndCorruption`, проверка API usage в `ValidationAndExtractionUseSharedV3AndPreserveSuccessfulFiles` |
+| inspect новой minor 1.1 и код 1 для провала V1/CRC манифеста | `cli_inspect_minor` | `StreamScopesMinorAndCorruption` |
+| extract: все/выбранные, manifest byte-for-byte, непустой каталог, неизвестный ID, несовпадение SHA | `cli_create_roundtrip`, `cli_extract` | `CreateInspectValidateVerifyExtractRoundTrip`, `ValidationAndExtractionUseSharedV3AndPreserveSuccessfulFiles`, `StreamScopesMinorAndCorruption` |
+| один строгий JSON-объект, command, error.code/message_id; текстовые примеры | `cli_json_examples`, остальные CLI-тесты с `json_output=True` | `error_json`, `AssetOutcome` |
+| каталог и fallback | `message_catalog_check` | `MessageCatalogCoversAllCheckedAndDeferredRulesAndFallback` |
+| development version/uuid/zip-path/help | `cli_development` | `development_command` |
+| общий verify, произвольное имя, V1 failure, zip_paths.detail | `cli_validate_verify` | `AssetRepository.VerifyContainerSharesReportsAndAcceptsArbitraryFilename`, `VerifyContainerReturnsV1FailureAndZipPathDetail` |
+
+| Код выхода | Фактически получен в тестах |
+|---|---|
+| 0 | `cli_create_roundtrip`; validate/verify валидного ZIP; selective со всеми FileID; успешный extract |
+| 1 | `cli_validate_verify` (license_spdx, повреждённый поток, недопустимое ZIP-имя); `cli_extract` (SHA mismatch); API post-create failure |
+| 2 | `cli_validate_verify` (selective без FileID); `cli_development` (неизвестная команда); API selective без FileID |
+| 3 | `cli_validate_verify` (unverifiable/quick/частичная выборка); `cli_inspect_minor` |
+| 4 | `cli_create_refusals`; `cli_extract` (непустой каталог/неизвестный ID/неподдерживаемый метод потока, верхнеуровневый error в JSON); `cli_json_examples` (отсутствующий ZIP) |
+
+### Полные команды и фактический вывод
+
+```text
+tools\build_min.cmd
+100% tests passed, 0 tests failed out of 84
+Total Test time (real) =  18.79 sec
+```
+
+```text
+tools\build_cli.cmd
+100% tests passed, 0 tests failed out of 278
+Total Test time (real) = 912.58 sec
+```
+
+```text
+tools\build_cli.cmd --offline
+100% tests passed, 0 tests failed out of 278
+Total Test time (real) = 632.61 sec
+```
+
+Логи: `.cache/t012-final-{min,cli,offline}.log`; полный stdout CTest — `.cache/t012-final-{cli,offline}-tests.log`; список целей минимума — `.cache/t012-min-targets.log`. Итоговые сборки без новых предупреждений MSVC/CMake. Снимки SHA-256 кэшей до/после offline: 81 файл, изменённых — 0. Offline — read-only-кэши и `x-block-origin`; зависимости не скачивались.
+
+При отладке прямой `ctest` вне среды MSVC запустил реконфигурацию из `arch_check` с неверным окружением и сбил CMake-кэш. Восстановлен только `build/win-cli` командой `cmake --fresh --preset win-cli` из `.cache/t012_reconfigure.cmd` в штатной среде MSVC/vcpkg. Затем `tools\build_cli.cmd --offline -R arch_check` — PASS; полные итоговые прогоны выполнены штатными скриптами. Исходники, пресеты и инструментальная конфигурация проекта ради этого не менялись.
+
+### Исключения message_catalog_check
+
+Каталог содержит 159 непустых английских сообщений. Все полные строковые литералы ID из `src/` включены. Дополнительная проверка по эталону покрывает все `checked_rules` и `deferred_rules` V3. Исключены только точные префиксы, которые сами не являются пользовательскими message_id:
+
+| Литерал | Причина |
+|---|---|
+| `am.app.label.` | Префикс составных меток представления; полные ключи находятся в каталоге |
+| `am.commit.` | Классификатор семейства ошибок в guard репозитория |
+| `am.json.` | Классификатор ошибок строгого JSON в кодеке |
+| `am.manifest.` | Префикс составных V3 ID / классификатор; составные правила проверяет модульный тест |
+| `am.zip.` | Классификатор семейства ошибок в guard репозитория |
+
+Исключения и причины закреплены явно в `tests/tools/message_catalog_check.py`.
+
+### Реальные примеры вывода
+
+Примеры получены из итогового `cli_json_examples`; абсолютный тестовый каталог заменён на `<dir>`, относительные пути контейнера и пользовательские имена сохранены. Для каждого вызова JSON — один объект stdout; предупреждения/ошибки выводятся отдельно в stderr.
+
+**create**
+
+```text
+Asset ID: 3b8368c8-5238-461b-a01b-f79441febc96
+Revision: 1
+Files: 2
+Path: <dir>\example-text.zip
+```
+
+```json
+{"asset_id": "9441ad08-e5ee-4b5e-b77f-b657da49d61c", "revision": 1, "file_count": 2, "path": "<dir>\\example-json.zip", "command": "create"}
+```
+
+**inspect**
+
+```text
+v1: passed
+v2: passed
+Asset ID: b4f182d9-62d2-4ed2-bca0-206e3e7739f2
+Revision: 1
+Format support: supported
+Created at: 2026-11-12T16:07:43.835Z
+Modified at: 2026-11-12T16:07:43.835Z
+Title: Тестовый asset
+Files: 2
+Historical files: 0
+Inputs: 1
+History entries: 1
+Format: 1.0
+eec13790-4a63-43ce-bea6-72fabf3b7898 content/9972b880-8edb-4ce2-9da9-d0c7401906e5/деталь с пробелом.txt 40 user_added
+cfc6ec4c-b865-4b4d-9a71-eb89ff199341 content/9972b880-8edb-4ce2-9da9-d0c7401906e5/second.bin 4 user_added
+```
+
+```json
+{"format": {"id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128", "version": {"major": 1, "minor": 0}}, "format_support": "supported", "v1": "passed", "v2": "passed", "v3": "not_performed", "asset_id": "b4f182d9-62d2-4ed2-bca0-206e3e7739f2", "revision": 1, "created_at": "2026-11-12T16:07:43.835Z", "modified_at": "2026-11-12T16:07:43.835Z", "title": "Тестовый asset", "file_count": 2, "historical_file_count": 0, "input_count": 1, "history_entry_count": 1, "files": [{"id": "eec13790-4a63-43ce-bea6-72fabf3b7898", "path": "content/9972b880-8edb-4ce2-9da9-d0c7401906e5/деталь с пробелом.txt", "size_bytes": "40", "origin_kind": "user_added"}, {"id": "cfc6ec4c-b865-4b4d-9a71-eb89ff199341", "path": "content/9972b880-8edb-4ce2-9da9-d0c7401906e5/second.bin", "size_bytes": "4", "origin_kind": "user_added"}], "command": "inspect"}
+```
+
+**validate**
+
+```text
+v1: passed
+v2: passed
+v3: passed
+Container verification: partial
+```
+
+```json
+{"format_support": "supported", "v1": "passed", "v2": "passed", "v3": "passed", "v3_rules": ["asset_times", "byte_sizes_uint64", "claim_evidence", "claim_target_custom", "claim_target_item", "claim_target_standard", "claim_value_type", "claim_value_unit_unexpressible", "custom_value_field", "dependency_refs", "derived_from", "field_constraints", "field_default", "field_options", "group_refs", "historical_files", "history_compacted_summary", "history_coverage", "history_operation_id_unique", "input_entry_file", "input_entry_object", "input_nesting", "input_source_refs", "license_file_ref", "license_spdx", "preview_refs", "storage_paths", "timestamps", "unique_ids", "urls", "value_constraints", "value_dependencies_scope", "value_file_ref", "value_options", "value_representation", "value_unit_required", "x02_physical_default_open", "x02_unit_conversion_open", "zip_paths"], "v3_complete": true, "v3_findings": [], "v3_deferred_rules": [{"rule": "tags_search_key", "reason": "O-08"}], "plugin_validation": "not_performed", "container_verification": "partial", "v4": [], "command": "validate"}
+```
+
+**verify**
+
+```text
+v1: passed
+v2: passed
+v3: passed
+Container verification: full
+```
+
+```json
+{"format_support": "supported", "v1": "passed", "v2": "passed", "v3": "passed", "v3_rules": ["asset_times", "byte_sizes_uint64", "claim_evidence", "claim_target_custom", "claim_target_item", "claim_target_standard", "claim_value_type", "claim_value_unit_unexpressible", "custom_value_field", "dependency_refs", "derived_from", "field_constraints", "field_default", "field_options", "group_refs", "historical_files", "history_compacted_summary", "history_coverage", "history_operation_id_unique", "input_entry_file", "input_entry_object", "input_nesting", "input_source_refs", "license_file_ref", "license_spdx", "preview_refs", "storage_paths", "timestamps", "unique_ids", "urls", "value_constraints", "value_dependencies_scope", "value_file_ref", "value_options", "value_representation", "value_unit_required", "x02_physical_default_open", "x02_unit_conversion_open", "zip_paths"], "v3_complete": true, "v3_findings": [], "v3_deferred_rules": [{"rule": "tags_search_key", "reason": "O-08"}], "plugin_validation": "not_performed", "container_verification": "full", "v4": [{"id": "eec13790-4a63-43ce-bea6-72fabf3b7898", "path": "content/9972b880-8edb-4ce2-9da9-d0c7401906e5/деталь с пробелом.txt", "status": "verified_sha256"}, {"id": "cfc6ec4c-b865-4b4d-9a71-eb89ff199341", "path": "content/9972b880-8edb-4ce2-9da9-d0c7401906e5/second.bin", "status": "verified_sha256"}], "command": "verify"}
+```
+
+**extract**
+
+```text
+Files: 2
+Path: <dir>\extract-text
+eec13790-4a63-43ce-bea6-72fabf3b7898 content/9972b880-8edb-4ce2-9da9-d0c7401906e5/деталь с пробелом.txt
+cfc6ec4c-b865-4b4d-9a71-eb89ff199341 content/9972b880-8edb-4ce2-9da9-d0c7401906e5/second.bin
+```
+
+```json
+{"path": "<dir>\\extract-json", "file_count": 2, "extracted": [{"id": "eec13790-4a63-43ce-bea6-72fabf3b7898", "path": "content/9972b880-8edb-4ce2-9da9-d0c7401906e5/деталь с пробелом.txt"}, {"id": "cfc6ec4c-b865-4b4d-9a71-eb89ff199341", "path": "content/9972b880-8edb-4ce2-9da9-d0c7401906e5/second.bin"}], "failed": [], "manifest_written": false, "verification": {"format_support": "supported", "v1": "passed", "v2": "passed", "v3": "passed", "v3_rules": ["asset_times", "byte_sizes_uint64", "claim_evidence", "claim_target_custom", "claim_target_item", "claim_target_standard", "claim_value_type", "claim_value_unit_unexpressible", "custom_value_field", "dependency_refs", "derived_from", "field_constraints", "field_default", "field_options", "group_refs", "historical_files", "history_compacted_summary", "history_coverage", "history_operation_id_unique", "input_entry_file", "input_entry_object", "input_nesting", "input_source_refs", "license_file_ref", "license_spdx", "preview_refs", "storage_paths", "timestamps", "unique_ids", "urls", "value_constraints", "value_dependencies_scope", "value_file_ref", "value_options", "value_representation", "value_unit_required", "x02_physical_default_open", "x02_unit_conversion_open", "zip_paths"], "v3_complete": true, "v3_findings": [], "v3_deferred_rules": [{"rule": "tags_search_key", "reason": "O-08"}], "plugin_validation": "not_performed", "container_verification": "partial", "v4": []}, "command": "extract"}
+```
+
+### Отклонения и вопросы
+
+Отклонений от объёма задачи нет. `ContainerContents`, отключение семантики только для inspect и тестовый хук после публикации — детали API для повторного использования проверенного чтения и проверки очистки при отказе; бизнес-путь записи остаётся единственным — через AssetRepository. Команды библиотеки, изменение существующего ZIP, импорт каталогов, новые зависимости и автоматическая очистка после kill не добавлены.
+
+Новых вопросов нет. Все изменения задачи закоммичены. Существовавший до начала работы неотслеживаемый `3D_am_open_questions_e2472e9.zip` не изменялся и в коммиты не включён.

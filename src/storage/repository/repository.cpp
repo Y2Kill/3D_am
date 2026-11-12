@@ -26,6 +26,16 @@ constexpr std::string_view format_id = "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b
 Error error(Errc code, std::string id, std::string detail) {
   return Error::make(code, "Asset repository operation failed", std::move(detail)).in("storage.repository").op("asset.repository").id(std::move(id));
 }
+std::string diagnostic_name(std::string_view name) {
+  if(unicode::is_valid_utf8(name))return std::string(name);
+  // Preserve invalid ZIP-name bytes in a diagnostic that remains valid UTF-8.
+  std::string out;constexpr char hex[]="0123456789ABCDEF";
+  for(unsigned char byte:name) {
+    if(byte>=0x20&&byte<0x7f&&byte!='\\')out+=static_cast<char>(byte);
+    else {out+="\\x";out+=hex[byte>>4];out+=hex[byte&15];}
+  }
+  return out;
+}
 [[noreturn]] void fail(Errc code, std::string id, std::string detail) { throw error(code, std::move(id), std::move(detail)); }
 template<class T> T take(Result<T> r) { if (!r) throw r.error(); return std::move(r).value(); }
 void take(Result<void> r) { if (!r) throw r.error(); }
@@ -82,14 +92,14 @@ std::string timestamp(std::chrono::system_clock::time_point now) {
   std::ostringstream out; out << std::put_time(&time, "%Y-%m-%dT%H:%M:%S") << '.' << std::setw(3) << std::setfill('0') << std::chrono::duration_cast<std::chrono::milliseconds>(now - rounded).count() << 'Z'; return out.str();
 }
 struct ManifestRead { std::string text; manifest::ManifestDocument document; };
-ManifestRead read_manifest(const asset_zip::ZipArchive& zip, const RepositoryOptions& options, asset_zip::ReadBudget& budget) {
+ManifestRead read_manifest(const asset_zip::ZipArchive& zip, const manifest::CodecLimits& limits, asset_zip::ReadBudget& budget) {
   const asset_zip::EntryInfo* found = nullptr;
   for (const auto& e : zip.entries()) if (e.raw_name == "manifest.json") { if (found) fail(Errc::corrupt_data, "am.manifest.manifest_count", "Multiple root manifests"); found = &e; }
   if (!found) fail(Errc::corrupt_data, "am.manifest.manifest_count", "Root manifest missing");
-  if (found->uncompressed_size > options.codec_limits.max_bytes) fail(Errc::resource_exhausted, "am.manifest.limit_exceeded", "Manifest exceeds codec byte limit");
+  if (found->uncompressed_size > limits.max_bytes) fail(Errc::resource_exhausted, "am.manifest.limit_exceeded", "Manifest exceeds codec byte limit");
   auto stream = take(zip.open_entry(found->index, budget, true)); std::array<std::byte, 65536> buffer{}; std::string text;
   for (;;) { auto count = take(stream.read(buffer)); if (!count) break; text.append(reinterpret_cast<const char*>(buffer.data()), count); }
-  auto doc = take(manifest::parse_manifest(text, options.codec_limits)); return {std::move(text), std::move(doc)};
+  auto doc = take(manifest::parse_manifest(text, limits)); return {std::move(text), std::move(doc)};
 }
 FormatSupport classify(const Json& j) {
   if (!j.contains("format") || !j["format"].is_object()) fail(Errc::corrupt_data, "am.manifest.invalid_format", "Missing format");
@@ -119,14 +129,18 @@ class Invariants final : public SemanticValidator {
       SemanticResult result;
       if (full_) static_cast<manifest::SemanticReport&>(result) = take(manifest::validate_semantics(doc));
       const auto& j = doc.known();
-      auto check = [&](bool passed, std::string_view rule, std::string pointer) {
-        if (!passed) result.findings.push_back({std::string(rule),manifest::FindingSeverity::error,std::move(pointer),"am.manifest."+std::string(rule),"Repository invariant failed"});
+      auto check = [&](bool passed, std::string_view rule, std::string pointer, std::string detail = "Repository invariant failed") {
+        if (!passed) result.findings.push_back({std::string(rule),manifest::FindingSeverity::error,std::move(pointer),"am.manifest."+std::string(rule),std::move(detail)});
       };
+      if (!context.ref.asset_id.empty()) {
       result.checked_rules.push_back("format_asset_identity");
       check(classify(j) == FormatSupport::supported && j.contains("asset") && string(j["asset"],"id") == context.ref.asset_id,"format_asset_identity","/asset/id");
+      }
       result.checked_rules.push_back("zip_paths");
       std::set<std::string> used;
-      for (const auto& e : zip.entries()) check(e.raw_name.size() <= 200 && paths::check_container_path(e.raw_name).ok() && used.insert(unicode::path_collision_key(e.raw_name)).second,"zip_paths","");
+      for (const auto& e : zip.entries()) {
+        check(e.raw_name.size() <= 200 && paths::check_container_path(e.raw_name).ok() && used.insert(unicode::path_collision_key(e.raw_name)).second,"zip_paths","",diagnostic_name(e.raw_name));
+      }
       if (context.new_operation_id) {
         result.checked_rules.push_back("history_operation_id");
         const auto& h = j.contains("history") ? array(j["history"],"entries") : empty_array();
@@ -149,7 +163,7 @@ Result<Json> verification_json(const VerificationReport& r) {
   return guard<Json>([&] { Json out{{"format_support", r.format_support == FormatSupport::supported ? "supported" : "newer_minor"},{"v1",status_name(r.v1)},{"v2",status_name(r.v2)},{"v3",status_name(r.v3)},{"v3_rules",r.v3_rules},{"v3_complete",r.v3_complete},{"v3_findings",Json::array()},{"v3_deferred_rules",Json::array()},{"plugin_validation",status_name(r.plugin_validation)},{"container_verification",r.container_verification == ContainerVerification::full ? "full" : "partial"},{"v4",Json::array()}};
     for (const auto& f : r.v3_findings) out["v3_findings"].push_back({{"rule",f.rule},{"severity",severity_name(f.severity)},{"pointer",f.pointer},{"message_id",f.message_id},{"detail",f.detail}});
     for (const auto& d : r.v3_deferred_rules) out["v3_deferred_rules"].push_back({{"rule",d.rule},{"reason",d.reason}});
-    for (const auto& s : r.v4) out["v4"].push_back({{"id",s.id},{"path",s.path},{"status",stream_name(s.status)}}); if (r.error) out["error"] = r.error->message_id; return out; });
+    for (const auto& s : r.v4) out["v4"].push_back({{"id",s.id},{"path",diagnostic_name(s.path)},{"status",stream_name(s.status)}}); if (r.error) out["error"] = r.error->message_id; return out; });
 }
 Result<StorageCapabilities> classify_storage_capabilities(DriveKind drive, std::string_view filesystem) {
   return guard<StorageCapabilities>([&] {
@@ -184,6 +198,92 @@ Result<StorageCapabilities> detect_storage_capabilities(const Path& root) {
     (void)root; // No non-Windows FS has been verified by fs_support.md v0.1.
 #endif
     return caps;
+  });
+}
+
+
+namespace {
+manifest::SchemaValidator container_schema() {
+  std::string schema;for(const auto part:manifest_schema_parts)schema+=part;
+  return take(manifest::SchemaValidator::create(schema));
+}
+VerificationReport check_container(const asset_zip::ZipArchive& zip, const manifest::ManifestDocument& doc,
+    const ContainerVerifyOptions& options, const SemanticContext& context, asset_zip::ReadBudget& budget,
+    const std::function<void()>& validate_v2, const std::optional<std::set<std::string>>& allowed_opaque = {}) {
+    VerificationReport report; report.v1 = CheckStatus::passed; report.format_support = classify(doc.known());
+    auto record_error = [&](const Error& e) { if (!report.error) report.error = e; };
+    if (report.format_support == FormatSupport::supported) {
+      auto valid = guard<void>([&]() -> Result<void> { validate_v2(); return {}; });
+      report.v2 = valid ? CheckStatus::passed : CheckStatus::failed; if (!valid) record_error(valid.error());
+      if (options.semantics) {
+      auto semantic = options.semantic_validator->validate(doc,zip,context);
+      if (semantic) {
+        report.v3_rules = semantic->checked_rules; report.violations = semantic->violations;
+        report.v3_complete = semantic->complete; report.v3_findings = semantic->findings;
+        report.v3_deferred_rules = semantic->deferred_rules;
+        report.v3 = semantic->complete ? CheckStatus::passed : CheckStatus::partial;
+        for (const auto& f : report.v3_findings) {
+          if (f.severity == manifest::FindingSeverity::error) {
+            report.v3 = CheckStatus::failed;
+            record_error(error(Errc::corrupt_data,f.message_id,f.detail));
+          } else if (f.severity == manifest::FindingSeverity::unverifiable && report.v3 == CheckStatus::passed) report.v3 = CheckStatus::partial;
+        }
+        for (const auto& e : report.violations) { report.v3 = CheckStatus::failed; record_error(e); }
+      } else { report.v3 = CheckStatus::failed; record_error(semantic.error()); }
+      }
+    } else { report.v2 = CheckStatus::not_applicable_newer_minor; report.v3 = CheckStatus::not_performed; }
+    if (!options.streams) return report;
+    std::map<std::string,const asset_zip::EntryInfo*> entries;
+    for (const auto& e : zip.entries()) entries.emplace(e.raw_name,&e);
+    std::set<std::string> registered_paths{"manifest.json"}, selected(options.file_ids.begin(),options.file_ids.end());
+    for (const auto& f : registered(doc.known())) {
+      registered_paths.insert(f.path); StreamReport item{f.id,f.path,StreamStatus::unverifiable,{}};
+      const bool wanted = options.level == VerifyLevel::full || (options.level == VerifyLevel::selective && selected.contains(f.id));
+      if (wanted && f.size && !f.id.empty() && !f.path.empty() && f.sha.size() == 64) {
+        auto result = guard<asset_zip::EntryVerification>([&]() -> Result<asset_zip::EntryVerification> {
+          auto it = entries.find(f.path); if (it == entries.end()) return error(Errc::corrupt_data,"am.manifest.missing_stream",f.path);
+          auto verified = take(zip.verify_entry(it->second->index,budget,true));
+          if (verified.size != *f.size || !verified.sha256 || hex(*verified.sha256) != f.sha) return error(Errc::corrupt_data,"am.manifest.stream_mismatch",f.path);
+          return verified;
+        });
+        if (result) item.status = StreamStatus::verified_sha256;
+        else {
+          item.status = result.error().code == Errc::unsupported ? StreamStatus::unsupported : StreamStatus::failed;
+          item.error = result.error(); record_error(result.error());
+        }
+      }
+      report.v4.push_back(std::move(item));
+    }
+    for (const auto& e : zip.entries()) if (!registered_paths.contains(e.raw_name)) {
+      StreamReport item{"",e.raw_name,StreamStatus::unverifiable,{}};
+      if (allowed_opaque && !allowed_opaque->contains(e.raw_name)) {
+        item.status = StreamStatus::failed; item.error = error(Errc::corrupt_data,"am.manifest.unregistered_stream",e.raw_name); record_error(*item.error);
+      } else if (options.level == VerifyLevel::full) {
+        auto verified = guard<asset_zip::EntryVerification>([&] { return take(zip.verify_entry(e.index,budget,false)); });
+        if (verified) item.status = StreamStatus::verified_crc_size_only;
+        else { item.status = verified.error().code == Errc::unsupported ? StreamStatus::unsupported : StreamStatus::failed; item.error = verified.error(); record_error(verified.error()); }
+      }
+      report.v4.push_back(std::move(item));
+    }
+    bool full = report.v1 == CheckStatus::passed && report.v2 == CheckStatus::passed && !report.error;
+    for (const auto& s : report.v4) if (s.status != StreamStatus::verified_sha256) full = false;
+    report.container_verification = full ? ContainerVerification::full : ContainerVerification::partial; return report;
+}
+} // namespace
+Result<VerificationReport> verify_container(const Path& path,const ContainerVerifyOptions& supplied,ContainerContents* output) {
+  if(output)*output={};
+  return guard<VerificationReport>([&] {
+    ContainerContents contents;
+    contents.budget=std::make_shared<asset_zip::ReadBudget>(supplied.read_budget);
+    contents.archive=take(asset_zip::ZipArchive::open(take(asset_zip::file_source(path,true)),supplied.zip_limits));
+    auto parsed=guard<ManifestRead>([&]{return read_manifest(*contents.archive,supplied.codec_limits,*contents.budget);});
+    if(!parsed){VerificationReport report;report.v1=CheckStatus::failed;report.error=parsed.error();if(output)*output=std::move(contents);return report;}
+    contents.manifest_text=std::move(parsed->text);contents.document=std::move(parsed->document);
+    auto options=supplied;if(!options.semantic_validator)options.semantic_validator=std::make_shared<Invariants>(true);
+    auto schema=container_schema();
+    auto report=check_container(*contents.archive,*contents.document,options,{},*contents.budget,[&]{take(schema.validate(*contents.document));});
+    if(output)*output=std::move(contents);
+    return report;
   });
 }
 
@@ -241,61 +341,9 @@ struct AssetRepository::Impl {
   VerificationReport check(const AssetRef& ref, const asset_zip::ZipArchive& zip, const manifest::ManifestDocument& doc,
                            VerifyLevel level, const std::vector<std::string>& ids, asset_zip::ReadBudget& budget,
                            const std::optional<std::set<std::string>>& allowed_opaque = {}, const std::optional<std::string>& op = {}) const {
-    VerificationReport report; report.v1 = CheckStatus::passed; report.format_support = classify(doc.known());
-    auto record_error = [&](const Error& e) { if (!report.error) report.error = e; };
-    if (report.format_support == FormatSupport::supported) {
-      auto valid = guard<void>([&]() -> Result<void> { validate(doc); return {}; });
-      report.v2 = valid ? CheckStatus::passed : CheckStatus::failed; if (!valid) record_error(valid.error());
-      auto semantic = options.semantic_validator->validate(doc,zip,{ref,op});
-      if (semantic) {
-        report.v3_rules = semantic->checked_rules; report.violations = semantic->violations;
-        report.v3_complete = semantic->complete; report.v3_findings = semantic->findings;
-        report.v3_deferred_rules = semantic->deferred_rules;
-        report.v3 = semantic->complete ? CheckStatus::passed : CheckStatus::partial;
-        for (const auto& f : report.v3_findings) {
-          if (f.severity == manifest::FindingSeverity::error) {
-            report.v3 = CheckStatus::failed;
-            record_error(error(Errc::corrupt_data,f.message_id,f.detail));
-          } else if (f.severity == manifest::FindingSeverity::unverifiable && report.v3 == CheckStatus::passed) report.v3 = CheckStatus::partial;
-        }
-        for (const auto& e : report.violations) { report.v3 = CheckStatus::failed; record_error(e); }
-      } else { report.v3 = CheckStatus::failed; record_error(semantic.error()); }
-    } else { report.v2 = CheckStatus::not_applicable_newer_minor; report.v3 = CheckStatus::not_performed; }
-    std::map<std::string,const asset_zip::EntryInfo*> entries;
-    for (const auto& e : zip.entries()) entries.emplace(e.raw_name,&e);
-    std::set<std::string> registered_paths{"manifest.json"}, selected(ids.begin(),ids.end());
-    for (const auto& f : registered(doc.known())) {
-      registered_paths.insert(f.path); StreamReport item{f.id,f.path,StreamStatus::unverifiable,{}};
-      const bool wanted = level == VerifyLevel::full || (level == VerifyLevel::selective && selected.contains(f.id));
-      if (wanted && f.size && !f.id.empty() && !f.path.empty() && f.sha.size() == 64) {
-        auto result = guard<asset_zip::EntryVerification>([&]() -> Result<asset_zip::EntryVerification> {
-          auto it = entries.find(f.path); if (it == entries.end()) return error(Errc::corrupt_data,"am.manifest.missing_stream",f.path);
-          auto verified = take(zip.verify_entry(it->second->index,budget,true));
-          if (verified.size != *f.size || !verified.sha256 || hex(*verified.sha256) != f.sha) return error(Errc::corrupt_data,"am.manifest.stream_mismatch",f.path);
-          return verified;
-        });
-        if (result) item.status = StreamStatus::verified_sha256;
-        else {
-          item.status = result.error().code == Errc::unsupported ? StreamStatus::unsupported : StreamStatus::failed;
-          item.error = result.error(); record_error(result.error());
-        }
-      }
-      report.v4.push_back(std::move(item));
-    }
-    for (const auto& e : zip.entries()) if (!registered_paths.contains(e.raw_name)) {
-      StreamReport item{"",e.raw_name,StreamStatus::unverifiable,{}};
-      if (allowed_opaque && !allowed_opaque->contains(e.raw_name)) {
-        item.status = StreamStatus::failed; item.error = error(Errc::corrupt_data,"am.manifest.unregistered_stream",e.raw_name); record_error(*item.error);
-      } else if (level == VerifyLevel::full) {
-        auto verified = guard<asset_zip::EntryVerification>([&] { return take(zip.verify_entry(e.index,budget,false)); });
-        if (verified) item.status = StreamStatus::verified_crc_size_only;
-        else { item.status = verified.error().code == Errc::unsupported ? StreamStatus::unsupported : StreamStatus::failed; item.error = verified.error(); record_error(verified.error()); }
-      }
-      report.v4.push_back(std::move(item));
-    }
-    bool full = report.v1 == CheckStatus::passed && report.v2 == CheckStatus::passed && !report.error;
-    for (const auto& s : report.v4) if (s.status != StreamStatus::verified_sha256) full = false;
-    report.container_verification = full ? ContainerVerification::full : ContainerVerification::partial; return report;
+    ContainerVerifyOptions settings;settings.level=level;settings.file_ids=ids;
+    settings.semantic_validator=options.semantic_validator;
+    return check_container(zip,doc,settings,{ref,op},budget,[&]{validate(doc);},allowed_opaque);
   }
 };
 AssetRepository::AssetRepository(std::shared_ptr<Impl> p) : impl_(std::move(p)) {}
@@ -326,7 +374,7 @@ Result<AssetSnapshot> AssetRepository::load(const AssetRef& ref, bool require_v2
       asset_zip::ReadBudget budget(impl_->options.read_budget);
       auto base = take(commit::inspect_zip(path,budget,impl_->options.zip_limits));
       auto source = take(asset_zip::file_source(path,true)); auto zip = take(asset_zip::ZipArchive::open(source,impl_->options.zip_limits));
-      auto manifest = read_manifest(zip,impl_->options,budget); const auto support = classify(manifest.document.known());
+      auto manifest = read_manifest(zip,impl_->options.codec_limits,budget); const auto support = classify(manifest.document.known());
       if (source->size() != base.size || hash_text(manifest.text) != base.manifest_sha256) continue;
       if (require_v2 && support == FormatSupport::supported) impl_->validate(manifest.document);
       base.revision = static_cast<std::int64_t>(repository::revision(manifest.document.known()));
@@ -580,7 +628,7 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
   };
   request.verifier = [&](const asset_zip::ZipArchive& zip) -> Result<void> {
     return guard<void>([&]() -> Result<void> {
-      auto actual = read_manifest(zip,repo.options,budget);
+      auto actual = read_manifest(zip,repo.options.codec_limits,budget);
       result.verification = repo.check(ref,zip,actual.document,VerifyLevel::full,{},budget,allowed,op);
       if (!result.verification.error && !result.verification.v3_complete)
         result.verification.error = error(Errc::corrupt_data,"am.manifest.incomplete","Semantic validation did not complete");

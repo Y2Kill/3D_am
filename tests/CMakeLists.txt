@@ -36,6 +36,7 @@ if(AM_WITH_CONTAINER)
   find_package(unofficial-sqlite3 CONFIG REQUIRED)
   target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp unit/test_manifest_wide.cpp
     unit/test_manifest_semantics.cpp
+    unit/test_asset_service.cpp
     unit/zip_builder.cpp unit/test_zip_reader.cpp unit/test_zip_stream.cpp unit/test_zip_probe.cpp
     unit/test_zip_writer.cpp unit/test_zip_writer_large.cpp unit/test_zip_writer_interop.cpp
     unit/test_state_journal.cpp unit/test_commit_protocol.cpp unit/test_asset_repository.cpp)
@@ -56,6 +57,7 @@ if(AM_WITH_CONTAINER)
     AM_ZIP_CACHE="${PROJECT_SOURCE_DIR}/.cache/zip-tests"
     AM_COMMIT_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/commit-tests"
     AM_REPO_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/repo-tests"
+    AM_ASSET_SERVICE_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/cli-tests/api"
     AM_REPO_HELPER="$<TARGET_FILE:am_repository_crash_helper>"
     AM_COMMIT_HELPER="$<TARGET_FILE:am_commit_crash_helper>")
   if(WIN32)
@@ -91,6 +93,17 @@ if(AM_PYTHON_TESTS)
     message(WARNING "Python 3 not found: arch_check and schema_check are not registered")
   else()
     if(AM_WITH_CONTAINER)
+      add_test(NAME message_catalog_check
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/tools/message_catalog_check.py --root ${PROJECT_SOURCE_DIR})
+      set_tests_properties(message_catalog_check PROPERTIES LABELS "req:ADR-0032;req:ADR-0034")
+      if(TARGET am_cli)
+      foreach(_am_cli_case create_roundtrip create_refusals validate_verify inspect_minor extract json_examples development)
+        add_test(NAME cli_${_am_cli_case}
+          COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_asset_cli.py
+            --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/cli-tests --case ${_am_cli_case})
+        set_tests_properties(cli_${_am_cli_case} PROPERTIES LABELS "req:K-15;req:K-85;req:K-3;req:K-6")
+      endforeach()
+      endif()
       add_test(NAME zip_writer_interop
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/fixtures/check_written_zips.py
           ${PROJECT_SOURCE_DIR}/.cache/zip-tests/written --generator $<TARGET_FILE:am_unit_tests>)

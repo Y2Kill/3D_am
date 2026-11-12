@@ -64,6 +64,8 @@ def check_includes(root):
                 text = f.read_text(encoding="utf-8", errors="replace")
                 for m in INCLUDE_RE.finditer(text):
                     dep = m.group(1)
+                    if dep == "storage" and f.is_relative_to(root / "src" / "application" / "cli"):
+                        errors.append(f"{f.relative_to(root)}: CLI must use the application facade, not storage headers")
                     if dep not in ok:
                         errors.append(f"{f.relative_to(root)}: level '{level}' must not include am/{dep}/")
     sdk = root / "sdk" / "include"

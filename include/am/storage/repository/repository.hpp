@@ -46,6 +46,25 @@ class SemanticValidator {
 };
 // Test-only partial validator. Production defaults include domain semantics.
 Result<std::shared_ptr<const SemanticValidator>> repository_invariants();
+struct ContainerVerifyOptions {
+  VerifyLevel level = VerifyLevel::full;
+  std::vector<std::string> file_ids;
+  bool streams = true;
+  bool semantics = true; // inspect requests V1/V2 only.
+  std::uint64_t read_budget = 64ULL * 1024 * 1024 * 1024; // hypothesis, O-17
+  asset_zip::ZipLimits zip_limits;
+  manifest::CodecLimits codec_limits;
+  std::shared_ptr<const SemanticValidator> semantic_validator;
+};
+// Optional retained read view: consumers use the same open ZIP and job budget.
+struct ContainerContents {
+  std::optional<asset_zip::ZipArchive> archive;
+  std::optional<manifest::ManifestDocument> document;
+  std::string manifest_text;
+  std::shared_ptr<asset_zip::ReadBudget> budget;
+};
+Result<VerificationReport> verify_container(const std::filesystem::path&, const ContainerVerifyOptions& = {},
+                                           ContainerContents* contents = nullptr);
 enum class DriveKind { unknown, fixed, removable, ramdisk, remote, optical };
 Result<StorageCapabilities> classify_storage_capabilities(DriveKind drive, std::string_view filesystem);
 Result<StorageCapabilities> detect_storage_capabilities(const std::filesystem::path& root);

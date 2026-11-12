@@ -469,3 +469,21 @@ TEST(AssetRepository, RemainingLowerLayerMappingsAtCommitBoundary) {
     auto repo=value(AssetRepository::open(root,o));auto failed=repo.change(metadata(created));ASSERT_FALSE(failed);EXPECT_EQ(failed.error().message_id,c.mapped);EXPECT_EQ(failed.error().code,c.code);ASSERT_TRUE(failed.error().cause);EXPECT_EQ(failed.error().cause->message_id,c.original);EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before);clean(root);
   }
 }
+
+TEST(AssetRepository,VerifyContainerSharesReportsAndAcceptsArbitraryFilename) {
+  RecordProperty("req","K-15|K-85|K-3|K-6");
+  const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root,2);auto standalone=root/"arbitrary-name.zip";std::filesystem::copy_file(target(root,created.ref.asset_id),standalone);
+  auto report=value(verify_container(standalone));EXPECT_EQ(report.v3,CheckStatus::passed);EXPECT_TRUE(report.v3_complete);EXPECT_EQ(report.container_verification,ContainerVerification::full);
+  EXPECT_EQ(std::count(report.v3_rules.begin(),report.v3_rules.end(),"format_asset_identity"),0);EXPECT_EQ(std::count(report.v3_rules.begin(),report.v3_rules.end(),"history_operation_id"),0);
+  auto library=value(verification_json(value(repo.verify(created.ref))));auto external=value(verification_json(report));library.erase("v3_rules");external.erase("v3_rules");EXPECT_EQ(library,external);
+  ContainerVerifyOptions settings;settings.streams=false;ContainerContents view;auto validation=value(verify_container(standalone,settings,&view));EXPECT_TRUE(validation.v4.empty());EXPECT_EQ(validation.v3,CheckStatus::passed);ASSERT_TRUE(view.document);ASSERT_TRUE(view.archive);ASSERT_TRUE(view.budget);EXPECT_EQ(view.document->known()["asset"]["id"],created.ref.asset_id);
+}
+TEST(AssetRepository,VerifyContainerReturnsV1FailureAndZipPathDetail) {
+  RecordProperty("req","K-3|K-6|ADR-0035");
+  const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root);auto old=value(repo.snapshot(created.ref));const auto text=old.manifest_text();
+  fixture(repo,root,created.ref,text,{{"opaque.bin","data"}});auto all=bytes(target(root,created.ref.asset_id));std::string unsafe="../bad.bin",safe="opaque.bin";ASSERT_EQ(unsafe.size(),safe.size());unsigned changed=0;
+  for(std::size_t i=0;i+safe.size()<=all.size();++i)if(std::memcmp(all.data()+i,safe.data(),safe.size())==0){std::memcpy(all.data()+i,unsafe.data(),unsafe.size());++changed;}
+  EXPECT_EQ(changed,2u);auto path=root/"unsafe.zip";{std::ofstream out(path,std::ios::binary);out.write(reinterpret_cast<const char*>(all.data()),static_cast<std::streamsize>(all.size()));}
+  ContainerVerifyOptions settings;settings.streams=false;auto report=value(verify_container(path,settings));EXPECT_EQ(report.v3,CheckStatus::failed);auto found=std::find_if(report.v3_findings.begin(),report.v3_findings.end(),[](const auto& f){return f.rule=="zip_paths";});ASSERT_NE(found,report.v3_findings.end());EXPECT_TRUE(found->pointer.empty());EXPECT_EQ(found->detail,unsafe);
+  fixture(repo,root,created.ref,"{");report=value(verify_container(target(root,created.ref.asset_id),settings));EXPECT_EQ(report.v1,CheckStatus::failed);ASSERT_TRUE(report.error);EXPECT_EQ(report.v2,CheckStatus::not_performed);
+}
