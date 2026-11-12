@@ -96,6 +96,9 @@ int main(int argc, char** argv) {
     code = static_cast<int>(result->status);
     if (json) {
       auto j = result->value;
+      if(command!="validate"&&command!="verify"&&!result->diagnostics.empty()&&
+         (result->status==app::ExitCode::check_failed||result->status==app::ExitCode::operation_failed))
+        j["error"]=error_value(result->diagnostics.front());
       j["command"] = command;
       std::cout << j.dump() << '\n';
       print_diagnostics(*result, verbose);

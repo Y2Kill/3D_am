@@ -115,6 +115,16 @@ class AssetCli(unittest.TestCase):
             data = bytearray(target.read_bytes())
             data[offset] ^= 1
             target.write_bytes(data)
+        if mode == "unsupported-payload":
+            name = manifest["files"][0]["storage_path"].encode("utf-8")
+            with zipfile.ZipFile(target) as archive:
+                offset = archive.getinfo(manifest["files"][0]["storage_path"]).header_offset
+            data = bytearray(target.read_bytes())
+            struct.pack_into("<H", data, offset + 8, 12)
+            for position in range(len(data) - 46 - len(name) + 1):
+                if data[position:position + 4] == b"PK\x01\x02" and data[position + 46:position + 46 + len(name)] == name:
+                    struct.pack_into("<H", data, position + 10, 12)
+            target.write_bytes(data)
         if mode == "manifest-crc":
             with zipfile.ZipFile(target) as archive:
                 entry = archive.getinfo("manifest.json")
@@ -224,9 +234,17 @@ class AssetCli(unittest.TestCase):
         self.run_am("asset", "validate", mismatched)
         result = self.run_am("asset", "extract", mismatched, "-d", output, expected=1, json_output=True)
         self.assertEqual([f["id"] for f in result["failed"]], [manifest["files"][0]["id"]])
+        self.assertEqual(result["error"]["message_id"], "am.app.extract_hash_mismatch")
         self.assertFalse((output / manifest["files"][0]["storage_path"]).exists())
         self.assertTrue((output / manifest["files"][1]["storage_path"]).exists())
         self.assertFalse(list(output.rglob(".am-extract-*")))
+        unsupported, _ = self.fixture(target, "unsupported-payload")
+        destination = self.root / "unsupported"
+        result = self.run_am("asset", "extract", unsupported, "-d", destination, expected=4, json_output=True)
+        self.assertIn("code", result["error"])
+        self.assertIn("message_id", result["error"])
+        self.assertEqual(len(result["failed"]), 1)
+        self.assertFalse(list(destination.rglob(".am-extract-*")))
 
     def test_json_examples(self):
         target = self.create()
