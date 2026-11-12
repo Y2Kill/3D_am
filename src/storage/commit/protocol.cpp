@@ -204,12 +204,18 @@ Replacement replace_file(const std::shared_ptr<NativeFile>& source, const Path& 
   if (!identical(result, expected)) fail(Errc::io_error, "am.commit.replace_failed", "Moved file differs from verified SHA-256");
   return Replacement::move_file_ex;
 #else
-  (void)expected; (void)hooks;
+  (void)hooks;
+  // DrvFS cannot resolve the new name while an old-name descriptor remains open.
+  // POSIX rename uses a pathname, so check the published identity after closing it.
+  source->close();
   if (::rename(source->path.c_str(), target.c_str())) fail(Errc::io_error, "am.commit.replace_failed", "rename failed");
   moved = true; const auto directory = ::open(target.parent_path().c_str(), O_RDONLY | O_DIRECTORY);
   if (directory < 0) fail(Errc::io_error, "am.commit.replace_failed", "open directory failed");
   const auto status = ::fsync(directory); ::close(directory);
-  if (status) fail(Errc::io_error, "am.commit.replace_failed", "fsync directory failed"); return Replacement::rename;
+  if (status) fail(Errc::io_error, "am.commit.replace_failed", "fsync directory failed");
+  if (!identical(NativeFile::open(target), expected))
+    fail(Errc::io_error, "am.commit.replace_failed", "Renamed file differs from verified SHA-256");
+  return Replacement::rename;
 #endif
 }
 std::shared_ptr<db::CommitJournal> journal_for(const Path& root, std::shared_ptr<db::CommitJournal> value) { return value ? value : take(db::StateJournal::open(root)); }
