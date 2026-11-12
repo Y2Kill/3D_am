@@ -401,3 +401,194 @@ Total Test time (real) =  14.69 sec
 - Сверка описаний схемы с каталогом показала, что прочие отсылки к V3 уже покрыты: `storagePath` → `storage_paths`; `date` → `timestamps`; `asset` → `asset_times`; `volumes.index` → `unique_ids`; `default` → `field_default`; `authors[].id` → `claim_target_item`; `spdx` → `license_spdx`; `tags` → `tags_search_key` (отложено); `custom_values.unit` → `value_unit_required`; `claimTarget` → группа E; `compactedRangeSummary` → `history_compacted_summary`; `history` → `history_coverage`.
 - Если при реализации обнаружится ещё одно нормативное правило V3 вне каталога — по-прежнему остановка по п. 11.
 - Продолжать в ветке `codex/T-011`. Новый отчёт — разделом «## Отчёт исполнителя (после В-1)» в конце файла, первый отчёт не удалять. Диагностику `.cache/t011_contract_proof.*` в продукт не переносить; правило `byte_sizes_uint64` покрывается обычными модульными тестами.
+
+## Отчёт исполнителя (после В-1)
+
+**2026-11-12. Ветка:** `codex/T-011` (продолжена существующая ветка). Код и тесты — `b0bfc9f`; отчёт и передача в review — отдельный коммит `T-011: report V3 validation and hand off for review`. Первый отчёт и решение управляющего по В-1 сохранены.
+
+### Выполнение критериев приёмки
+
+1. Минимальная сборка: **PASS, 84 теста**, внешние зависимости не добавлены. Новые исходники V3 подключены только при `AM_WITH_CONTAINER`.
+2. Полная CLI и offline: **PASS, 262 тестов в каждом прогоне**. Все 189 прежних тестов сохранены. В двух проверках ожидаемый V3 изменён с `partial` на `passed`; в проверке вложений имя перенесённого правила обновлено на `storage_paths`. Фикстура удаления непрозрачных владельцев дополнена определением plugin-поля с областью `file`, её проверки сохранности не ослаблены.
+3. Реализованы 38 правил закрытого каталога, включая три дополнения решения В-1; для каждого есть проверка эталона и минимальная мутация с ровно одной находкой, точными `rule`, `severity`, `message_id`, `pointer`. Отдельно выполнены M-01…M-08, числовые границы, единицы, календарь, Unicode, SPDX, URI, история, непрозрачные plugin-фрагменты, лимит находок, параллельные вызовы, замер большого документа и сценарии репозитория.
+4. `arch_check`, `schema_check`, `sql_check` — **PASS** в min/CLI/offline. Domain не зависит от storage; новые публичные заголовки не содержат Windows/sqlite/zlib. До итоговой CLI выполнена чистая пересборка всех объектных файлов после изменения API отчёта; новых предупреждений MSVC/CMake нет.
+5. Таблица правил, реальные примеры JSON и замер приведены ниже. `tags_search_key` отложено по O-08; это не мешает `complete`. UCUM, физический default и единица claim представлены оговорёнными находками `unverifiable`, а не предположениями о формате.
+6. Изменены только разрешённые файлы. Слияние, push и переписывание истории не выполнялись. Статус строки T-011 в реестре — `review`.
+
+### Реализация
+
+`validate_semantics` читает известную часть `ManifestDocument`, не раскрывает binary handles кодека и не меняет DOM. Ошибки данных возвращаются находками; `Result` с ошибкой используется для внутренних ошибок/нехватки памяти. Индексы ссылок строятся до проверок и повторно используются; обход графов итеративный, история проверяется интервалами без развёртывания. Числа сравниваются по десятичным строкам, длина строк — по кодовым точкам. Лимит находок имеет пометку hypothesis; превышение даёт одну `limit_exceeded` и `complete = false` при обоих режимах продолжения.
+
+Собственные разборы используют [RFC 3986, §3 и Appendix A](https://www.rfc-editor.org/rfc/rfc3986.html) и [официальную грамматику SPDX Annex D](https://spdx.github.io/spdx-spec/v2.3.1/SPDX-license-expressions/); UTF-8 в URI принимается по явному решению управляющего. Список лицензий, сеть и новые зависимости не используются.
+
+Полный валидатор по умолчанию объединяет domain V3 с контекстом хранилища (идентичность, ZIP-пути, последняя операция). Класс `Invariants` больше не выполняет перенесённые правила манифеста и не дублирует их находки; ранние операционные проверки путей и коллизий сохранены. `repository_invariants()` оставлен частичным тестовым валидатором: один он фиксацию не разрешает. Перед заменой ZIP требуется `v3_complete` и отсутствие ошибок. `unverifiable` разрешает фиксацию с V3 `partial`; предупреждение — с `passed`. Неполный результат блокируется. Старый V3-invalid ассет можно читать, `verify` возвращает находки.
+
+Коды нижних слоёв переводятся по всей таблице п. 12.1, с сохранением `Errc` и исходной ошибки в `cause`. Проверены реальная блокировка помощником, подстановка нехватки места, повреждённый ZIP, неподдерживаемый метод потока и остальные строки таблицы на границе commit. Повтор переданного `op_id` отклоняется до preflight/journal/temp как для change, так и для create существующего ассета. Чистая функция классификации ФС разрешает full только для fixed NTFS; съёмные носители, RAM-диск и остальные сочетания остаются read-only по умолчанию. Все AddFiles-пути запроса проверяются до открытия первого источника, в том числе между несколькими AddFiles.
+
+### Правила → тесты
+
+Общий положительный тест для всех строк — `ManifestSemantics.ExamplePassesCompleteCatalog`. В каждой строке `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/<rule>` дополнительно повторяет положительную проверку, затем проверяет единственную ожидаемую находку.
+
+| Правило | Отрицательный тест |
+|---|---|
+| `unique_ids` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/unique_ids` |
+| `storage_paths` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/storage_paths` |
+| `history_operation_id_unique` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/history_operation_id_unique` |
+| `byte_sizes_uint64` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/byte_sizes_uint64` |
+| `historical_files` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/historical_files` |
+| `derived_from` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/derived_from` |
+| `input_source_refs` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/input_source_refs` |
+| `input_entry_object` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/input_entry_object` |
+| `input_entry_file` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/input_entry_file` |
+| `input_nesting` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/input_nesting` |
+| `group_refs` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/group_refs` |
+| `preview_refs` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/preview_refs` |
+| `field_options` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/field_options` |
+| `field_constraints` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/field_constraints` |
+| `field_default` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/field_default` |
+| `custom_value_field` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/custom_value_field` |
+| `value_representation` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/value_representation` |
+| `value_options` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/value_options` |
+| `value_file_ref` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/value_file_ref` |
+| `value_constraints` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/value_constraints` |
+| `value_unit_required` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/value_unit_required` |
+| `value_dependencies_scope` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/value_dependencies_scope` |
+| `x02_unit_conversion_open` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/x02_unit_conversion_open` |
+| `x02_physical_default_open` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/x02_physical_default_open` |
+| `claim_target_standard` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/claim_target_standard` |
+| `claim_target_item` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/claim_target_item` |
+| `claim_target_custom` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/claim_target_custom` |
+| `claim_value_type` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/claim_value_type` |
+| `claim_value_unit_unexpressible` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/claim_value_unit_unexpressible` |
+| `claim_evidence` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/claim_evidence` |
+| `license_file_ref` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/license_file_ref` |
+| `license_spdx` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/license_spdx` |
+| `urls` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/urls` |
+| `dependency_refs` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/dependency_refs` |
+| `timestamps` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/timestamps` |
+| `asset_times` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/asset_times` |
+| `history_coverage` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/history_coverage` |
+| `history_compacted_summary` | `Catalog/ManifestSemanticRule.MinimalMutationProducesOnlyExpectedFinding/history_compacted_summary` |
+| `tags_search_key` | Отложено по O-08; причина и отсутствие влияния на complete проверены в `ExamplePassesCompleteCatalog` |
+
+Дополнительные проверки: `M01SelectedFieldMustExist`, `M02SelectedClaimCannotCarryValueV2`, `M03AlternativeAndRejectedRequireValueV2`, `M04CustomClaimRequiresKnownField`, `M05ItemClaimRequiresOwnerAuthor`, `M06ReorderedAuthorsKeepTargets`, `M07KnownFieldTypeMustMatch`, `M08PluginFragmentsRemainOpaqueAndDocumentUnchanged`; `ExactNumericRepresentationsAndBounds`, `PhysicalUnitsDefaultsAndClaimConstraints`, `CalendarAndFractionalDatetimeBounds`, `UnicodeCodepointsEnumsAndDeprecatedOptions`, `SpdxGrammar`, `UriGrammarAndAllTypedLocations`, `Uint64BoundsInAllSixLocations`, `EveryTimestampLocationUsesCalendarValidation`, `UriControlsInvalidUtf8AndLocations`, `HistoryIntervalsAndSummariesWithoutExpansion`, `HistoricalReferencesAreValidAndHashesAreNotCompared`, `ScopedDependenciesAndClaimsResolveWithinOwner`, `SameInputObjectReferencesAndNestedExclusion`, `FindingLimitIsReportedAndCompletenessIsAccurate`.
+
+Проверки storage: `SemanticErrorsReturnFindingsAndProtectExistingBytes`, `UnverifiableSemanticsCanCommitAndRetainPartialReport`, `IncompleteValidatorCannotCommitAndWarningsDoNotBlock`, `PartialRepositoryInvariantsRemainTestOnly`, `OldInvalidV3RemainsReadableAndVerifyReturnsReport`, `DuplicateOperationIdFailsBeforePreflightJournalOrTemp`, `DriveClassifierGrantsFullOnlyForFixedNtfs`, `AllAddPathsCheckedBeforeAnySourceOpen`, `LowerLayerErrorMappingsPreserveCodeAndCause`, `UnsupportedPayloadMethodReturnsMappedReportError`, `RemainingLowerLayerMappingsAtCommitBoundary`. Прежние операции T-010 и 15 аварийных запусков помощника проверены повторно.
+
+### Команды и фактический результат
+
+Перед итоговой CLI: `.cache\t011_clean_build.cmd` → `cmake --build --preset win-cli --clean-first` (MSVC 14.44, 63 шага). Далее полные команды без фильтров:
+
+```text
+tools\build_min.cmd
+100% tests passed, 0 tests failed out of 84
+Total Test time (real) =  84.91 sec
+```
+
+```text
+tools\build_cli.cmd
+100% tests passed, 0 tests failed out of 262
+Total Test time (real) = 1024.48 sec
+```
+
+```text
+tools\build_cli.cmd --offline
+100% tests passed, 0 tests failed out of 262
+Total Test time (real) = 679.89 sec
+```
+
+Диагностика в `.cache/t011-final-{min,cli,offline}.log`, полный stdout CTest в `.cache/t011-final-{cli,offline}-tests.log`. Снимки SHA-256 кэшей до/после offline: 81 файл, изменённых файлов — 0. Новые зависимости не скачивались; offline выполнялся с `x-block-origin` и кэшами read-only.
+
+### Замер теста 14
+
+`ManifestSemantics.LargeGraphAndClaimsMeasurement`: 100 000 файлов, 10 000 групп цепочкой, 100 000 claims с разрешением author ID. Время измерено только вокруг вызова V3; пик памяти относится ко всему отдельному процессу теста, включая построение JSON и кодек. Это измерение, норматив не установлен.
+
+```text
+cli: SEMANTICS files=100000 groups=10000 claims=100000 seconds=28.9801 peak_working_set_bytes=2725978112 peak_commit_bytes=2789736448
+offline: SEMANTICS files=100000 groups=10000 claims=100000 seconds=20.1606 peak_working_set_bytes=2725720064 peak_commit_bytes=2789412864
+```
+
+### JSON отчётов
+
+Ниже реальные поля V3 из отчётов тестов (остальные поля опущены). Warning получен **только тестовой подстановкой** `ReportValidator` для проверки свода и сериализации; `test_warning` не добавлен в каталог V3. Предусмотренное каталогом предупреждение `tags_search_key` отложено по O-08.
+
+Error, фиксация отклонена:
+
+```json
+{
+  "v3": "failed",
+  "v3_complete": true,
+  "v3_findings": [
+    {
+      "rule": "license_spdx",
+      "severity": "error",
+      "pointer": "/asset/metadata/license/spdx",
+      "message_id": "am.manifest.license_spdx",
+      "detail": "Invalid SPDX expression"
+    }
+  ],
+  "v3_deferred_rules": [
+    {
+      "rule": "tags_search_key",
+      "reason": "O-08"
+    }
+  ],
+  "plugin_validation": "not_performed"
+}
+```
+
+Unverifiable, фиксация выполнена:
+
+```json
+{
+  "v3": "partial",
+  "v3_complete": true,
+  "v3_findings": [
+    {
+      "rule": "x02_unit_conversion_open",
+      "severity": "unverifiable",
+      "pointer": "/asset/metadata/custom_values/0/value",
+      "message_id": "am.manifest.x02_unit_conversion_open",
+      "detail": "Unit conversion engine is not selected"
+    }
+  ],
+  "v3_deferred_rules": [
+    {
+      "rule": "tags_search_key",
+      "reason": "O-08"
+    }
+  ],
+  "plugin_validation": "not_performed"
+}
+```
+
+Warning (тестовая подстановка), фиксация выполнена:
+
+```json
+{
+  "v3": "passed",
+  "v3_complete": true,
+  "v3_findings": [
+    {
+      "rule": "test_warning",
+      "severity": "warning",
+      "pointer": "/asset/metadata",
+      "message_id": "am.manifest.test_warning",
+      "detail": "Synthetic injected warning for report serialization"
+    }
+  ],
+  "v3_deferred_rules": [
+    {
+      "rule": "tags_search_key",
+      "reason": "O-08"
+    }
+  ],
+  "plugin_validation": "not_performed"
+}
+```
+
+### Отклонения и вопросы
+
+Отклонений от объёма и решений управляющего нет. Новых открытых вопросов не выявлено. O-08, UCUM/X-02, физический default, единица значения claim, словарь history operation/changes, X-01 для каталогов и грамматика generation.tool остаются в границах решений задачи; самостоятельно они не закрывались.
+
+Все изменения задачи закоммичены. Существовавший до начала работы неотслеживаемый `3D_am_open_questions_e2472e9.zip` не изменялся и в коммиты не включён.
