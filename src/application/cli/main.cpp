@@ -1,156 +1,233 @@
-// am — command line interface (ТЗ 3.1.5). Uses the same core API as the GUI.
-// M0 provides diagnostic verbs used by the spikes; real verbs (asset, library,
-// import, lookup, dedup, jobs) arrive with their milestones (docs/plan/roadmap.md)
-// and will move to CLI11 together with the vcpkg dependency set.
-
-#include <cstdio>
+#include "am/application/asset_service.hpp"
+#include "am/application/development.hpp"
+#include <CLI/CLI.hpp>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <string>
-#include <vector>
-
-#include "am/storage/archive/volume_detect.hpp"
-#include "am/foundation/paths.hpp"
-#include "am/foundation/signature.hpp"
-#include "am/foundation/text_encoding.hpp"
-#include "am/foundation/uuid.hpp"
-#include "am/foundation/version.hpp"
-#include "am/processing/formats/stl_probe.hpp"
-#include "am/services/import/exclusion_rules.hpp"
-
 #ifdef _WIN32
 #include <windows.h>
-#include <shellapi.h>  // CommandLineToArgvW (excluded by WIN32_LEAN_AND_MEAN)
 #endif
-
-namespace fs = std::filesystem;
-
 namespace {
-
-std::string u8(const fs::path& p) {
-  auto s = p.u8string();
-  return std::string(s.begin(), s.end());
+namespace app = am::application;
+using app::Json;
+std::filesystem::path path(const std::string& s) { return std::filesystem::path(std::u8string(s.begin(), s.end())); }
+void print_error(const am::Error& e, bool verbose) {
+  std::cerr << app::message_text(e) << '\n';
+  if (verbose) std::cerr << am::to_log_string(e) << '\n';
 }
-fs::path from_u8(const std::string& s) { return fs::path(std::u8string(s.begin(), s.end())); }
-
-int usage() {
-  std::puts(
-      "am " "— 3D/2D asset catalog (development build)\n"
-      "usage:\n"
-      "  am version\n"
-      "  am uuid [--v4] [count]                new UUIDv7 ids (or UUIDv4 with --v4)\n"
-      "  am probe <file>...                    content type (+ STL stats), read-only\n"
-      "  am volumes <dir>                      multi-volume candidates among files in <dir>\n"
-      "  am zip-path <root> <source-path>      asset-internal path mapping (ADR-0012)\n"
-      "  am fix-name <text>                    repair CP437 mojibake (\"ΓÇô\" -> \"–\")\n"
-      "  am exclude <entry-path> [file]        exclusion rule verdict for an entry\n");
-  return 2;
+Json error_value(const am::Error& e) {
+  auto j = app::error_json(e);
+  if (j) return std::move(j).value();
+  return Json{{"code", "am.resource_exhausted"}, {"message_id", "am.app.out_of_memory"}, {"detail", ""}};
 }
-
-int cmd_probe(const std::vector<std::string>& files) {
-  int rc = 0;
-  for (const auto& f : files) {
-    const fs::path p = am::paths::native(fs::absolute(from_u8(f)));
-    std::ifstream in(p, std::ios::binary);
-    if (!in) { std::cout << f << ": cannot open\n"; rc = 1; continue; }
-    std::vector<std::uint8_t> head(am::kSignatureProbeBytes * 4);
-    in.read(reinterpret_cast<char*>(head.data()), static_cast<std::streamsize>(head.size()));
-    head.resize(static_cast<std::size_t>(in.gcount()));
-    std::error_code ec;
-    const auto size = fs::file_size(p, ec);
-    const auto kind = am::detect_kind(head, ec ? std::nullopt : std::optional<std::uint64_t>(size));
-    std::cout << f << ": " << am::to_string(kind) << "  size=" << size << "\n";
-    if (kind == am::FileKind::stl_binary || kind == am::FileKind::stl_ascii) {
-      auto s = am::formats::probe_stl_file(f);
-      if (!s) { std::cout << "  stl error: " << am::to_log_string(s.error()) << "\n"; rc = 1; continue; }
-      std::printf("  triangles=%llu bbox=[%.3f %.3f %.3f] area=%.3f volume=%.3f degenerate=%llu header=\"%s\"\n",
-                  static_cast<unsigned long long>(s->triangles), s->max[0] - s->min[0], s->max[1] - s->min[1],
-                  s->max[2] - s->min[2], s->area, s->volume, static_cast<unsigned long long>(s->degenerate),
-                  s->header.c_str());
+void print_diagnostics(const app::AssetOutcome& result, bool verbose) {
+  const auto& report = result.value.contains("verification") ? result.value["verification"] : result.value;
+  if (report.contains("v3_findings"))
+    for (const auto& finding : report["v3_findings"]) {
+      std::cerr << finding["severity"].get<std::string>() << ' ' << finding["rule"].get<std::string>() << ' '
+                << finding["pointer"].get<std::string>() << ": "
+                << app::message_text(finding["message_id"].get_ref<const std::string&>()) << '\n';
+      if (verbose) std::cerr << finding["detail"].get<std::string>() << '\n';
     }
+  for (const auto& error : result.diagnostics) {
+    bool shown = false;
+    if (report.contains("v3_findings"))
+      for (const auto& finding : report["v3_findings"])
+        if (finding["message_id"] == error.message_id) shown = true;
+    if (!shown)
+      print_error(error, verbose);
+    else if (verbose)
+      std::cerr << am::to_log_string(error) << '\n';
   }
-  return rc;
 }
-
-int cmd_volumes(const std::string& dir) {
-  std::vector<std::string> names;
-  std::error_code ec;
-  for (const auto& e : fs::directory_iterator(am::paths::native(fs::absolute(from_u8(dir))), ec))
-    if (e.is_regular_file()) names.push_back(u8(e.path().filename()));
-  if (ec) { std::cout << "error: " << ec.message() << "\n"; return 1; }
-  auto r = am::archive::group_volumes(names);
-  for (const auto& v : r.volume_sets) {
-    std::cout << "[" << am::archive::to_string(v.scheme) << "] " << v.base
-              << (v.needs_header_confirmation ? "  (confirm by headers!)" : "") << "\n";
-    for (const auto& m : v.members) std::cout << "    " << m << "\n";
-    for (int gap : v.missing_indices) std::cout << "    MISSING #" << gap << "\n";
+void print_text(const std::string& command, const app::AssetOutcome& result, bool verbose) {
+  const auto& j = result.value;
+  if (command == "validate" || command == "verify") {
+    for (auto key : {"v1", "v2", "v3"})
+      if (j.contains(key)) std::cout << key << ": " << j[key].get<std::string>() << '\n';
+    if (j.contains("container_verification"))
+      std::cout << app::message_text("am.app.label.container_verification") << ": "
+                << j["container_verification"].get<std::string>() << '\n';
+  } else {
+    if (command == "inspect")
+      for (auto key : {"v1", "v2"}) std::cout << key << ": " << j.at(key).get<std::string>() << '\n';
+    for (auto key : {"asset_id", "revision", "format_support", "created_at", "modified_at", "title", "file_count",
+                     "historical_file_count", "input_count", "history_entry_count", "path"})
+      if (j.contains(key)) {
+        std::cout << app::message_text(std::string("am.app.label.") + key) << ": ";
+        if (j[key].is_string())
+          std::cout << j[key].get<std::string>();
+        else
+          std::cout << j[key];
+        std::cout << '\n';
+      }
+    if (j.contains("format"))
+      std::cout << app::message_text("am.app.label.format") << ": " << j["format"]["version"]["major"] << '.'
+                << j["format"]["version"]["minor"] << '\n';
+    if (j.contains("files"))
+      for (const auto& f : j["files"])
+        std::cout << f["id"].get<std::string>() << ' ' << f["path"].get<std::string>() << ' '
+                  << f["size_bytes"].get<std::string>() << ' ' << f["origin_kind"].get<std::string>() << '\n';
+    if (j.contains("extracted"))
+      for (const auto& f : j["extracted"])
+        std::cout << f["id"].get<std::string>() << ' ' << f["path"].get<std::string>() << '\n';
   }
-  std::cout << r.singles.size() << " single file(s)\n";
-  return 0;
+  print_diagnostics(result, verbose);
 }
-
 }  // namespace
-
 int main(int argc, char** argv) {
 #ifdef _WIN32
   SetConsoleOutputCP(CP_UTF8);
-  // Re-read arguments as UTF-16 so non-ASCII paths survive on Windows.
-  int wargc = 0;
-  LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
-  std::vector<std::string> args;
-  for (int i = 1; i < wargc; ++i) args.push_back(u8(fs::path(wargv[i])));
-  LocalFree(wargv);
-  (void)argc; (void)argv;
-#else
-  std::vector<std::string> args(argv + 1, argv + argc);
 #endif
-  if (args.empty()) return usage();
-  const std::string& verb = args[0];
-
-  if (verb == "version") {
-    std::cout << am::kAppName << " " << am::kAppVersion << " (asset format v" << am::kAssetFormatVersion << ")\n";
-    return 0;
-  }
-  if (verb == "uuid") {
-    const bool v4 = args.size() > 1 && args[1] == "--v4";
-    const std::size_t count_index = v4 ? 2 : 1;
-    int n = args.size() > count_index ? std::stoi(args[count_index]) : 1;
-    for (int i = 0; i < n; ++i) std::cout << (v4 ? am::Uuid::v4() : am::Uuid::v7()).to_string() << "\n";
-    return 0;
-  }
-  if (verb == "probe" && args.size() > 1) return cmd_probe({args.begin() + 1, args.end()});
-  if (verb == "volumes" && args.size() == 2) return cmd_volumes(args[1]);
-  if (verb == "zip-path" && args.size() == 3) {
-    auto mapper = am::paths::ZipPathMapper::create(args[1]);
-    if (!mapper) {
-      std::cout << "error: " << am::to_log_string(mapper.error()) << "\n";
-      return 1;
+  CLI::App cli{"3D/2D asset catalog"};
+  cli.require_subcommand(1);
+  cli.footer("Exit codes: 0 success, 1 failed check, 2 usage error, 3 partial check, 4 operation not completed.");
+  argv = cli.ensure_utf8(argv);
+  bool json = false, verbose = false;
+  std::string selected_command = "asset";
+  int code = 0;
+  auto render = [&](const std::string& command, am::Result<app::AssetOutcome> result) {
+    selected_command = command;
+    if (!result) {
+      code = static_cast<int>(app::error_exit_code(result.error()));
+      if (json) std::cout << Json{{"command", command}, {"error", error_value(result.error())}}.dump() << '\n';
+      print_error(result.error(), verbose);
+      return;
     }
-    auto r = mapper->map(args[2]);
-    std::cout << r.zip_path << "  [" << am::paths::to_string(r.reason) << "]\n";
-    return 0;
-  }
-  if (verb == "fix-name" && args.size() == 2) {
-    std::cout << am::text::repair_cp437_mojibake(args[1]) << "\n";
-    return 0;
-  }
-  if (verb == "exclude" && args.size() >= 2) {
-    am::import::EntryFacts facts;
-    const std::string norm = am::paths::normalize_source_path(args[1]);
-    facts.path = norm;
-    if (args.size() == 3) {
-      std::ifstream in(am::paths::native(fs::absolute(from_u8(args[2]))), std::ios::binary);
-      std::vector<std::uint8_t> head(am::kSignatureProbeBytes);
-      in.read(reinterpret_cast<char*>(head.data()), static_cast<std::streamsize>(head.size()));
-      head.resize(static_cast<std::size_t>(in.gcount()));
-      facts.kind = am::detect_kind(head);
+    code = static_cast<int>(result->status);
+    if (json) {
+      auto j = result->value;
+      j["command"] = command;
+      std::cout << j.dump() << '\n';
+      print_diagnostics(*result, verbose);
+    } else
+      print_text(command, *result, verbose);
+  };
+  auto presentation = [&](CLI::App* cmd) {
+    cmd->add_flag("--json", json, "Print one UTF-8 JSON object");
+    cmd->add_flag("--verbose", verbose, "Include technical details and causes");
+  };
+  auto* asset = cli.add_subcommand("asset", "Create, inspect, check, and extract a standalone asset ZIP");
+  asset->require_subcommand(1);
+  std::vector<std::string> inputs;
+  std::string output, title;
+  auto* create = asset->add_subcommand("create", "Create a new asset ZIP without replacing an existing file");
+  create->add_option("files", inputs, "Input files (directories are not supported)")->required()->expected(-1);
+  create->add_option("-o,--output", output, "New output ZIP")->required();
+  auto* title_option = create->add_option("--title", title, "Asset title");
+  presentation(create);
+  create->footer(
+      "Interrupted create may leave a .am-create-<uuid> directory beside the output. Automatic cleanup of interrupted "
+      "runs is not provided.");
+  create->callback([&] {
+    app::CreateAssetOptions o;
+    for (const auto& f : inputs) o.files.push_back(path(f));
+    o.output = path(output);
+    if (title_option->count()) o.title = title;
+    render("create", app::create_asset(o));
+  });
+  std::string inspect_path, validate_path, verify_path, extract_path, directory, level = "full";
+  std::vector<std::string> verify_files, extract_files;
+  bool manifest = false;
+  auto* inspect = asset->add_subcommand("inspect", "Read the manifest summary (V1/V2, no payload reads)");
+  inspect->add_option("zip", inspect_path)->required();
+  presentation(inspect);
+  inspect->callback([&] { render("inspect", app::inspect_asset(path(inspect_path))); });
+  auto* validate = asset->add_subcommand("validate", "Check V1-V3 without reading payload streams");
+  validate->add_option("zip", validate_path)->required();
+  presentation(validate);
+  validate->callback([&] { render("validate", app::validate_asset(path(validate_path))); });
+  auto* verify = asset->add_subcommand("verify", "Check V1-V4 (full by default)");
+  verify->add_option("zip", verify_path)->required();
+  verify->add_option("--level", level, "quick, selective, or full")
+      ->check(CLI::IsMember({"quick", "selective", "full"}));
+  verify->add_option("--file", verify_files, "FileID to verify (repeatable, selective level)")
+      ->expected(1)
+      ->take_all()
+      ->allow_extra_args(false);
+  presentation(verify);
+  verify->callback([&] {
+    if (level == "selective" && verify_files.empty())
+      throw CLI::ValidationError("--file", "Required with --level selective");
+    app::VerifyAssetOptions o;
+    o.file_ids = verify_files;
+    o.level = level == "quick"       ? app::VerificationLevel::quick
+              : level == "selective" ? app::VerificationLevel::selective
+                                     : app::VerificationLevel::full;
+    render("verify", app::verify_asset(path(verify_path), o));
+  });
+  auto* extract = asset->add_subcommand("extract", "Extract current files into a new or empty directory");
+  extract->add_option("zip", extract_path)->required();
+  extract->add_option("-d,--directory", directory, "New or empty destination")->required();
+  extract->add_option("--file", extract_files, "FileID to extract (repeatable)")
+      ->expected(1)
+      ->take_all()
+      ->allow_extra_args(false);
+  extract->add_flag("--manifest", manifest, "Also write the original manifest bytes");
+  presentation(extract);
+  extract->callback([&] {
+    app::ExtractAssetOptions o;
+    o.directory = path(directory);
+    o.file_ids = extract_files;
+    o.manifest = manifest;
+    render("extract", app::extract_asset(path(extract_path), o));
+  });
+  auto dev = [&](const std::string& verb, const std::vector<std::string>& args) {
+    auto r = app::development_command(verb, args);
+    if (!r) {
+      print_error(r.error(), true);
+      code = 4;
+    } else {
+      std::cout << r->text;
+      code = r->exit_code;
     }
-    auto m = am::import::ExclusionEngine{}.evaluate(facts);
-    const char* conf = m.confidence == am::import::Confidence::certain ? "certain"
-                     : m.confidence == am::import::Confidence::probable ? "probable" : "keep";
-    std::cout << conf << (m.rule_id.empty() ? "" : "  " + m.rule_id + " — " + m.explanation) << "\n";
-    return 0;
+  };
+  cli.add_subcommand("version", "Print the build version")->group("Development")->callback([&] { dev("version", {}); });
+  bool v4 = false;
+  int count = 1;
+  auto* uuid = cli.add_subcommand("uuid", "Generate UUIDv7 identifiers (UUIDv4 with --v4)")->group("Development");
+  uuid->add_flag("--v4", v4);
+  uuid->add_option("count", count)->check(CLI::NonNegativeNumber);
+  uuid->callback([&] {
+    dev("uuid",
+        v4 ? std::vector<std::string>{"--v4", std::to_string(count)} : std::vector<std::string>{std::to_string(count)});
+  });
+  std::vector<std::string> probes;
+  auto* probe = cli.add_subcommand("probe", "Probe content types and STL statistics")->group("Development");
+  probe->add_option("files", probes)->required()->expected(-1);
+  probe->callback([&] { dev("probe", probes); });
+  std::string vol;
+  auto* volumes = cli.add_subcommand("volumes", "List multi-volume candidates")->group("Development");
+  volumes->add_option("dir", vol)->required();
+  volumes->callback([&] { dev("volumes", {vol}); });
+  std::string root, source;
+  auto* zip_path = cli.add_subcommand("zip-path", "Map a container path")->group("Development");
+  zip_path->add_option("root", root)->required();
+  zip_path->add_option("source-path", source)->required();
+  zip_path->callback([&] { dev("zip-path", {root, source}); });
+  std::string bad_name;
+  auto* fix = cli.add_subcommand("fix-name", "Repair CP437 mojibake")->group("Development");
+  fix->add_option("text", bad_name)->required();
+  fix->callback([&] { dev("fix-name", {bad_name}); });
+  std::string excluded_path, excluded_file;
+  auto* exclude = cli.add_subcommand("exclude", "Show an exclusion rule verdict")->group("Development");
+  exclude->add_option("entry-path", excluded_path)->required();
+  auto* excluded = exclude->add_option("file", excluded_file);
+  exclude->callback([&] {
+    dev("exclude", excluded->count() ? std::vector<std::string>{excluded_path, excluded_file}
+                                     : std::vector<std::string>{excluded_path});
+  });
+  try {
+    cli.parse(argc, argv);
+    return code;
+  } catch (const CLI::ParseError& e) {
+    return cli.exit(e) == 0 ? 0 : 2;
+  } catch (const std::exception& e) {
+    auto error = am::Error::make(am::Errc::internal, "Command failed", e.what()).id("am.app.internal");
+    if (json) std::cout << Json{{"command", selected_command}, {"error", error_value(error)}}.dump() << '\n';
+    print_error(error, verbose);
+    return 4;
+  } catch (...) {
+    std::cerr << app::message_text("am.app.internal") << '\n';
+    return 4;
   }
-  return usage();
 }
