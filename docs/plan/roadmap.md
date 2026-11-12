@@ -130,7 +130,7 @@
 - `am_storage` (P0.3–P0.4):
   - `ZipReader` — задача [T-007](../tasks/T-007-zip-reader.md) — **выполнена** (2026-11-11; собственный разбор структуры + zlib, профиль 1.0, `probe_container`); `ZipWriter` — задача [T-008](../tasks/T-008-zip-writer.md) — **выполнена** (2026-11-11; собственный писатель: Stored/Deflate, ZIP64, raw-копирование с проверкой, перенос неизвестных записей и extra fields только по разрешению);
   - протокол фиксации (ADR-0006) с **полной проверкой перед фиксацией** (ADR-0035 п. 7) — задача [T-009](../tasks/T-009-commit-protocol.md) — **выполнена** (2026-11-12; журнал, замена, восстановление; проверка V1–V4 подключается в `AssetRepository`);
-  - **`AssetRepository`** — задача [T-010](../tasks/T-010-asset-repository.md) — **выполнено** (принята 2026-11-12, `970e332`; V1/V2/V4; полный V3 подключён T-011; пользовательские команды записи — T-012):
+  - **`AssetRepository`** — задача [T-010](../tasks/T-010-asset-repository.md) — **выполнено** (принята 2026-11-12, `970e332`; V1/V2/V4; полный V3 подключён T-011; CLI для отдельного ZIP — T-012):
     - единственный писатель;
     - `ChangeRequest` с `expected_rev`;
     - no-op без новой ревизии;
@@ -139,7 +139,7 @@
   - `Verifier`: режимы `quick|selective|full` поверх V1–V4;
   - проверка свободного места и `max_file_size` до и во время фиксации (ADR-0033), `LibraryMode`/`StorageCapabilities` (ADR-0031);
   - защита от архивных атак при чтении: пути, лимиты, специальные объекты (К-128).
-- CLI — задача [T-012](../tasks/T-012-cli-asset.md) (фасад `am_application`, каталог сообщений, коды выхода, `CHANGELOG.md`):
+- CLI — задача [T-012](../tasks/T-012-cli-asset.md) — **выполнено** (принята 2026-11-12, `f3abc5b`; фасад `am_application`, каталог сообщений, коды выхода, `CHANGELOG.md`):
   - `am asset create <files…> -o x.zip`;
   - `am asset inspect`;
   - `am asset validate`;
@@ -157,7 +157,7 @@
   - схема `schemas/expected.v1.schema.json`;
   - реестр `tests/real/registry.json`;
   - отчёт трассировки `tools/coverage/req_report.py` с тегами `RecordProperty("req", …)` и сверкой с `acceptance_matrix.md`.
-- Пользовательский `CHANGELOG.md` (английский) — с первым выпускаемым CLI (ADR-0034).
+- Пользовательский `CHANGELOG.md` (английский) — с первым выпускаемым CLI (ADR-0034); заведён в T-012.
 - Реестр версий [`versioning.md`](../specifications/versioning.md) обновляется вместе с форматами.
 
 ## M2 — Библиотека и индекс [P0.5; резервирование и перемещение — P1] → К-7, 17, 23, 24, 31, 65, 90, 91, 108, 112, 114, 118–120, 123, 126, 127
