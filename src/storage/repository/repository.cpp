@@ -275,7 +275,13 @@ Result<VerificationReport> verify_container(const Path& path,const ContainerVeri
   return guard<VerificationReport>([&] {
     ContainerContents contents;
     contents.budget=std::make_shared<asset_zip::ReadBudget>(supplied.read_budget);
-    contents.archive=take(asset_zip::ZipArchive::open(take(asset_zip::file_source(path,true)),supplied.zip_limits));
+    auto opened=asset_zip::ZipArchive::open(take(asset_zip::file_source(path,true)),supplied.zip_limits);
+    if(!opened && (opened.error().code==Errc::corrupt_data || opened.error().code==Errc::unsupported)) {
+      VerificationReport report;report.v1=CheckStatus::failed;report.error=opened.error();
+      if(output)*output=std::move(contents);
+      return report;
+    }
+    contents.archive=take(std::move(opened));
     auto parsed=guard<ManifestRead>([&]{return read_manifest(*contents.archive,supplied.codec_limits,*contents.budget);});
     if(!parsed){VerificationReport report;report.v1=CheckStatus::failed;report.error=parsed.error();if(output)*output=std::move(contents);return report;}
     contents.manifest_text=std::move(parsed->text);contents.document=std::move(parsed->document);

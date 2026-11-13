@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "name": "manifest.json",
+      "manifest": true
+    },
+    {
+      "name": "generated/café with spaces.bin",
+      "source": "payload.bin"
+    }
+  ]
+}

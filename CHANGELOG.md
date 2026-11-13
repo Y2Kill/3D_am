@@ -17,6 +17,8 @@ All notable user-visible changes are recorded here.
 
 ### Changed
 
+- Invalid or unsupported ZIP structure is reported as a failed V1 check with exit
+  code 1; missing inputs and I/O failures remain operation errors with exit code 4.
 - Assets with foreign ZIP extra fields or entry comments can now be changed;
   rewritten headers omit that metadata while preserving compressed payload bytes.
 - Manifest V3 checks physical defaults and claim units, required fields of base

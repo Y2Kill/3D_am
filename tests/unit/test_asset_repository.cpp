@@ -565,6 +565,27 @@ TEST(AssetRepository, RemainingLowerLayerMappingsAtCommitBoundary) {
   }
 }
 
+TEST(AssetRepository,VerifyContainerSeparatesInvalidZipFromOperationalErrors) {
+  RecordProperty("req","K-3|K-6|ADR-0035");
+  const auto root=fresh();
+  ContainerContents contents;
+  auto invalid=verify_container(source(root,"not a ZIP"),{},&contents);
+  ASSERT_TRUE(invalid);
+  EXPECT_EQ(invalid->v1,CheckStatus::failed);
+  EXPECT_EQ(invalid->v2,CheckStatus::not_performed);
+  ASSERT_TRUE(invalid->error);
+  EXPECT_EQ(invalid->error->code,Errc::corrupt_data);
+  EXPECT_FALSE(contents.archive);
+  EXPECT_FALSE(contents.document);
+  auto missing=verify_container(root/"missing.zip",{},&contents);
+  ASSERT_FALSE(missing);
+  auto missing_source=asset_zip::file_source(root/"missing.zip",true);
+  ASSERT_FALSE(missing_source);
+  EXPECT_EQ(missing.error().code,missing_source.error().code);
+  EXPECT_EQ(missing.error().root_cause().message_id,missing_source.error().root_cause().message_id);
+  EXPECT_FALSE(contents.archive);
+  EXPECT_FALSE(contents.document);
+}
 TEST(AssetRepository,VerifyContainerSharesReportsAndAcceptsArbitraryFilename) {
   RecordProperty("req","K-15|K-85|K-3|K-6");
   const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root,2);auto standalone=root/"arbitrary-name.zip";std::filesystem::copy_file(target(root,created.ref.asset_id),standalone);

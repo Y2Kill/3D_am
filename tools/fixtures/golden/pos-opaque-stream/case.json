@@ -1,0 +1,16 @@
+{
+  "entries": [
+    {
+      "name": "manifest.json",
+      "manifest": true
+    },
+    {
+      "name": "generated/payload.bin",
+      "source": "payload.bin"
+    },
+    {
+      "name": "generated/opaque.bin",
+      "source": "opaque.bin"
+    }
+  ]
+}

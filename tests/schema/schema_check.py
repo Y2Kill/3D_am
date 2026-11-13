@@ -505,4 +505,19 @@ except Exception:  # metadata may be absent for --pylib installs without dist-in
     _jsonschema_version = "unknown"
 print(f"jsonschema {_jsonschema_version}; {total - failures}/{total} cases match "
       f"(S-cases: {len(CASES)}, legacy negative: {len(LEGACY_NEGATIVE)})")
+from pathlib import Path
+
+expected_schema = json.loads((Path(args.root) / "schemas/expected.v1.schema.json").read_text(encoding="utf-8"))
+jsonschema.Draft202012Validator.check_schema(expected_schema)
+expected_validator = jsonschema.Draft202012Validator(expected_schema)
+expected_files = sorted((Path(args.root) / "tests/fixtures/golden").glob("*/expected.json"))
+if not expected_files:
+    print("FAIL expected schema: no golden cases found")
+    failures += 1
+for path in expected_files:
+    errors = sorted(expected_validator.iter_errors(json.loads(path.read_text(encoding="utf-8"))), key=lambda e: str(e.path))
+    for error in errors:
+        print(f"FAIL expected schema: {path.parent.name}: {error.json_path}: {error.message}")
+    failures += len(errors)
+print(f"expected schema: {len(expected_files)} golden expectations checked")
 sys.exit(1 if failures else 0)

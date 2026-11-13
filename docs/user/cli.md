@@ -115,10 +115,10 @@ and exit code 2.
 | Code | Meaning |
 |---|---|
 | 0 | Success; all performed checks passed. |
-| 1 | A check failed, an extracted hash/size did not match, or post-create verification failed. |
+| 1 | A check failed (including invalid or unsupported ZIP structure at V1), an extracted hash/size did not match, or post-create verification failed. |
 | 2 | Usage error: unknown command, invalid arguments, or selective verification without FileIDs. |
 | 3 | Partial check: no failed level, but incomplete stream verification, unverifiable semantics, or a newer minor format. |
-| 4 | The operation could not be completed: unreadable input, ZIP open failure, lock, insufficient space, existing output, or invalid extraction destination. |
+| 4 | The operation could not be completed: missing or unreadable input, I/O or resource failure, lock, insufficient space, existing output, or invalid extraction destination. |
 
 ## Development commands
 
