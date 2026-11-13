@@ -124,7 +124,10 @@ TEST(AssetRepository, TypedOperationsHistoryRawCopyAndRemoval) {
   const auto semantic = value(manifest::validate_semantics(now.manifest()));
   EXPECT_TRUE(semantic.complete); EXPECT_TRUE(semantic.findings.empty());
   EXPECT_EQ(current.verification.v3,CheckStatus::passed);
-  for(const auto& key:now.manifest().opaque_keys())if(key.value.starts_with("/history/"+current.op_id+"/"))std::cout<<"REPLACE_HISTORY_OWNER "<<key.value<<'\n';
+  std::vector<std::string> replacement_owners;
+  for (const auto& key : now.manifest().opaque_keys())
+    if (key.value.starts_with("/history/"+current.op_id+"/")) replacement_owners.push_back(key.value);
+  EXPECT_EQ(replacement_owners,(std::vector<std::string>{"/history/"+current.op_id+"/details"}));
   auto edited = value(repo.change(metadata(current,"title",Json("After replacement"))));
   EXPECT_EQ(edited.revision,5u);
   auto edited_snapshot = value(repo.snapshot(created.ref));

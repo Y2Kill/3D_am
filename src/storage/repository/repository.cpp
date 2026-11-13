@@ -540,7 +540,14 @@ void rebase(const AssetSnapshot& snap, const ChangeRequest& request, const manif
 }
 void append_history(manifest::ManifestDocument& doc, const std::string& op_id, const std::string& kind, const std::string& now,
                     const std::string& app, Json changes, const Json& details) {
-  for (auto& change : changes) for (auto i = change.begin(); i != change.end(); ++i) if (i.key() != "kind" && i.key() != "target") i.value() = take(doc.make_opaque(i.value().dump()));
+  for (auto& change : changes) {
+    const auto change_kind = string(change,"kind");
+    for (auto i = change.begin(); i != change.end(); ++i) {
+      const bool named_string = i.value().is_string() && manifest::is_named_change_field(change_kind,i.key());
+      if (i.key() != "kind" && i.key() != "target" && !named_string)
+        i.value() = take(doc.make_opaque(i.value().dump()));
+    }
+  }
   auto& j = doc.known(); j["history"]["entries"].push_back({{"revision",j["asset"]["revision"]},{"operation_id",op_id},{"timestamp",now},{"operation",kind},{"tool",{{"application_version",app}}},{"changes",std::move(changes)},{"details",take(doc.make_opaque(details.dump()))}});
 }
 manifest::IntendedChanges intended_changes(const std::vector<manifest::OpaqueKey>& before, const manifest::ManifestDocument& after,

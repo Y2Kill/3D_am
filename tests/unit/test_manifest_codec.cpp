@@ -48,6 +48,19 @@ std::string with_history_changes(std::string_view changes) {
   text.replace(start, std::string("\"RAW_HISTORY_CHANGES\"").size(), changes);
   return text;
 }
+TEST(ManifestCodec, NamedChangeFieldsMatchOnlyBaseVocabularyPairs) {
+  RecordProperty("req", "ADR-0039");
+  EXPECT_TRUE(is_named_change_field("file_replace", "old_sha256"));
+  EXPECT_TRUE(is_named_change_field("file_replace", "new_sha256"));
+  EXPECT_TRUE(is_named_change_field("file_move", "old_path"));
+  for (const auto& pair : std::vector<std::pair<std::string_view, std::string_view>>{
+           {"file_replace", "old_path"}, {"file_move", "old_sha256"}, {"file_move", "new_sha256"},
+           {"plugin:org.test.history:replace", "old_sha256"}, {"preview_set_primary", "old_path"},
+           {"file_add", "old_sha256"}, {"", "old_path"}, {"file_replace", ""}, {"", ""},
+           {"file_replace", "kind"}, {"file_move", "target"}}) {
+    EXPECT_FALSE(is_named_change_field(pair.first, pair.second)) << pair.first << " " << pair.second;
+  }
+}
 TEST(ManifestCodec, BaseHistoryStringsAreKnownWhileOtherExtrasKeepExactLexemes) {
   RecordProperty("req", "ADR-0039");
   const auto hash = std::string(64, 'a');

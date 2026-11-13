@@ -715,13 +715,15 @@ class Validator {
           if (!kinds.contains(kind)) continue;
           expect(change.j().contains("target"), "change_kind_fields", change.pointer + "/target",
                  "Base change kind requires a target");
-          if (kind == "file_replace")
-            for (const auto* name : {"old_sha256", "new_sha256"})
+          for (const auto* name : {"old_sha256", "new_sha256", "old_path"}) {
+            if (!is_named_change_field(kind, name)) continue;
+            if (std::string_view(name) == "old_path")
+              expect(paths::check_container_path(str(change.j(), name)).ok(), "change_kind_fields",
+                     change.pointer + "/" + name, "File move requires a safe nonempty original path");
+            else
               expect(sha256(str(change.j(), name)), "change_kind_fields", change.pointer + "/" + name,
                      "File replacement requires a lowercase SHA-256 hex digest");
-          if (kind == "file_move")
-            expect(paths::check_container_path(str(change.j(), "old_path")).ok(), "change_kind_fields",
-                   change.pointer + "/old_path", "File move requires a safe nonempty original path");
+          }
         }
     });
     stage({"asset_times"}, [&] {
