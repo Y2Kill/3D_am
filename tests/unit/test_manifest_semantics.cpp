@@ -51,6 +51,23 @@ void custom_claim(J& j, J v) {
   claim(j)["relation"] = "alternative";
   claim(j)["value"] = std::move(v);
 }
+void expects(const J& j, std::string_view rule, std::string_view pointer,
+             FindingSeverity severity = FindingSeverity::error) {
+  auto report = validate(j);
+  ASSERT_TRUE(report.complete);
+  ASSERT_EQ(report.findings.size(), 1u);
+  EXPECT_EQ(report.findings[0].rule, rule);
+  EXPECT_EQ(report.findings[0].pointer, pointer);
+  EXPECT_EQ(report.findings[0].severity, severity);
+  EXPECT_EQ(report.findings[0].message_id, "am.manifest." + std::string(rule));
+}
+void directory(J& j, std::string path, std::string result = "excluded") {
+  J entry{{"id", unknown}, {"object_id", j["inputs"][0]["objects"][0]["id"]},
+          {"entry_kind", "directory"}, {"path", std::move(path)}, {"result", result}};
+  if (result == "excluded") entry["exclusion"] = {{"rule", "test"}, {"by", "user"}};
+  if (result == "included_renamed") entry["rename_reason"] = "collision";
+  j["inputs"][0]["entries"].push_back(std::move(entry));
+}
 void compact(J& j) {
   j["asset"]["revision"] = 5;
   j["history"]["entries"][1]["revision"] = 5;
@@ -118,14 +135,6 @@ const std::vector<RuleCase> cases{
        cv(j)["unit"] = "mm";
      },
      FindingSeverity::unverifiable},
-    {"x02_physical_default_open", "/field_definitions/0/default",
-     [](J& j) {
-       auto& f = field(j, "integer", "1");
-       f["dimension"] = "length";
-       f["default"] = "2";
-       cv(j)["unit"] = "mm";
-     },
-     FindingSeverity::unverifiable},
     {"claim_target_standard", "/asset/metadata/claims/0/target/field",
      [](J& j) { claim(j)["target"] = {{"kind", "standard"}, {"field", "description"}}; }},
     {"claim_target_item", "/asset/metadata/claims/0/target/item_id",
@@ -133,13 +142,22 @@ const std::vector<RuleCase> cases{
     {"claim_target_custom", "/asset/metadata/claims/0/target/field_id",
      [](J& j) { claim(j)["target"] = {{"kind", "custom"}, {"field_id", "user:" + std::string(unknown)}}; }},
     {"claim_value_type", "/asset/metadata/claims/0/value", [](J& j) { custom_claim(j, "not a boolean"); }},
-    {"claim_value_unit_unexpressible", "/asset/metadata/claims/0/value",
+    {"claim_value_unit", "/asset/metadata/claims/0/unit",
      [](J& j) {
        field(j, "decimal", "1")["dimension"] = "length";
        cv(j)["unit"] = "mm";
        custom_claim(j, "2");
-     },
-     FindingSeverity::unverifiable},
+     }},
+    {"change_kind_fields", "/history/entries/0/changes/0/new_sha256",
+     [](J& j) {
+       j["history"]["entries"][0]["changes"][0] =
+           {{"kind", "file_replace"}, {"target", "file"}, {"old_sha256", std::string(64, 'a')}};
+     }},
+    {"input_directory_consistency", "/inputs/0/entries/0/result",
+     [](J& j) {
+       directory(j, "excluded");
+       j["inputs"][0]["entries"][0]["path"] = "excluded/file";
+     }},
     {"claim_evidence", "/asset/metadata/claims/0/evidence/0/source_entry_id",
      [](J& j) { claim(j)["evidence"][0]["source_entry_id"] = unknown; }},
     {"license_file_ref", "/asset/metadata/license/file_ref",
@@ -163,7 +181,7 @@ const std::vector<RuleCase> cases{
      }}};
 class ManifestSemanticRule : public ::testing::TestWithParam<RuleCase> {};
 TEST_P(ManifestSemanticRule, MinimalMutationProducesOnlyExpectedFinding) {
-  RecordProperty("req", "ADR-0035|R-05|O-01|O-02|O-12|O-14|O-18|X-01|X-02");
+  RecordProperty("req", "ADR-0035|ADR-0039|R-05|O-01|O-02|O-12|O-14|O-18|X-01|X-02");
   auto j = example();
   const auto& c = GetParam();
   passes(j);
@@ -185,7 +203,7 @@ TEST_P(ManifestSemanticRule, MinimalMutationProducesOnlyExpectedFinding) {
 INSTANTIATE_TEST_SUITE_P(Catalog, ManifestSemanticRule, ::testing::ValuesIn(cases),
                          [](const auto& info) { return info.param.rule; });
 TEST(ManifestSemantics, ExamplePassesCompleteCatalog) {
-  RecordProperty("req", "ADR-0035|ADR-0037|ADR-0038");
+  RecordProperty("req", "ADR-0035|ADR-0037|ADR-0038|ADR-0039");
   std::ifstream in(std::filesystem::path(AM_MANIFEST_SCHEMA).parent_path() / "examples/manifest-1.0.example.json");
   std::string bytes{std::istreambuf_iterator<char>(in), {}};
   auto doc = am::manifest::parse_manifest(bytes);
@@ -194,7 +212,11 @@ TEST(ManifestSemantics, ExamplePassesCompleteCatalog) {
   ASSERT_TRUE(result.ok());
   for (const auto& f : result.value().findings) ADD_FAILURE() << f.rule << " " << f.pointer << " " << f.detail;
   EXPECT_TRUE(result.value().complete);
-  EXPECT_EQ(result.value().checked_rules.size(), 38);
+  EXPECT_EQ(result.value().checked_rules.size(), 39);
+  EXPECT_EQ(std::count(result.value().checked_rules.begin(), result.value().checked_rules.end(),
+                       "x02_physical_default_open"), 0);
+  EXPECT_EQ(std::count(result.value().checked_rules.begin(), result.value().checked_rules.end(),
+                       "claim_value_unit_unexpressible"), 0);
   EXPECT_TRUE(result.value().has_plugin_data);
   ASSERT_EQ(result.value().deferred_rules.size(), 1u);
   EXPECT_EQ(result.value().deferred_rules[0].rule, "tags_search_key");
@@ -331,6 +353,179 @@ TEST(ManifestSemantics, PhysicalUnitsDefaultsAndClaimConstraints) {
   passes(j);  // Alternatives do not obey current bounds.
   f["default"] = "100";
   EXPECT_EQ(validate(j).findings[0].rule, "field_default");
+}
+TEST(ManifestSemantics, PhysicalDefaultRequiresTypedValueAndExplicitUnit) {
+  RecordProperty("req", "ADR-0039");
+  for (const auto* type : {"integer", "decimal"}) {
+    for (const auto* dimension : {"length", "unknown_dimension", "plugin:org.test.units:custom"}) {
+      SCOPED_TRACE(std::string(type) + " " + dimension);
+      auto j = example();
+      auto& f = field(j, type, "1");
+      f["dimension"] = dimension;
+      cv(j)["unit"] = "mm";
+      f["default"] = {{"value", "2"}, {"unit", "mm"}};
+      passes(j);
+      f["default"] = "2";
+      expects(j, "field_default", "/field_definitions/0/default");
+      f["default"] = {{"value", "2"}};
+      expects(j, "field_default", "/field_definitions/0/default/unit");
+      f["default"] = {{"value", "1e2"}, {"unit", "mm"}};
+      expects(j, "field_default", "/field_definitions/0/default/value");
+    }
+    for (bool dimensionless : {false, true}) {
+      auto j = example();
+      auto& f = field(j, type, "1");
+      if (dimensionless) f["dimension"] = "dimensionless";
+      f["default"] = "2";
+      passes(j);
+      f["default"] = {{"value", "2"}, {"unit", "mm"}};
+      expects(j, "field_default", "/field_definitions/0/default");
+    }
+  }
+}
+TEST(ManifestSemantics, PhysicalDefaultSharesExactBoundsAndConversionFindings) {
+  RecordProperty("req", "ADR-0039");
+  auto j = example();
+  auto& f = field(j, "decimal", "1");
+  f["dimension"] = "length";
+  f["constraints"] = {{"minimum", {{"value", "1.000"}, {"unit", "mm"}}}};
+  cv(j)["unit"] = "mm";
+  f["default"] = {{"value", "1"}, {"unit", "mm"}};
+  passes(j);
+  f["default"]["value"] = "0.999999999999999999999999999999999999";
+  expects(j, "field_default", "/field_definitions/0/default/value");
+  for (const auto* unit : {"cm", "MM", "unknown unit"}) {
+    f["default"] = {{"value", "1"}, {"unit", unit}};
+    expects(j, "x02_unit_conversion_open", "/field_definitions/0/default/value", FindingSeverity::unverifiable);
+    EXPECT_EQ(validate(j).findings[0].detail, "Unit conversion is not implemented");
+  }
+  f["constraints"]["minimum"]["unit"] = "unknown unit";
+  cv(j)["unit"] = "unknown unit";
+  passes(j);  // Equal codes use the same exact comparison without conversion.
+}
+TEST(ManifestSemantics, PhysicalClaimUnitsShareValueConstraints) {
+  RecordProperty("req", "ADR-0039");
+  auto j = example();
+  auto& f = field(j, "decimal", "1");
+  f["dimension"] = "length";
+  f["unit"] = "mm";
+  f["constraints"] = {{"maximum", {{"value", "2"}, {"unit", "mm"}}}};
+  cv(j)["unit"] = "mm";
+  custom_claim(j, "2.000");
+  claim(j)["unit"] = "mm";
+  passes(j);
+  claim(j).erase("unit");
+  expects(j, "claim_value_unit", "/asset/metadata/claims/0/unit");
+  claim(j)["unit"] = "";
+  expects(j, "claim_value_unit", "/asset/metadata/claims/0/unit");
+  claim(j)["unit"] = "mm";
+  claim(j)["value"] = "2.000000000000000000000000000001";
+  expects(j, "value_constraints", "/asset/metadata/claims/0/value");
+  claim(j)["value"] = "2";
+  claim(j)["unit"] = "MM";
+  expects(j, "x02_unit_conversion_open", "/asset/metadata/claims/0/value", FindingSeverity::unverifiable);
+  claim(j)["unit"] = "mm";
+  claim(j)["relation"] = "rejected";
+  claim(j)["review"] = {{"at", "2026-11-12T00:00:00Z"}};
+  passes(j);
+  claim(j).erase("value");
+  claim(j)["relation"] = "supports_selected";
+  expects(j, "claim_value_unit", "/asset/metadata/claims/0/unit");
+}
+TEST(ManifestSemantics, UnitsAreForbiddenForOtherClaimsAndSources) {
+  RecordProperty("req", "ADR-0039");
+  auto j = example();
+  claim(j)["unit"] = "mm";  // standard_item
+  expects(j, "claim_value_unit", "/asset/metadata/claims/0/unit");
+  claim(j)["target"] = {{"kind", "standard"}, {"field", "title"}};
+  expects(j, "claim_value_unit", "/asset/metadata/claims/0/unit");
+  claim(j)["relation"] = "alternative";
+  claim(j)["value"] = "Another title";
+  expects(j, "claim_value_unit", "/asset/metadata/claims/0/unit");
+  for (bool dimensionless : {false, true}) {
+    j = example();
+    auto& f = field(j, "integer", "1");
+    if (dimensionless) f["dimension"] = "dimensionless";
+    custom_claim(j, "2");
+    claim(j)["unit"] = "mm";
+    expects(j, "claim_value_unit", "/asset/metadata/claims/0/unit");
+  }
+  j = example();
+  j["origin"]["sources"][0]["claims"][0]["unit"] = "mm";
+  expects(j, "claim_value_unit", "/origin/sources/0/claims/0/unit");
+}
+TEST(ManifestSemantics, BaseChangesRequireTypedFieldsAndUnknownKindsStayOpaque) {
+  RecordProperty("req", "ADR-0039");
+  auto j = example();
+  auto& c = j["history"]["entries"][0]["changes"][0];
+  c = {{"kind", "file_replace"}, {"target", "file"}, {"old_sha256", std::string(64, 'a')},
+       {"new_sha256", std::string(64, '0')}, {"note", J{{"arbitrary", true}}}};
+  passes(j);
+  c.erase("new_sha256");
+  expects(j, "change_kind_fields", "/history/entries/0/changes/0/new_sha256");
+  for (const auto& invalid : std::vector<J>{std::string(63, 'a'), std::string(65, 'a'), std::string(64, 'A'),
+                                          std::string(64, 'g'), 123, nullptr, J::object(), J::array()}) {
+    c["new_sha256"] = invalid;
+    expects(j, "change_kind_fields", "/history/entries/0/changes/0/new_sha256");
+  }
+  c = {{"kind", "file_move"}, {"target", "file"}, {"old_path", "content/old/file.bin"}};
+  passes(j);
+  c.erase("old_path");
+  expects(j, "change_kind_fields", "/history/entries/0/changes/0/old_path");
+  for (const auto& invalid : std::vector<J>{"", "../escape", "C:/absolute", "folder\\file", 123, nullptr}) {
+    c["old_path"] = invalid;
+    expects(j, "change_kind_fields", "/history/entries/0/changes/0/old_path");
+  }
+  for (const auto* kind : {"file_add", "file_remove", "metadata_set", "group_add", "group_remove", "group_change",
+                           "preview_add", "preview_remove", "claim_add", "claim_remove", "claim_change",
+                           "field_definition_change", "extension_change"}) {
+    c = {{"kind", kind}, {"target", "owner"}, {"opaque", J{{"future", true}}}};
+    passes(j);
+    c.erase("target");
+    expects(j, "change_kind_fields", "/history/entries/0/changes/0/target");
+  }
+  for (const auto* kind : {"preview_set_primary", "plugin:org.test.history:replace"}) {
+    c = {{"kind", kind}, {"old_sha256", J{{"unknown", true}}}, {"old_path", 123}};
+    passes(j);
+  }
+}
+TEST(ManifestSemantics, ExcludedDirectoriesPropagateByLiteralSlashPrefixesWithinInput) {
+  RecordProperty("req", "ADR-0039");
+  auto j = example();
+  auto& entries = j["inputs"][0]["entries"];
+  entries[0]["path"] = "dir/a";
+  entries[2]["path"] = "Dir/b";
+  directory(j, "dir/");
+  expects(j, "input_directory_consistency", "/inputs/0/entries/0/result");
+  entries[0]["result"] = "excluded";
+  entries[0].erase("file_id");
+  entries[0]["exclusion"] = {{"rule", "test"}, {"by", "user"}};
+  passes(j);
+  entries[0]["path"] = "dir/deep/a";
+  passes(j);
+  entries[0]["result"] = "not_processed";
+  expects(j, "input_directory_consistency", "/inputs/0/entries/0/result");
+  entries[0]["path"] = "directory/a";
+  passes(j);  // A component boundary is required; case is not normalized.
+  auto other = j["inputs"][0];
+  other["id"] = "00000000-0000-4000-8000-000000000002";
+  other["objects"][0]["id"] = "00000000-0000-4000-8000-000000000003";
+  other["entries"] = J::array({entries[2]});
+  other["entries"][0]["id"] = "00000000-0000-4000-8000-000000000004";
+  other["entries"][0]["object_id"] = other["objects"][0]["id"];
+  other["entries"][0]["path"] = "dir/in-other-input";
+  j["inputs"].push_back(std::move(other));
+  passes(j);
+}
+TEST(ManifestSemantics, RenamedDirectoryWithoutDestinationMappingIsNotGuessed) {
+  RecordProperty("req", "ADR-0039");
+  auto j = example();
+  directory(j, "original", "included_renamed");
+  j["inputs"][0]["entries"][0]["path"] = "original/child";
+  j["inputs"][0]["entries"][2]["path"] = "original/renamed-child";
+  // There is no stored destination for the directory; these file paths cannot
+  // distinguish its destination from the independently renamed child paths.
+  passes(j);
 }
 TEST(ManifestSemantics, CalendarAndFractionalDatetimeBounds) {
   RecordProperty("req", "O-14|X-02");
@@ -469,7 +664,7 @@ TEST(ManifestSemantics, FindingLimitIsReportedAndCompletenessIsAccurate) {
     EXPECT_FALSE(r.complete);
     ASSERT_EQ(r.findings.size(), 2u);
     EXPECT_EQ(r.findings.back().rule, "limit_exceeded");
-    EXPECT_EQ(r.checked_rules.size() == 38, !stop);
+    EXPECT_EQ(r.checked_rules.size() == 39, !stop);
   }
 }
 TEST(ManifestSemantics, Uint64BoundsInAllSixLocations) {

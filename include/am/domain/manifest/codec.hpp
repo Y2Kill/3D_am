@@ -26,6 +26,8 @@ struct IntendedChanges {
   std::set<OpaqueKey> owners;
 };
 class SchemaValidator;
+// Base history fields named by SPEC 11. Callers also check for a JSON string.
+bool is_named_change_field(std::string_view kind, std::string_view key) noexcept;
 class ManifestDocument {
  public:
   ManifestDocument(ManifestDocument&&) noexcept;

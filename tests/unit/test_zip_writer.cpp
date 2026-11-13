@@ -166,6 +166,49 @@ TEST(ZipWriter, RawExtraAndCommentPolicyIsExplicitAndRecoverable) {
   auto result = open(snapshot(*sink)); ASSERT_TRUE(result); const auto& entry = result->entries()[0];
   EXPECT_EQ(entry.local_extra, e.local_extra); EXPECT_EQ(entry.central_extra, e.central_extra); EXPECT_EQ(entry.comment, archive->entries()[0].comment); EXPECT_FALSE(entry.has_zip64);
 }
+TEST(ZipWriter, AssetRewritePreservesOnlyUnchangedRawExtraFields) {
+  RecordProperty("req", "ADR-0039");
+  const Bytes timestamp{std::byte{0x55}, std::byte{0x54}, std::byte{1}, std::byte{0}, std::byte{0}};
+  zip_test::Entry manifest;
+  manifest.name = "manifest.json";
+  manifest.data = R"({"asset":{"revision":1}})";
+  manifest.local_extra = timestamp;
+  manifest.central_extra = timestamp;
+  auto unchanged = manifest;
+  unchanged.name = "content/unchanged";
+  unchanged.data = "unchanged bytes";
+  unchanged.method = 8;
+  auto changed = unchanged;
+  changed.name = "content/changed";
+  auto archive = open(zip_test::build({manifest, unchanged, changed}).bytes);
+  ASSERT_TRUE(archive);
+  auto sink = std::make_shared<MemorySink>();
+  auto writer = ZipWriter::create(sink);
+  ASSERT_TRUE(writer);
+  ASSERT_TRUE(add(*writer, "manifest.json", R"({"asset":{"revision":2}})", CompressionMethod::stored));
+  RawCopyOptions carry;
+  carry.carry_extra_ids = {0x5455};
+  ReadBudget budget(100);
+  ASSERT_TRUE(writer->copy_raw(*archive, 1, budget, carry));
+  ASSERT_TRUE(add(*writer, "content/changed", "replacement bytes"));
+  ASSERT_TRUE(add(*writer, "content/new", "new bytes"));
+  auto summary = writer->finish();
+  ASSERT_TRUE(summary);
+  verify(*sink, *summary);
+  auto rewritten = open(snapshot(*sink));
+  ASSERT_TRUE(rewritten);
+  ASSERT_EQ(rewritten->entries().size(), 4u);
+  EXPECT_EQ(raw(*rewritten, 1), raw(*archive, 1));
+  EXPECT_EQ(rewritten->entries()[1].local_extra, timestamp);
+  EXPECT_EQ(rewritten->entries()[1].central_extra, timestamp);
+  for (const auto i : {0u, 2u, 3u}) {
+    SCOPED_TRACE(i);
+    // Small newly formed headers need no ZIP64 field and carry no foreign fields.
+    EXPECT_TRUE(rewritten->entries()[i].local_extra.empty());
+    EXPECT_TRUE(rewritten->entries()[i].central_extra.empty());
+    EXPECT_FALSE(rewritten->entries()[i].has_zip64);
+  }
+}
 namespace {
 class ChangingSource final : public RandomAccessSource {
  public:
