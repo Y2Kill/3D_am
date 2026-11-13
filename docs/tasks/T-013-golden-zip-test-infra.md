@@ -1,6 +1,6 @@
 # T-013. Golden ZIP формата 1.0 и инфраструктура тестов M1
 
-**Статус:** review (В-3: CLI принимает symlink-записи ZIP) · **Веха:** M1 · **Основание:** ADR-0035 п. 1 (формат публикуется при схеме, валидаторе V1–V4 и golden ZIP; ТЗ §19.6.4), ADR-0029 пп. 4–5 (`expected.json`, генератор, трассировка), `docs/plan/roadmap.md` M1 «Golden ZIP» и «Инфраструктура тестов», замечание 1 приёмки T-012
+**Статус:** ready (В-3 решён управляющим 2026-11-13, продолжать в `codex/T-013`) · **Веха:** M1 · **Основание:** ADR-0035 п. 1 (формат публикуется при схеме, валидаторе V1–V4 и golden ZIP; ТЗ §19.6.4), ADR-0029 пп. 4–5 (`expected.json`, генератор, трассировка), `docs/plan/roadmap.md` M1 «Golden ZIP» и «Инфраструктура тестов», замечание 1 приёмки T-012
 
 ## Цель
 
@@ -349,3 +349,17 @@ python -I tests/golden/run_golden.py --am build/win-cli/bin/am.exe --corpus test
 Причина: ZIP-механизм распознаёт `EntryKind::symlink` (`src/storage/asset_zip/reader.cpp`, разбор Unix mode), но сам допускает чтение такого потока. `check_normative_profile` выдаёт `am.zip.profile.entry_kind` для любого не-regular типа (`src/storage/asset_zip/profile.cpp:24`); в standalone-пути этот профиль не вызывается. Репозиторный `Invariants::validate` добавляет `zip_paths`, но проверяет только длину/безопасность имени и коллизии, без `EntryInfo::kind`. Поэтому все V1–V3 проходят и V4 считает зарегистрированный symlink проверенным по SHA.
 
 Ожидания не изменены на фактические 0/3; исправление проверки безопасности не включено в единственное разрешённое изменение `repository.cpp` по п. 6 (классификация ошибки открытия ZIP). Нужно решение управляющего о месте и объёме исправления, уровне и стабильном ID находки. Нельзя без отдельного решения просто подключить весь `check_normative_profile`: он также выдаёт нарушение для data descriptor, тогда как положительный descriptor обязателен в этом корпусе. После решения продолжать в той же ветке `codex/T-013` с сохранённой частичной реализацией.
+
+### Решение управляющего по В-3 (2026-11-13)
+
+**Дефект подтверждён; исправление входит в задачу.** Ожидания `neg-zip-symlink` и `neg-zip-opaque-symlink` верны (SPEC §1 п. 3: нарушения безопасности не получают исключений из-за `opaque`); принимать запись-ссылку как проверенный поток нельзя — при извлечении это путь к записи за пределы целевого каталога. SPEC §1 п. 3 дополнен явной фразой (коммит управляющего в этой ветке).
+
+1. **Место.** Новое правило репозитория `zip_entry_kind` в `Invariants::validate` (`src/storage/repository/repository.cpp`), рядом с `zip_paths` и тем же способом: `checked_rules` получает `zip_entry_kind`; для каждой записи ZIP с `EntryInfo::kind` ≠ `EntryKind::regular` — находка уровня `error`, `rule = zip_entry_kind`, `message_id = am.manifest.zip_entry_kind`, `pointer` пуст, `detail` — диагностическое имя записи (как у `zip_paths`) и тип (`symlink`/`special`/`directory`). Проверка применяется ко всем записям — зарегистрированным, opaque и `manifest.json`.
+2. **Почему не `check_normative_profile`.** Профиль — правила **писателя** (запрещает data descriptor, требует UTF-8-флаг), а читатель обязан принимать descriptor (положительный корпус). Из профиля берётся только смысл одной проверки, сам профиль в standalone-путь не подключается.
+3. **Каталожные записи** (`kind = directory`, имя с `/` на конце) уже дают `zip_paths` (пустой компонент пути); вторая находка `zip_entry_kind` для них допустима и не считается дублем. Отдельный случай корпуса не требуется.
+4. **Уровень и код.** Находка V3 `error` → `v3 = failed`, `validate`/`verify` — код 1. Для зарегистрированного symlink V4 по-прежнему может дать `verified_sha256` — шаблоны `expected.json` проверяют V3 и код выхода, состояние V4 у этих случаев не фиксировать.
+5. **Каталог сообщений.** `resources/messages/en.toml`: `"am.manifest.zip_entry_kind" = "A ZIP entry is not a regular file (for example, a symbolic link)."`
+6. **Тест.** Новый тест в `tests/unit/test_asset_repository.cpp`: ZIP через `zip_test::build` с записью Unix symlink — зарегистрированной и незарегистрированной; `verify_container` → `v3 = failed`, находка `zip_entry_kind` с именем записи в `detail`. `RecordProperty("req", "K-6|ADR-0037")`.
+7. **Влияние на `AssetRepository`.** `Invariants` общий: ассет с такой записью перестанет открываться на изменение — это намеренно (контейнер с нарушением безопасности не изменяется). Прочие ожидания существующих тестов не меняются; если какой-то упадёт — остановиться и сообщить.
+
+**Расширение раздела «Файлы» для В-3:** `src/storage/repository/repository.cpp` — только `Invariants::validate` (правило `zip_entry_kind`) сверх п. 6; `resources/messages/en.toml` — одна строка; `tests/unit/test_asset_repository.cpp` — один новый тест; `CHANGELOG.md` — строка про отказ для записей-ссылок. Продолжать в той же ветке `codex/T-013`, статус — `in_progress`.
