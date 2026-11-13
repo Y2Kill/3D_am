@@ -153,7 +153,22 @@ def write_report(report, output):
     (output / "req_report.md").write_text(markdown(report), encoding="utf-8")
 
 
+def discover(build):
+    # CTest's inventory mode also opens LastTest.log. Run only after CTest and
+    # preserve its diagnostics, including when inventory discovery fails.
+    log = build / "Testing/Temporary/LastTest.log"
+    previous = log.read_bytes() if log.exists() else None
+    try:
+        result = subprocess.run(["ctest", "--test-dir", str(build.resolve()), "--show-only=json-v1"],
+                                check=True, capture_output=True, encoding="utf-8", timeout=PROCESS_TIMEOUT_SECONDS)
+        return json.loads(result.stdout)
+    finally:
+        if previous is not None:
+            log.write_bytes(previous)
+
+
 def selftest(root):
+    from unittest.mock import patch
     fixture = root / "tests/tools/fixtures/req-report"
     for value in ("K-1", "NFR-14.7.1", "SC-1", "ADR-0038", "O-01", "R-09", "R-09.8", "X-02", "MF-01",
                   "S-01", "M-01", "N-01", "D-01", "U-01"):
@@ -180,6 +195,30 @@ def selftest(root):
     cache = root / ".cache"
     cache.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="req-report-selftest-", dir=cache) as directory:
+        log = Path(directory) / "Testing/Temporary/LastTest.log"
+        log.parent.mkdir(parents=True)
+        evidence = b"CTest diagnostics\n"
+        log.write_bytes(evidence)
+
+        def fake_inventory(*args, **kwargs):
+            log.write_bytes(b"Inventory replaced the log\n")
+            return subprocess.CompletedProcess(args[0], 0, stdout=json.dumps(metadata))
+
+        with patch.object(subprocess, "run", side_effect=fake_inventory):
+            assert discover(Path(directory)) == metadata
+        assert log.read_bytes() == evidence
+
+        def failed_inventory(*args, **kwargs):
+            log.write_bytes(b"Failed inventory replaced the log\n")
+            raise subprocess.CalledProcessError(1, args[0])
+
+        with patch.object(subprocess, "run", side_effect=failed_inventory):
+            try:
+                discover(Path(directory))
+                raise AssertionError("Expected inventory failure")
+            except subprocess.CalledProcessError:
+                pass
+        assert log.read_bytes() == evidence
         write_report(report, Path(directory))
         assert json.loads((Path(directory) / "req_report.json").read_text(encoding="utf-8")) == report
         assert "Случаи приёмки" in (Path(directory) / "req_report.md").read_text(encoding="utf-8")
@@ -218,9 +257,7 @@ def main():
         if args.ctest_json:
             metadata = json.loads(args.ctest_json.read_text(encoding="utf-8"))
         else:
-            result = subprocess.run(["ctest", "--test-dir", str(args.build_dir.resolve()), "--show-only=json-v1"],
-                                    check=True, capture_output=True, encoding="utf-8", timeout=PROCESS_TIMEOUT_SECONDS)
-            metadata = json.loads(result.stdout)
+            metadata = discover(args.build_dir)
         report = collect(metadata, args.junit or args.build_dir / "junit.xml", list((args.build_dir / "gtest-xml").rglob("*.xml")),
                          args.matrix.read_text(encoding="utf-8"))
         write_report(report, args.build_dir)
