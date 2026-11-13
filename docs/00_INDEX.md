@@ -15,7 +15,7 @@
 6. **Архитектура:**
    - [architecture/overview.md](architecture/overview.md) — уровни ТЗ §12, каталоги, потоки данных
    - [developer/README.md](developer/README.md) — сборка, правила уровней, тесты
-   - [specifications/container_manifest_v1.md](specifications/container_manifest_v1.md) — формат ZIP-ассета 1.0 по ТЗ §19.4, рабочая формализация (+ [черновик JSON Schema](../schemas/manifest-1.0.draft.schema.json), [пример](../schemas/examples/manifest-1.0.example.json))
+   - [specifications/container_manifest_v1.md](specifications/container_manifest_v1.md) — формат ZIP-ассета 1.0 по ТЗ §19.4, рабочая формализация (+ [нормативная JSON Schema 1.0](../schemas/manifest-1.0.schema.json), опубликована 2026-11-14; [golden ZIP](../tests/fixtures/golden/README.md), [пример](../schemas/examples/manifest-1.0.example.json))
    - [specifications/versioning.md](specifications/versioning.md) — реестр версий девяти форматов и интерфейсов (ТЗ §14.7.1)
    - [architecture/import_pipeline.md](architecture/import_pipeline.md) — конвейер импорта, профиль Telegram, сигнатуры
    - [architecture/jobs_and_sessions.md](architecture/jobs_and_sessions.md) — задания, протокол фиксации ZIP, сессии редактирования

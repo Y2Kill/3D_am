@@ -52,7 +52,7 @@ if(AM_WITH_CONTAINER)
   target_link_libraries(am_unit_tests PRIVATE ZLIB::ZLIB)
   target_compile_definitions(am_unit_tests PRIVATE
     AM_MANIFEST_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/manifest/s7"
-    AM_MANIFEST_SCHEMA="${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.draft.schema.json"
+    AM_MANIFEST_SCHEMA="${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.schema.json"
     AM_ZIP_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/zip"
     AM_ZIP_CACHE="${PROJECT_SOURCE_DIR}/.cache/zip-tests"
     AM_COMMIT_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/commit-tests"
@@ -71,7 +71,7 @@ am_apply_defaults(am_unit_tests)
 gtest_discover_tests(am_unit_tests DISCOVERY_MODE PRE_TEST
   XML_OUTPUT_DIR "${PROJECT_BINARY_DIR}/gtest-xml")
 
-# Python-based checks: architecture (ADR-0024) and the draft manifest schema (ADR-0036 item 8).
+# Python-based checks: architecture (ADR-0024) and the manifest schema 1.0 (ADR-0036 item 8, ADR-0039).
 # - Default: a missing jsonschema module makes schema_check FAIL (not a silent SKIP).
 # - Local opt-out: -DAM_ALLOW_PYTHON_SKIP=ON turns that into an explicit SKIP.
 # - CI: -DAM_REQUIRE_PYTHON_TESTS=ON makes a missing interpreter or module a configure error.

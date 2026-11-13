@@ -1,8 +1,8 @@
-"""Draft manifest 1.0 schema check (ADR-0036 item 8).
+"""Manifest 1.0 schema check (ADR-0036 item 8, ADR-0039).
 
 Runs the handoff cases S-01..S-17 and the earlier negative cases against
-schemas/manifest-1.0.draft.schema.json with a Draft 2020-12 validator.
-The schema is a DRAFT: passing these checks does not publish format 1.0.
+schemas/manifest-1.0.schema.json with a Draft 2020-12 validator.
+Format 1.0 is published (2026-11-14); these cases guard the published schema.
 
 Exit codes: 0 all cases match, 1 mismatch, 2 setup error (including a missing
 jsonschema module), 77 skipped — only with --allow-skip, i.e. when Python checks
@@ -34,7 +34,7 @@ except ImportError:
           "(pip install jsonschema, or configure with -DAM_ALLOW_PYTHON_SKIP=ON locally)")
     sys.exit(2)
 
-schema_path = f"{args.root}/schemas/manifest-1.0.draft.schema.json"
+schema_path = f"{args.root}/schemas/manifest-1.0.schema.json"
 example_path = f"{args.root}/schemas/examples/manifest-1.0.example.json"
 schema = json.load(open(schema_path, encoding="utf-8"))
 example = json.load(open(example_path, encoding="utf-8"))

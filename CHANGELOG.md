@@ -6,6 +6,10 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Asset format 1.0 is published: normative schema
+  [`schemas/manifest-1.0.schema.json`](schemas/manifest-1.0.schema.json) and the
+  golden ZIP corpus in [`tests/fixtures/golden/`](tests/fixtures/golden/README.md).
+  Published 1.0 cases are immutable; future changes require a new format version.
 - `am asset create` for new standalone asset ZIPs, with optional titles and safe
   publication without overwriting an existing file.
 - `am asset inspect`, `validate`, and `verify` for manifest summaries and V1–V4

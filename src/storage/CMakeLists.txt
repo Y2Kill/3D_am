@@ -12,8 +12,8 @@ if(AM_WITH_CONTAINER)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/schemas/sql/state.sql")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/state_schema.hpp"
     CONTENT "#pragma once\ninline constexpr const char state_schema_sql[] = R\"AMSQL(${AM_STATE_SCHEMA_SQL})AMSQL\";\n")
-  file(READ "${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.draft.schema.json" AM_REPOSITORY_SCHEMA)
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.draft.schema.json")
+  file(READ "${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.schema.json" AM_REPOSITORY_SCHEMA)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/schemas/manifest-1.0.schema.json")
   string(REPLACE "\n" "\n)AMSCHEMA\",\nR\"AMSCHEMA(" AM_REPOSITORY_SCHEMA_PARTS "${AM_REPOSITORY_SCHEMA}")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/manifest_schema.hpp"
     CONTENT "#pragma once\ninline constexpr const char* manifest_schema_parts[] = {R\"AMSCHEMA(${AM_REPOSITORY_SCHEMA_PARTS})AMSCHEMA\"};\n")

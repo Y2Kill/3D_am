@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
   bool success = false;
   try {
     fs::create_directories(out);
-    const auto schema = s7::read_file(fs::path(S7_ROOT) / "schemas/manifest-1.0.draft.schema.json");
+    const auto schema = s7::read_file(fs::path(S7_ROOT) / "schemas/manifest-1.0.schema.json");
     if (!component.empty()) {
       const auto text = s7::read_file(input);
       if (component == "reference" || component == "reference_maps") {

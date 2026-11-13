@@ -82,7 +82,7 @@ def validate_small(directory):
         type_checker=jsonschema.Draft202012Validator.TYPE_CHECKER.redefine(
             'number', lambda checker, value: isinstance(value, Raw) or
             (isinstance(value, (int, float)) and not isinstance(value, bool))))
-    schema = json.loads((ROOT / 'schemas/manifest-1.0.draft.schema.json').read_text(encoding='utf-8'))
+    schema = json.loads((ROOT / 'schemas/manifest-1.0.schema.json').read_text(encoding='utf-8'))
     jsonschema.Draft202012Validator.check_schema(schema)
     validator = validator_type(schema)
     count = 0

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128:manifest:1.0:draft",
-  "title": "AM asset manifest 1.0 (release candidate, not yet published)",
+  "$id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128:manifest:1.0",
+  "title": "AM asset manifest 1.0",
   "description": "Release candidate for TZ v1.8 section 19.4 (MF-01..MF-12), ADR-0035, ADR-0036 (R-01..R-09), ADR-0037 (decision log v0.11, 108 principles) and ADR-0039 (report 08: X-01, X-02, O-14, O-15, O-18 sub-details closed). Not a published schema: format 1.0 is published only together with a positive S7, the V1-V4 validator and golden ZIP fixtures. Semantic rules (reference resolution, history coverage, units) are V3 and not expressible here.",
   "type": "object",
   "required": ["format", "asset", "files", "history"],
