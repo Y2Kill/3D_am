@@ -17,6 +17,8 @@ All notable user-visible changes are recorded here.
 
 ### Changed
 
+- Assets with foreign ZIP extra fields or entry comments can now be changed;
+  rewritten headers omit that metadata while preserving compressed payload bytes.
 - Manifest V3 checks physical defaults and claim units, required fields of base
   history changes, and excluded input directories according to ADR-0039.
 - Command parsing uses CLI11, including UTF-8 Windows arguments. Existing

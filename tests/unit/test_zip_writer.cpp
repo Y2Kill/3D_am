@@ -166,6 +166,119 @@ TEST(ZipWriter, RawExtraAndCommentPolicyIsExplicitAndRecoverable) {
   auto result = open(snapshot(*sink)); ASSERT_TRUE(result); const auto& entry = result->entries()[0];
   EXPECT_EQ(entry.local_extra, e.local_extra); EXPECT_EQ(entry.central_extra, e.central_extra); EXPECT_EQ(entry.comment, archive->entries()[0].comment); EXPECT_FALSE(entry.has_zip64);
 }
+TEST(ZipWriter, RawCopyDropsForeignExtraAndCommentWithoutChangingPayload) {
+  RecordProperty("req", "ADR-0039");
+  for (const auto method : {std::uint16_t{0}, std::uint16_t{8}}) {
+    SCOPED_TRACE(method);
+    zip_test::Entry e;
+    e.method = method;
+    e.zip64 = true;
+    e.data = "payload with foreign metadata";
+    e.local_extra = {std::byte{0x55}, std::byte{0x54}, std::byte{1}, std::byte{0}, std::byte{0}};
+    e.central_extra = e.local_extra;
+    e.comment = std::string("c\0\xff", 3);
+    auto archive = open(zip_test::build({e}).bytes);
+    ASSERT_TRUE(archive);
+    ASSERT_TRUE(archive->entries()[0].has_zip64);
+    ReadBudget original_budget(e.data.size());
+    auto original = archive->verify_entry(0, original_budget, true);
+    ASSERT_TRUE(original);
+    auto sink = std::make_shared<MemorySink>();
+    auto writer = ZipWriter::create(sink);
+    ASSERT_TRUE(writer);
+    RawCopyOptions options;
+    options.drop_unlisted = true;
+    ReadBudget budget(e.data.size());
+    auto copied = writer->copy_raw(*archive, 0, budget, options);
+    ASSERT_TRUE(copied);
+    EXPECT_EQ(copied->dropped_extra_fields, 1u);
+    EXPECT_TRUE(copied->dropped_comment);
+    EXPECT_EQ(copied->sha256, original->sha256);
+    EXPECT_EQ(budget.remaining(), 0u);
+    auto fresh = add(*writer, "content/new", "new data");
+    ASSERT_TRUE(fresh);
+    EXPECT_EQ(fresh->dropped_extra_fields, 0u);
+    EXPECT_FALSE(fresh->dropped_comment);
+    auto summary = writer->finish();
+    ASSERT_TRUE(summary);
+    ASSERT_EQ(summary->entries.size(), 2u);
+    EXPECT_EQ(summary->entries[0].dropped_extra_fields, 1u);
+    EXPECT_TRUE(summary->entries[0].dropped_comment);
+    verify(*sink, *summary);
+    auto rewritten = open(snapshot(*sink));
+    ASSERT_TRUE(rewritten);
+    const auto& out = rewritten->entries()[0];
+    EXPECT_TRUE(out.local_extra.empty());
+    EXPECT_TRUE(out.central_extra.empty());
+    EXPECT_TRUE(out.comment.empty());
+    EXPECT_FALSE(out.has_zip64);
+    EXPECT_EQ(raw(*rewritten, 0), raw(*archive, 0));
+    EXPECT_EQ(out.crc32, archive->entries()[0].crc32);
+    EXPECT_EQ(out.compressed_size, archive->entries()[0].compressed_size);
+    EXPECT_EQ(out.uncompressed_size, archive->entries()[0].uncompressed_size);
+  }
+}
+TEST(ZipWriter, RawCopyExplicitCarryOverridesDropPolicy) {
+  RecordProperty("req", "ADR-0039");
+  const Bytes timestamp{std::byte{0x55}, std::byte{0x54}, std::byte{1}, std::byte{0}, std::byte{0}};
+  const Bytes identity{std::byte{0x75}, std::byte{0x78}, std::byte{1}, std::byte{0}, std::byte{7}};
+  zip_test::Entry e;
+  e.local_extra = timestamp;
+  e.central_extra = timestamp;
+  e.central_extra.insert(e.central_extra.end(), identity.begin(), identity.end());
+  e.comment = "explicit comment";
+  auto archive = open(zip_test::build({e}).bytes);
+  ASSERT_TRUE(archive);
+  for (bool carry_comment : {false, true}) {
+    auto sink = std::make_shared<MemorySink>();
+    auto writer = ZipWriter::create(sink);
+    ASSERT_TRUE(writer);
+    RawCopyOptions options;
+    options.drop_unlisted = true;
+    options.carry_extra_ids = {0x5455};
+    options.carry_comment = carry_comment;
+    ReadBudget budget(e.data.size());
+    auto copied = writer->copy_raw(*archive, 0, budget, options);
+    ASSERT_TRUE(copied);
+    EXPECT_EQ(copied->dropped_extra_fields, 1u);  // Only the unlisted 0x7875 ID.
+    EXPECT_EQ(copied->dropped_comment, !carry_comment);
+    auto summary = writer->finish();
+    ASSERT_TRUE(summary);
+    verify(*sink, *summary);
+    auto rewritten = open(snapshot(*sink));
+    ASSERT_TRUE(rewritten);
+    EXPECT_EQ(rewritten->entries()[0].local_extra, timestamp);
+    EXPECT_EQ(rewritten->entries()[0].central_extra, timestamp);
+    EXPECT_EQ(rewritten->entries()[0].comment, carry_comment ? archive->entries()[0].comment : Bytes{});
+    EXPECT_EQ(raw(*rewritten, 0), raw(*archive, 0));
+  }
+}
+TEST(ZipWriter, RawCopyCountsDistinctDroppedExtraIdsAcrossHeaders) {
+  RecordProperty("req", "ADR-0039");
+  zip_test::Entry e;
+  e.local_extra = {std::byte{0x55}, std::byte{0x54}, std::byte{1}, std::byte{0}, std::byte{0}};
+  e.central_extra = e.local_extra;
+  e.central_extra.insert(e.central_extra.end(), {std::byte{0x75}, std::byte{0x78}, std::byte{0}, std::byte{0}});
+  auto archive = open(zip_test::build({e}).bytes);
+  ASSERT_TRUE(archive);
+  auto sink = std::make_shared<MemorySink>();
+  auto writer = ZipWriter::create(sink);
+  ASSERT_TRUE(writer);
+  RawCopyOptions options;
+  options.drop_unlisted = true;
+  ReadBudget budget(e.data.size());
+  auto copied = writer->copy_raw(*archive, 0, budget, options);
+  ASSERT_TRUE(copied);
+  EXPECT_EQ(copied->dropped_extra_fields, 2u);
+  EXPECT_FALSE(copied->dropped_comment);
+  auto summary = writer->finish();
+  ASSERT_TRUE(summary);
+  verify(*sink, *summary);
+  auto rewritten = open(snapshot(*sink));
+  ASSERT_TRUE(rewritten);
+  EXPECT_TRUE(rewritten->entries()[0].local_extra.empty());
+  EXPECT_TRUE(rewritten->entries()[0].central_extra.empty());
+}
 TEST(ZipWriter, AssetRewritePreservesOnlyUnchangedRawExtraFields) {
   RecordProperty("req", "ADR-0039");
   const Bytes timestamp{std::byte{0x55}, std::byte{0x54}, std::byte{1}, std::byte{0}, std::byte{0}};

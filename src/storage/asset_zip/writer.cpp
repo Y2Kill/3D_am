@@ -44,7 +44,8 @@ std::vector<std::byte> central_record(const Record& r) {
   put(out, 42, std::min(e.local_offset, max32), 4);
   append_name(out, e.name); append_bytes(out, extra); append_bytes(out, r.comment); return out;
 }
-std::vector<std::byte> carried_extra(Bytes source, const RawCopyOptions& options) {
+std::vector<std::byte> carried_extra(Bytes source, const RawCopyOptions& options,
+                                    std::set<std::uint16_t>& dropped_ids) {
   std::vector<std::byte> out;
   for (std::size_t p = 0; p < source.size();) {
     const auto start = p;
@@ -52,8 +53,13 @@ std::vector<std::byte> carried_extra(Bytes source, const RawCopyOptions& options
     if (size > source.size() - p) fail("Invalid source extra length");
     p += size;
     if (id == 1) continue;
-    if (std::find(options.carry_extra_ids.begin(), options.carry_extra_ids.end(), id) == options.carry_extra_ids.end())
+    if (std::find(options.carry_extra_ids.begin(), options.carry_extra_ids.end(), id) == options.carry_extra_ids.end()) {
+      if (options.drop_unlisted) {
+        dropped_ids.insert(id);
+        continue;
+      }
       write_fail(Errc::unsupported, "am.zip.write.extra_not_preserved", "Extra id=" + std::to_string(id) + " is not authorized for transfer");
+    }
     append_bytes(out, source.subspan(start, p - start));
   }
   return out;
@@ -242,8 +248,14 @@ Result<WrittenEntry> ZipWriter::copy_raw(const ZipArchive& archive, std::size_t 
     Record r; r.entry.name = source.raw_name; r.entry.method = static_cast<CompressionMethod>(source.method);
     r.entry.uncompressed_size = source.uncompressed_size; r.entry.compressed_size = source.compressed_size; r.entry.crc32 = source.crc32;
     r.dos = {source.dos_date, source.dos_time}; r.local64 = source.uncompressed_size >= max32 || source.compressed_size >= max32;
-    r.local_extra = carried_extra(source.local_extra, options); r.central_extra = carried_extra(source.central_extra, options);
-    if (!source.comment.empty() && !options.carry_comment) write_fail(Errc::unsupported, "am.zip.write.extra_not_preserved", "Entry comment is not authorized for transfer");
+    std::set<std::uint16_t> dropped_ids;
+    r.local_extra = carried_extra(source.local_extra, options, dropped_ids);
+    r.central_extra = carried_extra(source.central_extra, options, dropped_ids);
+    r.entry.dropped_extra_fields = dropped_ids.size();
+    if (!source.comment.empty() && !options.carry_comment) {
+      if (!options.drop_unlisted) write_fail(Errc::unsupported, "am.zip.write.extra_not_preserved", "Entry comment is not authorized for transfer");
+      r.entry.dropped_comment = true;
+    }
     if (options.carry_comment) r.comment = source.comment;
     auto decoder = std::make_unique<EntryDecoder>(); decoder->entry = source; decoder->budget = &budget;
     decoder->read_input = [&](U64 offset, std::span<std::byte> bytes) { return archive.read_raw(index, offset, bytes); };

@@ -25,6 +25,8 @@ struct EntryOptions {
 struct RawCopyOptions {
   std::vector<std::uint16_t> carry_extra_ids;
   bool carry_comment = false;
+  // Explicit carry settings take priority over dropping unlisted metadata.
+  bool drop_unlisted = false;
 };
 struct WrittenEntry {
   std::size_t index = 0;
@@ -34,6 +36,9 @@ struct WrittenEntry {
   std::uint32_t crc32 = 0;
   std::uint64_t compressed_size = 0, uncompressed_size = 0, local_offset = 0, data_offset = 0;
   std::optional<Sha256Digest> sha256;
+  // Distinct discarded non-ZIP64 field IDs across local and central headers.
+  std::size_t dropped_extra_fields = 0;
+  bool dropped_comment = false;
 };
 struct WriteSummary {
   std::vector<WrittenEntry> entries;
