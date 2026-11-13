@@ -1,6 +1,6 @@
 # T-013. Golden ZIP формата 1.0 и инфраструктура тестов M1
 
-**Статус:** in_progress · **Веха:** M1 · **Основание:** ADR-0035 п. 1 (формат публикуется при схеме, валидаторе V1–V4 и golden ZIP; ТЗ §19.6.4), ADR-0029 пп. 4–5 (`expected.json`, генератор, трассировка), `docs/plan/roadmap.md` M1 «Golden ZIP» и «Инфраструктура тестов», замечание 1 приёмки T-012
+**Статус:** review · **Веха:** M1 · **Основание:** ADR-0035 п. 1 (формат публикуется при схеме, валидаторе V1–V4 и golden ZIP; ТЗ §19.6.4), ADR-0029 пп. 4–5 (`expected.json`, генератор, трассировка), `docs/plan/roadmap.md` M1 «Golden ZIP» и «Инфраструктура тестов», замечание 1 приёмки T-012
 
 ## Цель
 
@@ -528,3 +528,195 @@ python -I tests/golden/run_golden.py --am build/win-cli/bin/am.exe --corpus test
 4. Если после исправления какой-либо существующий тест изменит итог — остановиться и сообщить (не подгонять).
 
 **Расширение раздела «Файлы» для В-4:** `src/domain/manifest/codec.cpp` — только условие блокировки в `Impl::render`; `tests/unit/test_manifest_codec.cpp` — один новый тест; `CHANGELOG.md` — при желании строка «V2 no longer fails on duplicate IDs; V3 reports them». Продолжать в той же ветке `codex/T-013`, статус — `in_progress`.
+
+## Итоговый отчёт исполнителя — продолжение по решению В-4
+
+Дата: 2026-11-13. Реализация T-013 завершена, передана управляющему на приёмку. В-1…В-4 закрыты по решениям управляющего; новых вопросов нет. Формат 1.0 этой задачей не публикуется.
+
+### Ветка и коммиты
+
+- Ветка `codex/T-013`, продолжение после `710bd3e` (решение В-4).
+- `ab815bd` — начальные golden-инфраструктура и исправление не-ZIP; `e335557` — В-3 и основной корпус.
+- `c5923a9` — В-4, отчёт трассировки/CI, переносимость генерации, полный положительный ассет и opaque во всех scopes.
+- `eee8d71` — сохранение диагностического журнала CTest при сборе inventory.
+- Окончательный отчёт и статус `review` — завершающий коммит ветки (`HEAD`). Слияния, push и переписывания истории не выполнялись.
+
+### Выполнение критериев приёмки
+
+1. Все четыре группы проверок выполнены: Windows min, Windows CLI `--ci`, Windows CLI `--offline --ci`, Linux CLI `--ci` в WSL; отрицательные проверки прогона и регенерации — тоже. Команды и фактические итоги ниже.
+2. Прежние ожидания тестов не ослаблены. Windows CLI: 300/300 PASS в обоих полных прогонах; Linux: 284 PASS, 13 прежних платформенных SKIP, 0 FAIL из 297. Все 20 тестов кодека прошли и отдельно после В-4. Новый тест кодека и оба случая неоднозначных ID проходят; запись такого документа по-прежнему блокируется.
+3. Корпус содержит 79 независимых ZIP, 170 команд проверки; все PASS на Windows и Linux. Покрыты все 38 error-правил из доменного каталога V3; дополнительный физический default — вторым случаем `field_default`. Правило `x02_unit_conversion_open` не выдаёт error и проверено положительным `pos-unverifiable`. Невыразимых при V2 error-правил не осталось. `tags_search_key` отложено (O-08) и не проверяется. Репозиторные `zip_paths` и `zip_entry_kind` покрыты случаями безопасности; `format_asset_identity` и `history_operation_id` требуют контекста репозитория и остаются вне standalone-корпуса.
+4. Регенерация 158 файлов `asset.zip`/`expected.json` побайтно совпадает на Windows и в WSL. Корпус: **79 ZIP, 473 970 байт ZIP суммарно, максимальный ZIP 12 788 байт**; весь каталог с 79 эталонами и README — **567 741 байт**, 159 файлов. Гипотеза 64 КиБ на ZIP соблюдена.
+5. `req_report.md`/`.json` созданы в каталогах сборок и сохранены в `.cache/` вместе с JUnit. Учитываются свойства GoogleTest, CTest labels и PASS/FAIL/SKIP из CTest JUnit; `NOT_RUN` не подменяется успехом. Случаи приёмки отделены от требований/решений. Неверные ID дают код 1 с местами, отсутствующие в матрице ID и строки без трассированных тестов — информационные списки. Selftest проверяет грамматику всех семейств В-1, диапазоны, вложенные XML, имена параметризованных тестов, статусы, вывод файлов и реальный CLI-код 1 для неверных ID.
+6. Только разрешённые файлы и дополнения В-3/В-4. Кодек изменён ровно в согласованном условии `Impl::render`; `schema_validator.cpp` и публичные заголовки не менялись. Материалы владельца, ADR, нормативная схема манифеста, матрицы, roadmap, реестр реальных данных и коллекция не изменялись. Изменение SPEC в этой ветке ранее сделал управляющий (`895ed98`). Новых зависимостей и загрузок не было; временные файлы/кэши — в `.cache/`. Предсуществующий незарегистрированный `3D_am_open_questions_e2472e9.zip` не затронут. Все изменения исполнителя закоммичены.
+
+### Что реализовано
+
+- Генератор на стандартной библиотеке Python читает манифест как байты, заменяя только явные `@sha256:<ZIP-path>` / `@size:<ZIP-path>`. Время, UUID, порядок записей и UTF-8-флаг фиксированы. Источники повреждений — `case.json`, изменения ZIP задаются byte patches заголовков. Наш писатель и `am asset create` генератором не используются.
+- Выявлено и устранено различие Deflate между Python/zlib-ng Windows и Python/zlib WSL: используется уровень 0, без платформенных эвристик подбора сжатия. Это сохраняет метод Deflate (8), полезные байты и все ожидаемые исходы; обе платформы регенерируют одинаковый корпус. README описывает настройки и содержит таблицу 79 случаев.
+- Полный положительный ассет содержит адресатов claims `standard`, `standard_item`, `custom`, `self`, метаданные/custom values всех трёх scopes, historical files, generated/generation, previews, license, groups, dependencies, attachments, extensions и compacted history. Точные S7-лексемы присутствуют во всех шести категориях opaque, включая default/constraints, history/changes и custom values asset/group/file; каждая из шести лексем встречается в 10 проверяемых фрагментах.
+- Схема `expected.v1.schema.json` и `schema_check` проверяют 79 эталонов; `golden_zip` проверяет коды и рекурсивные JSON-подмножества. Массивы сопоставляются без порядка взаимно однозначно, с совпадением длины. Шаблоны не содержат UUID или временных меток.
+- В-4: shadow допускает неоднозначность ID только при чтении без выдачи ключей; запись и выдача ключей остаются защищены. Вместо прямого вызова приватного `shadow()` новый тест использует публичный `SchemaValidator` с точной `const`-схемой: оба opaque-объекта обязаны стать пустыми, известные значения — сохраниться. Сериализация `known().dump()` до/после сравнивается байт-в-байт; `write_manifest` остаётся `am.manifest.write_blocked`. Публичный API для теста не расширялся.
+- В-3: V3 `zip_entry_kind` отвергает не-regular записи, включая opaque и manifest; каталог сообщений, новый unit-тест и CHANGELOG обновлены. Профиль писателя к чтению не подключён, descriptor принимается.
+- Не-ZIP/неподдерживаемая ZIP-структура при `ZipArchive::open` дают V1 failed и CLI-код 1; ошибки источника/операции остаются кодом 4. Путь `AssetRepository` не менялся, кроме согласованного правила В-3. CLI guide и CHANGELOG обновлены.
+- XML GoogleTest включён через `XML_OUTPUT_DIR`; отчёт рекурсивно читает вложенные каталоги параметризованных тестов. CTest inventory собирается с сохранением `LastTest.log`, в том числе при ошибке inventory; это проверено selftest и реальным запуском. Сборочные скрипты `--ci` запускают отчёт после CTest даже при его неуспехе, сохраняя код провала тестов. Workflow загружает `req_report.*` вместе с JUnit во всех четырёх заданиях; SHA actions не менялись. Push/удалённый запуск GitHub Actions не выполнялся.
+
+### Команды и фактический вывод
+
+```text
+tools\build_min.cmd
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) =  33.78 sec
+exit_code: 0
+
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) =  18.69 sec
+req_report: 11 IDs, 86 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+
+tools\build_cli.cmd --ci
+100% tests passed, 0 tests failed out of 300
+Total Test time (real) = 1010.56 sec
+exit_code: 0
+
+tools\build_cli.cmd --offline --ci
+100% tests passed, 0 tests failed out of 300
+Total Test time (real) = 1455.34 sec
+req_report: 41 IDs, 300 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+
+tools/build_linux.sh cli --ci
+100% tests passed, 0 tests failed out of 297
+Total Test time (real) = 1006.53 sec
+13 skipped (284 PASS, 0 FAIL)
+req_report: 41 IDs, 297 tests, 48 without req, 0 invalid IDs
+exit_code: 0
+
+golden_zip: 79 cases, 170 checks, 0 failures
+PASS golden_regen_check: 79 cases, byte-identical
+jsonschema 4.26.0; 149/149 cases match
+expected schema: 79 golden expectations checked
+PASS req_report_selftest: grammar, ranges, GTest joins, PASS/FAIL/SKIP/NOT_RUN, invalid IDs, output
+```
+
+Последние четыре строки подтверждены CTest, в том числе на Linux. Для Linux использован существующий `.cache/t005-pylib-linux` через `AM_PYTHON_EXTRA_PATH`; установка пакетов не выполнялась. Полные Windows CLI и Linux CLI запускались последовательно, без конкуренции за общие ZIP/репозиторные fixtures. WSL после проверок завершён. Linux проверен в WSL на DrvFS/NTFS; это не сертификация ext4 или производственного режима записи Linux. 13 SKIP — прежние сценарии Windows/NTFS и недоступных в этой среде операций (список в JUnit/логе); новые тесты не пропускались.
+
+Отрицательные проверки на временных копиях (`python .cache/t013_check_partial.py`, код 0): изменённый шаблон даёт провал с `$.v1: expected 'failed', got 'passed'`; изменённый ZIP — `FAIL golden_regen_check: pos-minimal/asset.zip`. В исходном корпусе файлы не повреждались. Отдельно проверены неоднозначное сопоставление массивов, запрет повторного использования элемента, длина массива и различение boolean/number.
+
+Основные свидетельства: `.cache/t013-final-min-current.log`, `.cache/t013-verification-min-ci.log`/`-tests.log`, `.cache/t013-final-cli.log`/`-junit.xml`, `.cache/t013-final-offline.log`/`-junit.xml`, `.cache/t013-final-linux.log`/`-junit.xml`/`-tests.log`, `.cache/t013-final-negative-checks.log`, `.cache/t013-final-log-preservation.log`. Отчёты доступны в `build/<preset>/req_report.*` и снимках `.cache/t013-final-{cli,offline,linux}-req_report.*`.
+
+Отчёт первого Windows-прогона перечитан по сохранённым JUnit/XML после исправления рекурсивного обхода XML (исходный console-log отражает предварительный неполный сбор). Окончательный снимок `.cache/t013-final-cli-req_report.*` содержит 41 ID и 49 тестов без req; повторять C++-исполнение для исправления чтения XML не требовалось. Рекурсивный сбор затем проверен в offline/Linux; сохранение журнала — реальным сбором Windows-отчёта, полным Linux и дополнительным минимальным `--ci` прогоном.
+
+### Трассировка
+
+| Прогон | Тестов | Без req | ID | Неверных ID | Строк матрицы без трассированных тестов |
+|---|---:|---:|---:|---:|---:|
+| Windows min | 86 | 49 | 11 | 0 | 30 |
+| Windows CLI (оба полных прогона) | 300 | 49 | 41 | 0 | 16 |
+| Linux CLI | 297 | 48 | 41 | 0 | 16 |
+
+CLI-отчёты: 33 `requirement`, 8 `case` (M-01…M-08). ID вне матрицы в обоих полных CLI-прогонах: **ADR-0005, ADR-0012, ADR-0025, ADR-0029, K-116, O-17**; это информационный список, не ошибка. Примеры прежних тестов без req: `Error.LegacyMakeKeepsContext`, `Error.ResultCarriesStructuredError`, `Uuid.V7HasVersionAndVariant`, `Uuid.RoundTripText`, `Uuid.MonotonicWithinSameMillisecond`; полный список — в JSON/Markdown. Заполнять старые аннотации задача не требует, они не менялись.
+
+Фрагмент итогового `req_report.md` (каждая строка из своего раздела):
+
+```markdown
+| ADR-0029 | PASS | req_report_selftest: PASS |
+| M-02 | PASS | ManifestSemantics.M02SelectedClaimCannotCarryValueV2: PASS |
+```
+
+Наличие строки означает аннотацию и исход соответствующих тестов, а не автоматическую приёмку требования. Диапазон M-01…M-03 в матрице корректно включает M-02. Для строк учитываются ID колонки требований и ссылки на случаи приёмки; случайное упоминание ADR в описании не создаёт ложной связи.
+
+### Покрытие случаев и правил
+
+Ниже все 79 случаев; все команды таблицы дали ожидаемый результат на обеих платформах. Положительные случаи дополнительно проверяются `inspect`. Для каждого error-правила доменного V3 случай называется `neg-v3-<rule>`; таблица одновременно даёт соответствие «правило → случай». Дополнительный `neg-v3-field_default-physical` проверяет физический default. Все 39 доменных правил из фактического `checked_rules` представлены: 38 error-правил и `x02_unit_conversion_open` (unverifiable).
+
+| Случай | Уровень / правило | validate / verify | message_id / результат |
+|---|---|---|---|
+| `neg-v1-duplicate-known` | V1 / ZIP | 1 / 1 | `am.manifest.duplicate_key` |
+| `neg-v1-duplicate-opaque` | V1 / ZIP | 1 / 1 | `am.manifest.duplicate_key` |
+| `neg-v1-leading-zero` | V1 / ZIP | 1 / 1 | `am.manifest.invalid_json` |
+| `neg-v1-missing-manifest` | V1 / ZIP | 1 / 1 | `am.manifest.manifest_count` |
+| `neg-v1-nan` | V1 / ZIP | 1 / 1 | `am.manifest.invalid_json` |
+| `neg-v1-plus` | V1 / ZIP | 1 / 1 | `am.manifest.invalid_json` |
+| `neg-v1-two-manifests` | V1 / ZIP | 1 / 1 | `am.zip.duplicate_name` |
+| `neg-v1-utf8` | V1 / ZIP | 1 / 1 | `am.manifest.invalid_json` |
+| `neg-v2-dimension` | V2 | 1 / 1 | `am.manifest.schema_violation` |
+| `neg-v2-generation-tool` | V2 | 1 / 1 | `am.manifest.schema_violation` |
+| `neg-v2-required` | V2 | 1 / 1 | `am.manifest.schema_violation` |
+| `neg-v2-type` | V2 | 1 / 1 | `am.manifest.schema_violation` |
+| `neg-v2-unevaluated` | V2 | 1 / 1 | `am.manifest.schema_violation` |
+| `neg-v2-version` | V2 | 1 / 1 | `am.manifest.schema_violation` |
+| `neg-v3-asset_times` | V3 / asset_times | 1 / 1 | `am.manifest.asset_times` |
+| `neg-v3-byte_sizes_uint64` | V3 / byte_sizes_uint64 | 1 / 1 | `am.manifest.byte_sizes_uint64` |
+| `neg-v3-change_kind_fields` | V3 / change_kind_fields | 1 / 1 | `am.manifest.change_kind_fields` |
+| `neg-v3-claim_evidence` | V3 / claim_evidence | 1 / 1 | `am.manifest.claim_evidence` |
+| `neg-v3-claim_target_custom` | V3 / claim_target_custom | 1 / 1 | `am.manifest.claim_target_custom` |
+| `neg-v3-claim_target_item` | V3 / claim_target_item | 1 / 1 | `am.manifest.claim_target_item` |
+| `neg-v3-claim_target_standard` | V3 / claim_target_standard | 1 / 1 | `am.manifest.claim_target_standard` |
+| `neg-v3-claim_value_type` | V3 / claim_value_type | 1 / 1 | `am.manifest.claim_value_type` |
+| `neg-v3-claim_value_unit` | V3 / claim_value_unit | 1 / 1 | `am.manifest.claim_value_unit` |
+| `neg-v3-custom_value_field` | V3 / custom_value_field | 1 / 1 | `am.manifest.custom_value_field` |
+| `neg-v3-dependency_refs` | V3 / dependency_refs | 1 / 1 | `am.manifest.dependency_refs` |
+| `neg-v3-derived_from` | V3 / derived_from | 1 / 1 | `am.manifest.derived_from` |
+| `neg-v3-field_constraints` | V3 / field_constraints | 1 / 1 | `am.manifest.field_constraints` |
+| `neg-v3-field_default` | V3 / field_default | 1 / 1 | `am.manifest.field_default` |
+| `neg-v3-field_default-physical` | V3 / field_default | 1 / 1 | `am.manifest.field_default` |
+| `neg-v3-field_options` | V3 / field_options | 1 / 1 | `am.manifest.field_options` |
+| `neg-v3-group_refs` | V3 / group_refs | 1 / 1 | `am.manifest.group_refs` |
+| `neg-v3-historical_files` | V3 / historical_files | 1 / 1 | `am.manifest.historical_files` |
+| `neg-v3-history_compacted_summary` | V3 / history_compacted_summary | 1 / 1 | `am.manifest.history_compacted_summary` |
+| `neg-v3-history_coverage` | V3 / history_coverage | 1 / 1 | `am.manifest.history_coverage` |
+| `neg-v3-history_operation_id_unique` | V3 / history_operation_id_unique | 1 / 1 | `am.manifest.history_operation_id_unique` |
+| `neg-v3-input_directory_consistency` | V3 / input_directory_consistency | 1 / 1 | `am.manifest.input_directory_consistency` |
+| `neg-v3-input_entry_file` | V3 / input_entry_file | 1 / 1 | `am.manifest.input_entry_file` |
+| `neg-v3-input_entry_object` | V3 / input_entry_object | 1 / 1 | `am.manifest.input_entry_object` |
+| `neg-v3-input_nesting` | V3 / input_nesting | 1 / 1 | `am.manifest.input_nesting` |
+| `neg-v3-input_source_refs` | V3 / input_source_refs | 1 / 1 | `am.manifest.input_source_refs` |
+| `neg-v3-license_file_ref` | V3 / license_file_ref | 1 / 1 | `am.manifest.license_file_ref` |
+| `neg-v3-license_spdx` | V3 / license_spdx | 1 / 1 | `am.manifest.license_spdx` |
+| `neg-v3-preview_refs` | V3 / preview_refs | 1 / 1 | `am.manifest.preview_refs` |
+| `neg-v3-storage_paths` | V3 / storage_paths | 1 / 1 | `am.manifest.storage_paths` |
+| `neg-v3-timestamps` | V3 / timestamps | 1 / 1 | `am.manifest.timestamps` |
+| `neg-v3-unique_ids` | V3 / unique_ids | 1 / 1 | `am.manifest.unique_ids` |
+| `neg-v3-urls` | V3 / urls | 1 / 1 | `am.manifest.urls` |
+| `neg-v3-value_constraints` | V3 / value_constraints | 1 / 1 | `am.manifest.value_constraints` |
+| `neg-v3-value_dependencies_scope` | V3 / value_dependencies_scope | 1 / 1 | `am.manifest.value_dependencies_scope` |
+| `neg-v3-value_file_ref` | V3 / value_file_ref | 1 / 1 | `am.manifest.value_file_ref` |
+| `neg-v3-value_options` | V3 / value_options | 1 / 1 | `am.manifest.value_options` |
+| `neg-v3-value_representation` | V3 / value_representation | 1 / 1 | `am.manifest.value_representation` |
+| `neg-v3-value_unit_required` | V3 / value_unit_required | 1 / 1 | `am.manifest.value_unit_required` |
+| `neg-v4-crc` | V4 | 0 / 1 | `am.repo.corrupt_container` |
+| `neg-v4-encryption` | V4 | 0 / 1 | `am.repo.unsupported_container` |
+| `neg-v4-method` | V4 | 0 / 1 | `am.repo.unsupported_container` |
+| `neg-v4-missing` | V4 | 0 / 1 | `am.manifest.missing_stream` |
+| `neg-v4-sha` | V4 | 0 / 1 | `am.manifest.stream_mismatch` |
+| `neg-v4-size` | V4 | 0 / 1 | `am.manifest.stream_mismatch` |
+| `neg-zip-absolute` | V3 / zip_paths | 1 / 1 | `am.manifest.zip_paths` |
+| `neg-zip-backslash` | V3 / zip_paths | 1 / 1 | `am.manifest.zip_paths` |
+| `neg-zip-case-collision` | V3 / zip_paths | 1 / 1 | `am.manifest.zip_paths` |
+| `neg-zip-duplicate` | V1 / ZIP | 1 / 1 | `am.zip.duplicate_name` |
+| `neg-zip-not-zip` | V1 / ZIP | 1 / 1 | `am.zip.invalid_structure` |
+| `neg-zip-opaque-symlink` | V3 / zip_entry_kind | 1 / 1 | `am.manifest.zip_entry_kind` |
+| `neg-zip-symlink` | V3 / zip_entry_kind | 1 / 1 | `am.manifest.zip_entry_kind` |
+| `neg-zip-traversal` | V3 / zip_paths | 1 / 1 | `am.manifest.zip_paths` |
+| `pos-descriptor` | V1-V4 | 0 / 0 | `full` |
+| `pos-descriptor-zip64` | V1-V4 | 0 / 0 | `full` |
+| `pos-exact-numbers` | V1-V4 | 0 / 0 | `full` |
+| `pos-foreign-extra` | V1-V4 | 0 / 0 | `full` |
+| `pos-full` | V1-V4 | 0 / 0 | `full` |
+| `pos-minimal` | V1-V4 | 0 / 0 | `full` |
+| `pos-mixed-compression` | V1-V4 | 0 / 0 | `full` |
+| `pos-newer-minor` | capability | 3 / 3 | `newer_minor; partial` |
+| `pos-opaque-stream` | V4 / opaque | 0 / 3 | `verified_crc_size_only; partial` |
+| `pos-unicode-spaces` | V1-V4 | 0 / 0 | `full` |
+| `pos-unverifiable` | V3 / x02_unit_conversion_open | 3 / 3 | `am.manifest.x02_unit_conversion_open (unverifiable)` |
+| `pos-zip64` | V1-V4 | 0 / 0 | `full` |
+
+Допустимые исключения: `tags_search_key` отложен (O-08); контекстные `format_asset_identity`/`history_operation_id` недостижимы через standalone API. Внутренний `am.manifest.unregistered_stream` при создании не проверяется через CLI по В-2; перенос существующего opaque покрывает `AssetRepository.OpaqueAttachmentsAndDependenciesHaveExplicitVerification`, безопасное чтение — `pos-opaque-stream`.
+
+Случай реального манифеста сверх byte-limit кодека не включён по условию задачи: текущая гипотеза кодека — 128 МиБ; однообразный валидный JSON размером 128 МиБ + 1 даже при raw DEFLATE level 9 дал 130 463 байта, больше 64 КиБ без ZIP-заголовков. Размеры ZIP64 проверяются принудительными полями, без больших файлов в репозитории.
+
+### Отклонения и вопросы
+
+Отдельно оговорённые решения В-1…В-4 применены. Технический способ нового теста В-4 — через публичный `SchemaValidator`, поскольку `shadow()` private; публичные заголовки и API не менялись. Гипотезы размера fixture и времени ожидания процессов явно отмечены. Измерительные пороги продукта не вводились. Новых вопросов нет; ожидается приёмка управляющего.
