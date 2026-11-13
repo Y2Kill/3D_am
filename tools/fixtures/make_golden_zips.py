@@ -83,6 +83,8 @@ def build_case(source, target):
             payload = manifest if entry.get("manifest") else payloads[entry["name"]]
             info = Utf8Info(entry["name"], (2020, 1, 1, 0, 0, 0))
             info.compress_type = {"stored": zipfile.ZIP_STORED, "deflate": zipfile.ZIP_DEFLATED}[entry.get("method", "stored")]
+            # Level zero avoids zlib/zlib-ng match and Huffman heuristics.
+            info._compresslevel = 0
             info.create_system = 3
             info.external_attr = 0o100644 << 16
             info.extra = bytes.fromhex(entry.get("extra_hex", ""))

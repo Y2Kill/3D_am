@@ -60,4 +60,12 @@ else
 fi
 cmake --preset "$preset" "${configure_args[@]}"
 cmake --build --preset "$preset"
-ctest --preset "$preset" "${test_args[@]}" "${ctest_args[@]}"
+ctest_result=0
+ctest --preset "$preset" "${test_args[@]}" "${ctest_args[@]}" || ctest_result=$?
+report_result=0
+if $ci; then
+  python3 -I tools/coverage/req_report.py --build-dir "$root/build/$preset" \
+    --matrix "$root/docs/plan/acceptance_matrix.md" || report_result=$?
+fi
+if ((ctest_result)); then exit "$ctest_result"; fi
+exit "$report_result"

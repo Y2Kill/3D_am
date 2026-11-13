@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import subprocess
 
+PROCESS_TIMEOUT_SECONDS = 60  # hypothesis; guard for a stalled CLI on slow CI/WSL
+
 
 def mismatch(pattern, actual, path="$"):
     if isinstance(pattern, dict):
@@ -59,7 +61,7 @@ def main():
                        str((path.parent / expected["input"]["zip"]).resolve()), *check.get("args", []), "--json"]
             label = f"{expected['case']}: {' '.join(command)}"
             try:
-                result = subprocess.run(command, capture_output=True, encoding="utf-8", errors="strict", timeout=60)
+                result = subprocess.run(command, capture_output=True, encoding="utf-8", errors="strict", timeout=PROCESS_TIMEOUT_SECONDS)
                 actual = json.loads(result.stdout)
                 error = mismatch(check["json"], actual)
                 if result.returncode != check["exit_code"]:

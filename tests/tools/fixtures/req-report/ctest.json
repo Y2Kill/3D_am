@@ -1,0 +1,7 @@
+{"tests":[
+  {"name":"Pretty/ParamTest/argument","command":["tests","--gtest_filter=Suite.Param/0"],"properties":[{"name":"LABELS","value":["req:ADR-0038"]}]},
+  {"name":"Failing","command":["tests","--gtest_filter=Suite.Failing"],"properties":[]},
+  {"name":"Skipped","properties":[{"name":"LABELS","value":["req:K-3"]}]},
+  {"name":"NoAnnotation","properties":[]},
+  {"name":"NotRun","properties":[]}
+]}

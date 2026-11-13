@@ -8,7 +8,7 @@
   },
   "asset": {
     "id": "ffa545ed-332d-4889-be8c-43a2d3b8f800",
-    "revision": 2,
+    "revision": 5,
     "created_at": "2026-11-06T10:15:03.120Z",
     "modified_at": "2026-11-06T12:01:44.002Z",
     "metadata": {
@@ -54,6 +54,26 @@
               "note": "prefix 'Dinamuuu3D_' in archive folder name"
             }
           ],
+          "created_at": "2026-11-06T10:15:03.120Z"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000011",
+          "target": {
+            "kind": "standard",
+            "field": "title"
+          },
+          "relation": "supports_selected",
+          "method": "user_input",
+          "created_at": "2026-11-06T10:15:03.120Z"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000012",
+          "target": {
+            "kind": "custom",
+            "field_id": "user:968df2ff-64d1-4625-83b9-43e6f6a55a87"
+          },
+          "relation": "supports_selected",
+          "method": "user_input",
           "created_at": "2026-11-06T10:15:03.120Z"
         }
       ],
@@ -166,6 +186,27 @@
       "type": {
         "id": "mesh.stl.binary",
         "by": "signature"
+      },
+      "metadata": {
+        "title": "Scoped metadata",
+        "custom_values": [
+          {
+            "field_id": "user:968df2ff-64d1-4625-83b9-43e6f6a55a87",
+            "value": true
+          }
+        ],
+        "claims": [
+          {
+            "id": "00000000-0000-4000-8000-000000000014",
+            "target": {
+              "kind": "custom",
+              "field_id": "user:968df2ff-64d1-4625-83b9-43e6f6a55a87"
+            },
+            "relation": "supports_selected",
+            "method": "user_input",
+            "created_at": "2026-11-06T10:15:03.120Z"
+          }
+        ]
       }
     },
     {
@@ -210,7 +251,28 @@
       "file_refs": [
         "1f3403d0-93c1-4919-8ba3-ed78100b7b1f",
         "b1f7828f-e962-48ad-a2a8-866bd8860bfb"
-      ]
+      ],
+      "metadata": {
+        "title": "Scoped metadata",
+        "custom_values": [
+          {
+            "field_id": "user:968df2ff-64d1-4625-83b9-43e6f6a55a87",
+            "value": true
+          }
+        ],
+        "claims": [
+          {
+            "id": "00000000-0000-4000-8000-000000000013",
+            "target": {
+              "kind": "custom",
+              "field_id": "user:968df2ff-64d1-4625-83b9-43e6f6a55a87"
+            },
+            "relation": "supports_selected",
+            "method": "user_input",
+            "created_at": "2026-11-06T10:15:03.120Z"
+          }
+        ]
+      }
     }
   ],
   "previews": {
@@ -232,7 +294,9 @@
       "name": "Printed",
       "type": "boolean",
       "scopes": [
-        "asset"
+        "asset",
+        "group",
+        "file"
       ],
       "default": false
     }
@@ -260,6 +324,20 @@
           }
         ]
       }
+    },
+    "org.test.golden": {
+      "schema_version": "1",
+      "data": {
+        "note": "Synthetic attachment"
+      },
+      "attachments": [
+        {
+          "id": "00000000-0000-4000-8000-000000000042",
+          "path": "extensions/org.test.golden/readme.bin",
+          "size_bytes": "@size:extensions/org.test.golden/readme.bin",
+          "sha256": "@sha256:extensions/org.test.golden/readme.bin"
+        }
+      ]
     }
   },
   "history": {
@@ -293,7 +371,7 @@
         ]
       },
       {
-        "revision": 2,
+        "revision": 5,
         "operation_id": "671deada-2005-4b83-a9e1-8dcd82019e96",
         "timestamp": "2026-11-06T12:01:44.002Z",
         "operation": "previews_changed",
@@ -307,6 +385,18 @@
             "target": "800e346a-f902-4c33-8e37-57ce68a41550"
           }
         ]
+      }
+    ],
+    "compacted_ranges": [
+      {
+        "from_revision": 2,
+        "to_revision": 4,
+        "summary": {
+          "revision_count": 3,
+          "operation_counts": {
+            "metadata_changed": 3
+          }
+        }
       }
     ]
   },

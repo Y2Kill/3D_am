@@ -66,5 +66,10 @@ echo X_VCPKG_ASSET_SOURCES=%X_VCPKG_ASSET_SOURCES%
 cmake --preset win-cli %CI_CONFIG% %PYTHON_CONFIG% || exit /b 1
 cmake --build --preset win-cli || exit /b 1
 call "%ROOT%\tools\check_ninja_deps.cmd" "%ROOT%\build\win-cli" || exit /b 1
-ctest --preset win-cli %CI_CTEST% %CTEST_ARGS% || exit /b 1
-endlocal
+ctest --preset win-cli %CI_CTEST% %CTEST_ARGS%
+set "CTEST_RESULT=%ERRORLEVEL%"
+if not defined CI_CTEST exit /b %CTEST_RESULT%
+python -I "%ROOT%\tools\coverage\req_report.py" --build-dir "%ROOT%\build\win-cli" --matrix "%ROOT%\docs\plan\acceptance_matrix.md"
+set "REPORT_RESULT=%ERRORLEVEL%"
+if not "%CTEST_RESULT%"=="0" exit /b %CTEST_RESULT%
+exit /b %REPORT_RESULT%

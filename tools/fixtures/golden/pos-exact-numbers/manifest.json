@@ -183,7 +183,7 @@
   ],
   "files": [
     {
-      "id": "1f3403d0-93c1-4919-8ba3-ed78100b7b1f",
+      "id": "1f3403d0-93c1-4919-8ba3-ed78100b7b1f","metadata":{"custom_values":[{"field_id":"plugin:org.test.golden:payload","value":{"numbers":[12345678901234567890.000000000000000001,1e400,-1E-400,-0,-0.0,1.500]}}]},
       "storage_path": "content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
       "size_bytes": "@size:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
       "sha256": "@sha256:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
@@ -227,7 +227,7 @@
   ],
   "groups": [
     {
-      "id": "c9df9075-8b2c-4a65-bebd-5d150e8c4ff8",
+      "id": "c9df9075-8b2c-4a65-bebd-5d150e8c4ff8","metadata":{"custom_values":[{"field_id":"plugin:org.test.golden:payload","value":{"numbers":[12345678901234567890.000000000000000001,1e400,-1E-400,-0,-0.0,1.500]}}]},
       "name": "1/6",
       "type": "scale",
       "file_refs": [
@@ -265,7 +265,7 @@
       "name": "Opaque",
       "type": "plugin:org.test.golden:payload",
       "scopes": [
-        "asset"
+        "asset", "group", "file"
       ],
       "default": {
         "numbers": [12345678901234567890.000000000000000001,1e400,-1E-400,-0,-0.0,1.500]

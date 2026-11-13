@@ -43,7 +43,9 @@ jobs:
         if: always()
         with:
           name: win-debug-min
-          path: build/win-debug-min/junit.xml
+          path: |
+            build/win-debug-min/junit.xml
+            build/win-debug-min/req_report.*
           retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
@@ -89,7 +91,9 @@ jobs:
         if: always()
         with:
           name: win-cli
-          path: build/win-cli/junit.xml
+          path: |
+            build/win-cli/junit.xml
+            build/win-cli/req_report.*
           retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
@@ -124,7 +128,9 @@ jobs:
         if: always()
         with:
           name: linux-min
-          path: build/linux-min/junit.xml
+          path: |
+            build/linux-min/junit.xml
+            build/linux-min/req_report.*
           retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
@@ -172,7 +178,9 @@ jobs:
         if: always()
         with:
           name: linux-cli
-          path: build/linux-cli/junit.xml
+          path: |
+            build/linux-cli/junit.xml
+            build/linux-cli/req_report.*
           retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()

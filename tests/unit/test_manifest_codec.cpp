@@ -138,6 +138,25 @@ TEST(ManifestCodec, NonStringBaseHistoryFieldsStayOpaqueAndProduceV3Errors) {
     }
   }
 }
+TEST(ManifestCodec, AmbiguousOwnersAllowShadowButBlockWriting) {
+  RecordProperty("req", "ADR-0038|R-09.8");
+  const std::string text =
+      R"({"files":[{"id":"550e8400-e29b-41d4-a716-446655440000","generation":{"params":{"first":1e400}}},)"
+      R"({"id":"550e8400-e29b-41d4-a716-446655440000","generation":{"params":{"second":1.500}}}]})";
+  auto doc = parse_manifest(text);
+  ASSERT_TRUE(doc);
+  auto expected = text;
+  const std::string first = R"({"first":1e400})", second = R"({"second":1.500})";
+  expected.replace(expected.find(first), first.size(), "{}");
+  expected.replace(expected.find(second), second.size(), "{}");
+  // SchemaValidator is the public consumer of the private shadow projection.
+  auto schema = SchemaValidator::create(Json{{"const", Json::parse(expected)}}.dump());
+  ASSERT_TRUE(schema);
+  const auto known_before = doc->known().dump();
+  EXPECT_TRUE(schema->validate(*doc));
+  EXPECT_EQ(doc->known().dump(), known_before);
+  expect_id(write_manifest(*doc), "am.manifest.write_blocked");
+}
 TEST(ManifestCodec, EveryValidFixtureRoundTripsAndValidates) {
   RecordProperty("req", "ADR-0038|R-09.8");
   auto schema = validator();

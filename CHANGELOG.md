@@ -17,6 +17,8 @@ All notable user-visible changes are recorded here.
 
 ### Changed
 
+- Duplicate manifest IDs no longer fail V2 schema validation; V3 reports them,
+  while rewriting documents with ambiguous opaque owners remains blocked.
 - Asset checks reject ZIP entries marked as symbolic links or other non-regular files.
 - Invalid or unsupported ZIP structure is reported as a failed V1 check with exit
   code 1; missing inputs and I/O failures remain operation errors with exit code 4.

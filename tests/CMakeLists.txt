@@ -68,7 +68,8 @@ if(AM_WITH_CONTAINER)
   endif()
 endif()
 am_apply_defaults(am_unit_tests)
-gtest_discover_tests(am_unit_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(am_unit_tests DISCOVERY_MODE PRE_TEST
+  XML_OUTPUT_DIR "${PROJECT_BINARY_DIR}/gtest-xml")
 
 # Python-based checks: architecture (ADR-0024) and the draft manifest schema (ADR-0036 item 8).
 # - Default: a missing jsonschema module makes schema_check FAIL (not a silent SKIP).
@@ -92,6 +93,9 @@ if(AM_PYTHON_TESTS)
     endif()
     message(WARNING "Python 3 not found: arch_check and schema_check are not registered")
   else()
+    add_test(NAME req_report_selftest
+      COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/coverage/req_report.py --selftest)
+    set_tests_properties(req_report_selftest PROPERTIES LABELS "req:ADR-0029")
     add_test(NAME golden_regen_check
       COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/fixtures/make_golden_zips.py
         --root ${PROJECT_SOURCE_DIR} --check)

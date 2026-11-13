@@ -18,6 +18,11 @@
       "name": "generated/previews/4a5ad0ca-eb13-45b3-893b-907c1ba8377f.png",
       "source": "payload-2.bin",
       "method": "stored"
+    },
+    {
+      "name": "extensions/org.test.golden/readme.bin",
+      "source": "attachment.bin",
+      "method": "deflate"
     }
   ]
 }
