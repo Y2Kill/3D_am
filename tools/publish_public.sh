@@ -12,7 +12,8 @@ NOREPLY="27768668+Y2Kill@users.noreply.github.com"
 rm -rf "$ROOT"/.cache/publish/work* 2>/dev/null || true
 WORK="$ROOT/.cache/publish/work-$(date +%s)"
 mkdir -p "$ROOT/.cache/publish"
-git clone -q --no-local --single-branch --branch "$BRANCH" "$ROOT" "$WORK"
+# --no-tags: local tags point at unfiltered history and would leak the inventory.
+git clone -q --no-local --single-branch --no-tags --branch "$BRANCH" "$ROOT" "$WORK"
 cd "$WORK"
 export FILTER_BRANCH_SQUELCH_WARNING=1
 git filter-branch -f \
