@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import struct
 import subprocess
+import sys
 import unittest
 import uuid
 import zipfile
@@ -283,6 +284,10 @@ class AssetCli(unittest.TestCase):
         self.run_am("unknown-command", expected=2)
 
 if __name__ == "__main__":
+    # Example output contains non-ASCII titles; hosted runners default to cp1252 and
+    # `python -I` ignores PYTHONUTF8/PYTHONIOENCODING, so fix the encoding here.
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--am", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
