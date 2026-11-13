@@ -1,6 +1,6 @@
 # T-013. Golden ZIP формата 1.0 и инфраструктура тестов M1
 
-**Статус:** in_progress · **Веха:** M1 · **Основание:** ADR-0035 п. 1 (формат публикуется при схеме, валидаторе V1–V4 и golden ZIP; ТЗ §19.6.4), ADR-0029 пп. 4–5 (`expected.json`, генератор, трассировка), `docs/plan/roadmap.md` M1 «Golden ZIP» и «Инфраструктура тестов», замечание 1 приёмки T-012
+**Статус:** review (В-4: V2 блокируется неоднозначными ID владельцев opaque) · **Веха:** M1 · **Основание:** ADR-0035 п. 1 (формат публикуется при схеме, валидаторе V1–V4 и golden ZIP; ТЗ §19.6.4), ADR-0029 пп. 4–5 (`expected.json`, генератор, трассировка), `docs/plan/roadmap.md` M1 «Golden ZIP» и «Инфраструктура тестов», замечание 1 приёмки T-012
 
 ## Цель
 
@@ -363,3 +363,155 @@ python -I tests/golden/run_golden.py --am build/win-cli/bin/am.exe --corpus test
 7. **Влияние на `AssetRepository`.** `Invariants` общий: ассет с такой записью перестанет открываться на изменение — это намеренно (контейнер с нарушением безопасности не изменяется). Прочие ожидания существующих тестов не меняются; если какой-то упадёт — остановиться и сообщить.
 
 **Расширение раздела «Файлы» для В-3:** `src/storage/repository/repository.cpp` — только `Invariants::validate` (правило `zip_entry_kind`) сверх п. 6; `resources/messages/en.toml` — одна строка; `tests/unit/test_asset_repository.cpp` — один новый тест; `CHANGELOG.md` — строка про отказ для записей-ссылок. Продолжать в той же ветке `codex/T-013`, статус — `in_progress`.
+
+## Отчёт исполнителя — продолжение по решению В-3
+
+Дата: 2026-11-13. Решение В-3 реализовано. Частичный результат сохранён; при расширении корпуса выявлено расхождение В-4. По п. 3 `AGENTS.md` и разделу «Файлы» задачи работа остановлена, ожидания двух воспроизводящих случаев не ослаблены. Статус `review` — передача вопроса, а не заявление о выполнении всей T-013.
+
+### Ветка и коммиты
+
+- Та же ветка `codex/T-013`, продолжение после решения управляющего `895ed98`.
+- `e335557` — правило `zip_entry_kind`, сообщение, тест, CHANGELOG; расширение корпуса до 79 случаев и усиление эталонов symlink по В-3.
+- Этот отчёт и перевод в `review` — завершающий коммит ветки (`HEAD`). Слияния, push и переписывания истории не выполнялись.
+
+### Критерии приёмки: фактическое состояние
+
+1. `tools\build_min.cmd` — **85/85 PASS**; схема проверила все 79 эталонов. Регенерация и отрицательные проверки инфраструктуры выполнены успешно. Полные Windows CLI `--ci`, `--offline --ci` и Linux не запускались: после обнаружения расхождения действует правило остановки.
+2. CLI пересобран офлайн. `tools\build_cli.cmd --offline -R VerifyContainer` — **4/4 PASS** (новый тест В-3 и три прежних). Прежние ожидания тестов не менялись. Полный регрессионный прогон не заявляется. `message_catalog_check` — 161 сообщение, missing=0.
+3. Корпус: **79 случаев, 170 команд; 166 PASS, 4 FAIL**. Два случая с неоднозначными ID дают провалы `validate` и `verify` по В-4; остальные 77 случаев проходят полностью. Положительные: 12; отрицательные: V1 — 8, V2 — 6, V3 — 39 (одно дополнительное физическое default), V4 — 6, ZIP/безопасность — 8. Каталог из 39 правил V3 получен из фактического `v3_rules`; отображение приведено ниже. Полная приёмка корпуса заблокирована В-4.
+4. Регенерация 79 случаев побайтно совпадает. ZIP суммарно **470 240 байт**, максимальный ZIP **11 827 байт**. Весь `tests/fixtures/golden` — **563 708 байт**, 159 файлов (79 ZIP, 79 эталонов и README); каждый ZIP меньше гипотезы 64 КиБ.
+5. `req_report.py`, различение `requirement`/`case` по В-1, selftest, XML GoogleTest и включение отчёта в сборку/CI ещё не реализованы. Итогового отчёта трассировки и числа тестов без `req` нет — работа остановлена на корпусе до этого этапа.
+6. Все изменения в разрешённых файлах; дополнения к SPEC сделаны управляющим в `895ed98`, исполнитель SPEC не менял. Код V3 домена, кодек, схема манифеста, ADR и матрицы не менялись. Новых зависимостей нет; загрузки не выполнялись. Временные входы/измерения/логи — в `.cache/`. Предсуществующий незарегистрированный `3D_am_open_questions_e2472e9.zip` не затронут.
+
+### Реализация В-3
+
+В `Invariants::validate` добавлен `zip_entry_kind` в `checked_rules`; каждая не-regular запись получает V3 error с `message_id = am.manifest.zip_entry_kind`, пустым pointer и диагностическим именем/типом в detail. Проверка охватывает все ZIP-записи независимо от регистрации. `check_normative_profile` не подключён, descriptor продолжает читаться. Добавлена ровно одна строка каталога, строка CHANGELOG и один тест `VerifyContainerRejectsRegisteredAndOpaqueSymlinks` (`RecordProperty("req", "K-6|ADR-0037")`) через `zip_test::build`: зарегистрированная и opaque symlink-записи. Эталоны обоих symlink-случаев теперь дополнительно проверяют согласованные правило, severity и message_id; оба проходят.
+
+### Прогоны и локальные свидетельства
+
+```text
+tools\build_cli.cmd --offline -R VerifyContainer
+100% tests passed, 0 tests failed out of 4
+Total Test time (real) =   7.19 sec
+exit_code: 0
+
+tools\build_min.cmd
+100% tests passed, 0 tests failed out of 85
+Total Test time (real) =  33.85 sec
+exit_code: 0
+schema_check: expected schema: 79 golden expectations checked
+
+python -I tools/fixtures/make_golden_zips.py --check
+PASS golden_regen_check: 79 cases, byte-identical
+exit_code: 0
+
+python -I tests/golden/run_golden.py --am build/win-cli/bin/am.exe --corpus tests/fixtures/golden
+golden_zip: 79 cases, 170 checks, 4 failures
+exit_code: 1
+
+python .cache/t013_check_partial.py
+All partial infrastructure negative checks passed
+exit_code: 0
+
+python -I tests/tools/message_catalog_check.py --root .
+message_catalog_check: 161 messages; missing=0
+exit_code: 0
+```
+
+Логи: `.cache/t013-v3-verify-container.log`, `.cache/t013-v3-final-min.log` и `-tests.log`, `.cache/t013-v3-corrected-golden.log`, `.cache/t013-v3-regen.log`, `.cache/t013-v3-negative-checks.log`. В последней проверке изменялись только временные копии внутри `.cache/`: неправильный эталон отвергнут с `$.v1`, изменённый ZIP — с `pos-minimal/asset.zip`; неоднозначное сопоставление массивов и запрет повторного использования элемента проверены отдельно.
+
+Первый пробный прогон расширенного корпуса также выявил ошибки авторинга новых случаев: неверное имя публичного schema message_id, неверно заданный адресат claim, физический default, случайно разрешимые ссылки на historical-файл и обёртки ZIP-ошибок. Эти новые входы/эталоны исправлены по схеме и действующим контрактам, затем весь корпус повторно запущен. Окончательный результат выше содержит только четыре провала В-4; прежние ожидания и ожидания случаев В-4 не менялись на фактический результат.
+
+### Покрытие корпуса
+
+Полная таблица «случай → описание → ожидаемые validate/verify» — в `tests/fixtures/golden/README.md` (79 строк), точные шаблоны и ID ошибок — в каждом `expected.json`. ID и время не входят в шаблоны. Новые положительные `pos-full`, `pos-exact-numbers`, `pos-unverifiable` проходят: необязательные разделы, шесть категорий opaque с точными лексемами S7 (включая default/constraints и history/change), физические единицы с недоступным преобразованием. Прежние ZIP64, descriptor, foreign extra, Unicode, newer_minor и opaque по В-2 также проходят.
+
+| Группа | Ожидаемый код | Основной message_id/результат |
+|---|---|---|
+| V1: нет манифеста | 1 | am.manifest.manifest_count |
+| V1: два манифеста | 1 | am.zip.duplicate_name |
+| V1: неверный UTF-8; 01, +1, NaN | 1 | am.manifest.invalid_json |
+| V1: дубли known/opaque ключей | 1 | am.manifest.duplicate_key |
+| V2: required/type/unevaluated/version/generation.tool/dimension | 1 | am.manifest.schema_violation |
+| V3: каждое error-правило | 1 | am.manifest.<rule>; два исключения фактического результата — В-4 |
+| V4: SHA или размер | validate 0, verify 1 | am.manifest.stream_mismatch |
+| V4: нет потока | validate 0, verify 1 | am.manifest.missing_stream |
+| V4: неверный CRC | validate 0, verify 1 | am.repo.corrupt_container |
+| V4: метод или шифрование | validate 0, verify 1 | am.repo.unsupported_container |
+| ZIP: нет EOCD | 1 | am.zip.invalid_structure |
+| ZIP: дубли имён | 1 | am.zip.duplicate_name |
+| ZIP: traversal/absolute/backslash/case collision | 1 | am.manifest.zip_paths |
+| ZIP: registered/opaque symlink | 1 | am.manifest.zip_entry_kind |
+
+Новый `neg-v2-version` нарушает закрытую структуру `format.version` (добавляет недопустимый `patch`, при major/minor = 1/0), поэтому проверяет именно schema 1.0, а не отклонение неподдерживаемой major или режим newer_minor. `neg-v3-field_default-physical` использует scalar default для физического поля: скаляр разрешён общим V2-типом, но V3 требует `{value, unit}`.
+
+Манифест сверх лимита 128 МиБ не добавлен: синтетический JSON из `{}` и пробелов размером 128 МиБ + 1 дал **130 463 байта raw DEFLATE level 9**, ещё без ZIP-заголовков — больше 64 КиБ. Остальные V1-случаи присутствуют. `am.manifest.unregistered_stream` для создания нового контейнера не проверяется через CLI: внутренняя защита `allowed_opaque` недостижима через публичный API; перенос прежнего opaque проверяет `AssetRepository.OpaqueAttachmentsAndDependenciesHaveExplicitVerification` (В-2). Безопасный opaque проверяется `pos-opaque-stream` (0/3).
+
+Каталог V3 ниже: для error-правила `r` случай называется **`neg-v3-r`**; `PASS` означает обе команды и требуемую находку при V2 passed. `tags_search_key` отложен (O-08), в каталог checked_rules не входит.
+
+| Правило r | Случай / итог |
+|---|---|
+| asset_times | neg-v3-asset_times — PASS |
+| byte_sizes_uint64 | neg-v3-byte_sizes_uint64 — PASS |
+| change_kind_fields | neg-v3-change_kind_fields — PASS |
+| claim_evidence | neg-v3-claim_evidence — PASS |
+| claim_target_custom | neg-v3-claim_target_custom — PASS |
+| claim_target_item | neg-v3-claim_target_item — PASS |
+| claim_target_standard | neg-v3-claim_target_standard — PASS |
+| claim_value_type | neg-v3-claim_value_type — PASS |
+| claim_value_unit | neg-v3-claim_value_unit — PASS |
+| custom_value_field | neg-v3-custom_value_field — PASS |
+| dependency_refs | neg-v3-dependency_refs — PASS |
+| derived_from | neg-v3-derived_from — PASS |
+| field_constraints | neg-v3-field_constraints — PASS |
+| field_default | neg-v3-field_default и neg-v3-field_default-physical — PASS |
+| field_options | neg-v3-field_options — PASS |
+| group_refs | neg-v3-group_refs — PASS |
+| historical_files | neg-v3-historical_files — PASS |
+| history_compacted_summary | neg-v3-history_compacted_summary — PASS |
+| history_coverage | neg-v3-history_coverage — PASS |
+| history_operation_id_unique | neg-v3-history_operation_id_unique — FAIL по В-4 |
+| input_directory_consistency | neg-v3-input_directory_consistency — PASS |
+| input_entry_file | neg-v3-input_entry_file — PASS |
+| input_entry_object | neg-v3-input_entry_object — PASS |
+| input_nesting | neg-v3-input_nesting — PASS |
+| input_source_refs | neg-v3-input_source_refs — PASS |
+| license_file_ref | neg-v3-license_file_ref — PASS |
+| license_spdx | neg-v3-license_spdx — PASS |
+| preview_refs | neg-v3-preview_refs — PASS |
+| storage_paths | neg-v3-storage_paths — PASS |
+| timestamps | neg-v3-timestamps — PASS |
+| unique_ids | neg-v3-unique_ids — FAIL по В-4 |
+| urls | neg-v3-urls — PASS |
+| value_constraints | neg-v3-value_constraints — PASS |
+| value_dependencies_scope | neg-v3-value_dependencies_scope — PASS |
+| value_file_ref | neg-v3-value_file_ref — PASS |
+| value_options | neg-v3-value_options — PASS |
+| value_representation | neg-v3-value_representation — PASS |
+| value_unit_required | neg-v3-value_unit_required — PASS |
+| x02_unit_conversion_open | pos-unverifiable — PASS; правило выдаёт unverifiable, не error |
+
+Репозиторные правила вне доменного каталога: `zip_paths` покрыто четырьмя случаями имён, `zip_entry_kind` — двумя symlink-случаями и новым unit-тестом. `format_asset_identity` и `history_operation_id` требуют контекста репозитория и не запускаются standalone API.
+
+### Вопросы
+
+**В-4. Как проводить V2 при неоднозначных ID владельцев opaque, не снимая запрет записи такого документа?**
+
+В `neg-v3-unique_ids` повторяется ID двух разных файлов, в `neg-v3-history_operation_id_unique` — operation_id двух записей истории. Это валидные JSON и документы схемы 1.0: независимый `jsonschema.Draft202012Validator` для извлечённых манифестов выдаёт ноль ошибок. Уникальность ID относится к V3. Ожидания корпуса требуют V1/V2 passed, V3 failed, код 1, error соответствующего V3-правила.
+
+Фактически для **обеих** команд (`validate`, `verify --level full`) обоих случаев:
+
+```json
+{"v1":"passed","v2":"failed","v3":"failed","error":"am.manifest.write_blocked"}
+```
+
+При этом `v3_findings` содержит ровно ожидаемую находку `unique_ids` или `history_operation_id_unique` уровня error. Код 1 совпадает; расхождение — ложный провал V2 и приоритет ошибки write_blocked перед сообщением V3. Данные/причина воспроизводимы закоммиченными ZIP, независимая сверка и JSON сохранены в `.cache/t013-v4-evidence/summary.json` и двух отдельных `.json`.
+
+```text
+python -I tests/golden/run_golden.py --am build/win-cli/bin/am.exe --corpus tests/fixtures/golden --case neg-v3-unique_ids
+python -I tests/golden/run_golden.py --am build/win-cli/bin/am.exe --corpus tests/fixtures/golden --case neg-v3-history_operation_id_unique
+```
+
+Причина по коду: `SchemaValidator::validate` (`src/domain/manifest/schema_validator.cpp`) сначала вызывает `document.shadow()`. `ManifestDocument::shadow()` вызывает общий `Impl::render(true)` (`src/domain/manifest/codec.cpp`); он строит `Analysis` и безусловно вызывает `blocked(checked.ambiguity)` при повторяющемся ID владельца. Это правильно запрещает запись, но одновременно блокирует построение read-only представления для V2: до вызова `impl_->schema.validate` управление не доходит. Репозиторий записывает ошибку shadow как V2 failed, затем независимо запускает V3.
+
+Кодек и V2-валидатор прямо исключены из разрешённых изменений T-013, а задача требует остановиться при расхождении схемы и валидатора. Ожидания не заменены на V2 failed и случаи не исключены как «невыразимые». Нужно решение управляющего: разрешить отдельное исправление read-only shadow/V2 с сохранением запрета записи при неоднозначных владельцах либо явно определить иное ожидаемое разделение уровней/объём корпуса. Продолжать в той же ветке `codex/T-013`; отчёт трассировки и полный регрессионный прогон остаются впереди.
