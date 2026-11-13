@@ -565,6 +565,52 @@ TEST(AssetRepository, RemainingLowerLayerMappingsAtCommitBoundary) {
   }
 }
 
+TEST(AssetRepository,VerifyContainerSeparatesInvalidZipFromOperationalErrors) {
+  RecordProperty("req","K-3|K-6|ADR-0035");
+  const auto root=fresh();
+  ContainerContents contents;
+  auto invalid=verify_container(source(root,"not a ZIP"),{},&contents);
+  ASSERT_TRUE(invalid);
+  EXPECT_EQ(invalid->v1,CheckStatus::failed);
+  EXPECT_EQ(invalid->v2,CheckStatus::not_performed);
+  ASSERT_TRUE(invalid->error);
+  EXPECT_EQ(invalid->error->code,Errc::corrupt_data);
+  EXPECT_FALSE(contents.archive);
+  EXPECT_FALSE(contents.document);
+  auto missing=verify_container(root/"missing.zip",{},&contents);
+  ASSERT_FALSE(missing);
+  auto missing_source=asset_zip::file_source(root/"missing.zip",true);
+  ASSERT_FALSE(missing_source);
+  EXPECT_EQ(missing.error().code,missing_source.error().code);
+  EXPECT_EQ(missing.error().root_cause().message_id,missing_source.error().root_cause().message_id);
+  EXPECT_FALSE(contents.archive);
+  EXPECT_FALSE(contents.document);
+}
+TEST(AssetRepository,VerifyContainerRejectsRegisteredAndOpaqueSymlinks) {
+  RecordProperty("req","K-6|ADR-0037");
+  const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root);
+  const auto snapshot=value(repo.snapshot(created.ref));
+  const auto path=snapshot.manifest().known()["files"][0]["storage_path"].get<std::string>();
+  for (bool registered : {true,false}) {
+    zip_test::Entry manifest;manifest.name="manifest.json";manifest.data=snapshot.manifest_text();
+    zip_test::Entry payload;payload.name=path;payload.data="data-0";
+    zip_test::Entry link;link.name=registered ? path : "generated/opaque-link";link.data="data-0";
+    link.made_by=0x314;link.attributes=0xa1ff0000;
+    const auto built=zip_test::build(registered ? std::vector{manifest,link} : std::vector{manifest,payload,link});
+    const auto target=root/(registered ? "registered-symlink.zip" : "opaque-symlink.zip");
+    {std::ofstream out(target,std::ios::binary);out.write(reinterpret_cast<const char*>(built.bytes.data()),static_cast<std::streamsize>(built.bytes.size()));}
+    auto report=value(verify_container(target));
+    EXPECT_EQ(report.v3,CheckStatus::failed);
+    EXPECT_NE(std::find(report.v3_rules.begin(),report.v3_rules.end(),"zip_entry_kind"),report.v3_rules.end());
+    const auto finding=std::find_if(report.v3_findings.begin(),report.v3_findings.end(),[](const auto& f){return f.rule=="zip_entry_kind";});
+    ASSERT_NE(finding,report.v3_findings.end());
+    EXPECT_EQ(finding->severity,manifest::FindingSeverity::error);
+    EXPECT_EQ(finding->message_id,"am.manifest.zip_entry_kind");
+    EXPECT_TRUE(finding->pointer.empty());
+    EXPECT_NE(finding->detail.find(link.name),std::string::npos);
+    EXPECT_NE(finding->detail.find("symlink"),std::string::npos);
+  }
+}
 TEST(AssetRepository,VerifyContainerSharesReportsAndAcceptsArbitraryFilename) {
   RecordProperty("req","K-15|K-85|K-3|K-6");
   const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));auto created=create(repo,root,2);auto standalone=root/"arbitrary-name.zip";std::filesystem::copy_file(target(root,created.ref.asset_id),standalone);

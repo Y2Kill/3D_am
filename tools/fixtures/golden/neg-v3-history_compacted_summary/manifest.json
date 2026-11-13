@@ -1,0 +1,333 @@
+{
+  "format": {
+    "id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128",
+    "version": {
+      "major": 1,
+      "minor": 0
+    }
+  },
+  "asset": {
+    "id": "ffa545ed-332d-4889-be8c-43a2d3b8f800",
+    "revision": 5,
+    "created_at": "2026-11-06T10:15:03.120Z",
+    "modified_at": "2026-11-06T12:01:44.002Z",
+    "metadata": {
+      "title": "Winry Rockbell + ALT",
+      "authors": [
+        {
+          "id": "28f6868e-402b-4a3a-966f-d2460d4d5d81",
+          "name": "Dinamuuu3D",
+          "role": "sculptor"
+        }
+      ],
+      "tags": [
+        "anime",
+        "FMA"
+      ],
+      "categories": [
+        {
+          "path": [
+            "Figures",
+            "Anime"
+          ]
+        }
+      ],
+      "custom_values": [
+        {
+          "field_id": "user:968df2ff-64d1-4625-83b9-43e6f6a55a87",
+          "value": false
+        }
+      ],
+      "claims": [
+        {
+          "id": "c78921af-2c79-4619-a3f3-b437075518e3",
+          "target": {
+            "kind": "standard_item",
+            "field": "authors",
+            "item_id": "28f6868e-402b-4a3a-966f-d2460d4d5d81"
+          },
+          "relation": "supports_selected",
+          "method": "filename_inference",
+          "evidence": [
+            {
+              "source_entry_id": "e6d33bf6-4fc6-4d96-9d67-e55213718bfd",
+              "note": "prefix 'Dinamuuu3D_' in archive folder name"
+            }
+          ],
+          "created_at": "2026-11-06T10:15:03.120Z"
+        }
+      ],
+      "description": "Golden full asset",
+      "publisher": {
+        "name": "Golden Publisher",
+        "url": "https://example.org/publisher"
+      },
+      "license": {
+        "spdx": "MIT",
+        "name": "MIT",
+        "file_ref": "1f3403d0-93c1-4919-8ba3-ed78100b7b1f",
+        "url": "https://example.org/license",
+        "notice": "Synthetic fixture"
+      },
+      "links": [
+        {
+          "url": "https://example.org/asset",
+          "rel": "source"
+        }
+      ]
+    }
+  },
+  "origin": {
+    "sources": [
+      {
+        "id": "8d517948-5c97-4913-9815-76c88729070a",
+        "kind": "telegram_channel",
+        "name": "3D Printing Adult",
+        "claims": [
+          {
+            "id": "0b6f3c8e-2a51-4d7e-9c3a-5e1f7b2d4a60",
+            "target": {
+              "kind": "self"
+            },
+            "relation": "supports_selected",
+            "method": "directory_inference",
+            "created_at": "2026-11-06T10:15:03.120Z"
+          }
+        ]
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "id": "debdf916-b47c-41db-b4fd-7aa9511396f3",
+      "source_refs": [
+        "8d517948-5c97-4913-9815-76c88729070a"
+      ],
+      "imported_at": "2026-11-06T10:15:03.120Z",
+      "mode": "strict",
+      "completeness": "complete",
+      "objects": [
+        {
+          "id": "60327ee9-427b-4b88-9dea-13965f61da6c",
+          "kind": "archive",
+          "name": "0722 - Winry Rockbell + ALT - FullMetal Allchemist.rar",
+          "relative_path": "3D Printing Adult/0722 - Winry Rockbell - FullMetal Allchemist",
+          "size_bytes": "175815111",
+          "sha256": "8b2cedf7abeaa10e9b3471ad9f46ea9f8efea47eac5514e8b8bb67609f4a3cdc",
+          "container": "rar5",
+          "name_encoding": "utf-16(rar)"
+        }
+      ],
+      "entries": [
+        {
+          "id": "e6d33bf6-4fc6-4d96-9d67-e55213718bfd",
+          "object_id": "60327ee9-427b-4b88-9dea-13965f61da6c",
+          "entry_kind": "file",
+          "path": "Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
+          "size_bytes": "@size:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
+          "crc32": "f3c218f0",
+          "modified_at_raw": "2021-06-30 02:48:13.3276124",
+          "result": "included",
+          "file_id": "1f3403d0-93c1-4919-8ba3-ed78100b7b1f"
+        },
+        {
+          "id": "6c995acb-8d52-443c-b43c-a2cfca740204",
+          "object_id": "60327ee9-427b-4b88-9dea-13965f61da6c",
+          "entry_kind": "file",
+          "path": "__MACOSX/Dinamuuu3D_WinryRockbell_Alt/._AN_Winry_Hips.stl",
+          "size_bytes": "4096",
+          "result": "excluded",
+          "exclusion": {
+            "rule": "macos.appledouble",
+            "rules_version": 1,
+            "by": "auto"
+          }
+        },
+        {
+          "id": "351b684e-befc-4c57-8ff5-3cdcb5a0ef15",
+          "object_id": "60327ee9-427b-4b88-9dea-13965f61da6c",
+          "entry_kind": "file",
+          "path": "Dinamuuu3D_WinryRockbell_Alt/very long folder name …/part.stl",
+          "size_bytes": "@size:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/very long folder~3fa2b81c/part.stl",
+          "result": "included_renamed",
+          "rename_reason": "path_too_long",
+          "file_id": "b1f7828f-e962-48ad-a2a8-866bd8860bfb"
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "id": "1f3403d0-93c1-4919-8ba3-ed78100b7b1f",
+      "storage_path": "content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
+      "size_bytes": "@size:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
+      "sha256": "@sha256:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
+      "origin_kind": "imported",
+      "type": {
+        "id": "mesh.stl.binary",
+        "by": "signature"
+      }
+    },
+    {
+      "id": "b1f7828f-e962-48ad-a2a8-866bd8860bfb",
+      "storage_path": "content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/very long folder~3fa2b81c/part.stl",
+      "size_bytes": "@size:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/very long folder~3fa2b81c/part.stl",
+      "sha256": "@sha256:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/very long folder~3fa2b81c/part.stl",
+      "origin_kind": "imported",
+      "type": {
+        "id": "mesh.stl.binary",
+        "by": "signature"
+      }
+    },
+    {
+      "id": "4a5ad0ca-eb13-45b3-893b-907c1ba8377f",
+      "storage_path": "generated/previews/4a5ad0ca-eb13-45b3-893b-907c1ba8377f.png",
+      "size_bytes": "@size:generated/previews/4a5ad0ca-eb13-45b3-893b-907c1ba8377f.png",
+      "sha256": "@sha256:generated/previews/4a5ad0ca-eb13-45b3-893b-907c1ba8377f.png",
+      "origin_kind": "generated",
+      "derived_from": [
+        {
+          "file_id": "1f3403d0-93c1-4919-8ba3-ed78100b7b1f",
+          "sha256": "@sha256:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl"
+        }
+      ],
+      "generation": {
+        "tool": "core:preview.mesh",
+        "tool_version": "0.1.0",
+        "params": {
+          "width": 1024,
+          "height": 1024,
+          "camera": "iso"
+        }
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "c9df9075-8b2c-4a65-bebd-5d150e8c4ff8",
+      "name": "1/6",
+      "type": "scale",
+      "file_refs": [
+        "1f3403d0-93c1-4919-8ba3-ed78100b7b1f",
+        "b1f7828f-e962-48ad-a2a8-866bd8860bfb"
+      ]
+    }
+  ],
+  "previews": {
+    "primary_id": "800e346a-f902-4c33-8e37-57ce68a41550",
+    "items": [
+      {
+        "id": "800e346a-f902-4c33-8e37-57ce68a41550",
+        "file_id": "4a5ad0ca-eb13-45b3-893b-907c1ba8377f",
+        "group_refs": [
+          "c9df9075-8b2c-4a65-bebd-5d150e8c4ff8"
+        ]
+      }
+    ]
+  },
+  "field_definitions": [
+    {
+      "id": "user:968df2ff-64d1-4625-83b9-43e6f6a55a87",
+      "schema_revision": 1,
+      "name": "Printed",
+      "type": "boolean",
+      "scopes": [
+        "asset"
+      ],
+      "default": false
+    }
+  ],
+  "extensions": {
+    "org.example.stlstats": {
+      "schema_version": "1",
+      "data": {
+        "1f3403d0-93c1-4919-8ba3-ed78100b7b1f": {
+          "triangles": 513000,
+          "bbox_mm": [
+            41.2,
+            38.0,
+            77.9
+          ]
+        }
+      },
+      "dependencies": {
+        "state": "declared",
+        "refs": [
+          {
+            "kind": "file",
+            "file_id": "1f3403d0-93c1-4919-8ba3-ed78100b7b1f",
+            "sha256": "@sha256:content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl"
+          }
+        ]
+      }
+    }
+  },
+  "history": {
+    "entries": [
+      {
+        "revision": 1,
+        "operation_id": "c464283b-6aee-48d0-9f0e-992cd488c64e",
+        "timestamp": "2026-11-06T10:15:03.120Z",
+        "operation": "asset_created",
+        "tool": {
+          "application_version": "0.1.0",
+          "profile": {
+            "id": "telegram",
+            "version": 1,
+            "sha256": "1900eab6c028483d7126599ee6f50de0d27907b5c65fa90524580b4b0f9852b0"
+          },
+          "handlers": {
+            "archive": "libarchive 3.8.1"
+          },
+          "exclusion_rules_version": 1
+        },
+        "changes": [
+          {
+            "kind": "file_add",
+            "target": "1f3403d0-93c1-4919-8ba3-ed78100b7b1f"
+          },
+          {
+            "kind": "file_add",
+            "target": "b1f7828f-e962-48ad-a2a8-866bd8860bfb"
+          }
+        ]
+      },
+      {
+        "revision": 5,
+        "operation_id": "671deada-2005-4b83-a9e1-8dcd82019e96",
+        "timestamp": "2026-11-06T12:01:44.002Z",
+        "operation": "previews_changed",
+        "changes": [
+          {
+            "kind": "file_add",
+            "target": "4a5ad0ca-eb13-45b3-893b-907c1ba8377f"
+          },
+          {
+            "kind": "preview_set_primary",
+            "target": "800e346a-f902-4c33-8e37-57ce68a41550"
+          }
+        ]
+      }
+    ],
+    "compacted_ranges": [
+      {
+        "from_revision": 2,
+        "to_revision": 4,
+        "summary": {
+          "revision_count": 2,
+          "operation_counts": {
+            "metadata_changed": 3
+          }
+        }
+      }
+    ]
+  },
+  "historical_files": [
+    {
+      "id": "00000000-0000-4000-8000-000000000099",
+      "removed_at_revision": 2,
+      "last_known_size_bytes": "3",
+      "last_known_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "format": "am-expected",
+  "version": 1,
+  "kind": "golden_zip",
+  "case": "neg-v4-missing",
+  "description": "Registered stream is absent",
+  "req": [
+    "K-3",
+    "K-6",
+    "ADR-0035"
+  ],
+  "input": {
+    "zip": "asset.zip"
+  },
+  "checks": [
+    {
+      "command": "validate",
+      "args": [],
+      "exit_code": 0,
+      "json": {
+        "command": "validate",
+        "v1": "passed",
+        "v2": "passed",
+        "v3": "passed"
+      }
+    },
+    {
+      "command": "verify",
+      "args": [
+        "--level",
+        "full"
+      ],
+      "exit_code": 1,
+      "json": {
+        "command": "verify",
+        "v1": "passed",
+        "v2": "passed",
+        "v3": "passed",
+        "error": "am.manifest.missing_stream",
+        "container_verification": "partial",
+        "v4": [
+          {
+            "status": "failed"
+          }
+        ]
+      }
+    }
+  ]
+}

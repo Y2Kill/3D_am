@@ -1,0 +1,18 @@
+{
+  "entries": [
+    {
+      "name": "manifest.json",
+      "manifest": true
+    },
+    {
+      "name": "generated/payload.bin",
+      "source": "payload.bin"
+    }
+  ],
+  "patches": [
+    {
+      "kind": "truncate",
+      "size": 7
+    }
+  ]
+}

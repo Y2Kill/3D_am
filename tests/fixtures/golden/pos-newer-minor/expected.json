@@ -1,0 +1,55 @@
+{
+  "format": "am-expected",
+  "version": 1,
+  "kind": "golden_zip",
+  "case": "pos-newer-minor",
+  "description": "Newer minor manifest preserves unknown structural keys",
+  "req": [
+    "K-3",
+    "K-6",
+    "ADR-0035"
+  ],
+  "input": {
+    "zip": "asset.zip"
+  },
+  "checks": [
+    {
+      "command": "validate",
+      "args": [],
+      "exit_code": 3,
+      "json": {
+        "command": "validate",
+        "format_support": "newer_minor",
+        "v1": "passed",
+        "v2": "not_applicable_newer_minor",
+        "v3": "not_performed"
+      }
+    },
+    {
+      "command": "verify",
+      "args": [
+        "--level",
+        "full"
+      ],
+      "exit_code": 3,
+      "json": {
+        "command": "verify",
+        "format_support": "newer_minor",
+        "v1": "passed",
+        "v2": "not_applicable_newer_minor",
+        "v3": "not_performed",
+        "container_verification": "partial"
+      }
+    },
+    {
+      "command": "inspect",
+      "args": [],
+      "exit_code": 3,
+      "json": {
+        "command": "inspect",
+        "v1": "passed",
+        "v2": "not_applicable_newer_minor"
+      }
+    }
+  ]
+}

@@ -68,7 +68,8 @@ if(AM_WITH_CONTAINER)
   endif()
 endif()
 am_apply_defaults(am_unit_tests)
-gtest_discover_tests(am_unit_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(am_unit_tests DISCOVERY_MODE PRE_TEST
+  XML_OUTPUT_DIR "${PROJECT_BINARY_DIR}/gtest-xml")
 
 # Python-based checks: architecture (ADR-0024) and the draft manifest schema (ADR-0036 item 8).
 # - Default: a missing jsonschema module makes schema_check FAIL (not a silent SKIP).
@@ -92,11 +93,22 @@ if(AM_PYTHON_TESTS)
     endif()
     message(WARNING "Python 3 not found: arch_check and schema_check are not registered")
   else()
+    add_test(NAME req_report_selftest
+      COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/coverage/req_report.py --selftest)
+    set_tests_properties(req_report_selftest PROPERTIES LABELS "req:ADR-0029")
+    add_test(NAME golden_regen_check
+      COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/fixtures/make_golden_zips.py
+        --root ${PROJECT_SOURCE_DIR} --check)
+    set_tests_properties(golden_regen_check PROPERTIES LABELS "req:K-3;req:K-6;req:ADR-0035")
     if(AM_WITH_CONTAINER)
       add_test(NAME message_catalog_check
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/tools/message_catalog_check.py --root ${PROJECT_SOURCE_DIR})
       set_tests_properties(message_catalog_check PROPERTIES LABELS "req:ADR-0032;req:ADR-0034")
       if(TARGET am_cli)
+      add_test(NAME golden_zip
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/golden/run_golden.py
+          --am $<TARGET_FILE:am_cli> --corpus ${PROJECT_SOURCE_DIR}/tests/fixtures/golden)
+      set_tests_properties(golden_zip PROPERTIES LABELS "req:K-3;req:K-6;req:ADR-0035")
       foreach(_am_cli_case create_roundtrip create_refusals validate_verify inspect_minor extract json_examples development)
         add_test(NAME cli_${_am_cli_case}
           COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_asset_cli.py

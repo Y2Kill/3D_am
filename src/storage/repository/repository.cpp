@@ -137,9 +137,13 @@ class Invariants final : public SemanticValidator {
       check(classify(j) == FormatSupport::supported && j.contains("asset") && string(j["asset"],"id") == context.ref.asset_id,"format_asset_identity","/asset/id");
       }
       result.checked_rules.push_back("zip_paths");
+      result.checked_rules.push_back("zip_entry_kind");
       std::set<std::string> used;
       for (const auto& e : zip.entries()) {
         check(e.raw_name.size() <= 200 && paths::check_container_path(e.raw_name).ok() && used.insert(unicode::path_collision_key(e.raw_name)).second,"zip_paths","",diagnostic_name(e.raw_name));
+        const char* kind = e.kind == asset_zip::EntryKind::symlink ? "symlink" :
+            e.kind == asset_zip::EntryKind::directory ? "directory" : "special";
+        check(e.kind == asset_zip::EntryKind::regular,"zip_entry_kind","",diagnostic_name(e.raw_name)+" ("+kind+")");
       }
       if (context.new_operation_id) {
         result.checked_rules.push_back("history_operation_id");
@@ -275,7 +279,13 @@ Result<VerificationReport> verify_container(const Path& path,const ContainerVeri
   return guard<VerificationReport>([&] {
     ContainerContents contents;
     contents.budget=std::make_shared<asset_zip::ReadBudget>(supplied.read_budget);
-    contents.archive=take(asset_zip::ZipArchive::open(take(asset_zip::file_source(path,true)),supplied.zip_limits));
+    auto opened=asset_zip::ZipArchive::open(take(asset_zip::file_source(path,true)),supplied.zip_limits);
+    if(!opened && (opened.error().code==Errc::corrupt_data || opened.error().code==Errc::unsupported)) {
+      VerificationReport report;report.v1=CheckStatus::failed;report.error=opened.error();
+      if(output)*output=std::move(contents);
+      return report;
+    }
+    contents.archive=take(std::move(opened));
     auto parsed=guard<ManifestRead>([&]{return read_manifest(*contents.archive,supplied.codec_limits,*contents.budget);});
     if(!parsed){VerificationReport report;report.v1=CheckStatus::failed;report.error=parsed.error();if(output)*output=std::move(contents);return report;}
     contents.manifest_text=std::move(parsed->text);contents.document=std::move(parsed->document);

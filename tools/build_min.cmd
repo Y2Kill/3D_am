@@ -48,5 +48,10 @@ cd /d "%ROOT%" || exit /b 1
 cmake --preset win-debug-min %CI_CONFIG% %FETCH_CONFIG% %PYTHON_CONFIG% || exit /b 1
 cmake --build --preset win-debug-min || exit /b 1
 call "%ROOT%\tools\check_ninja_deps.cmd" "%ROOT%\build\win-debug-min" || exit /b 1
-ctest --preset win-debug-min %CI_CTEST% %CTEST_ARGS% || exit /b 1
-endlocal
+ctest --preset win-debug-min %CI_CTEST% %CTEST_ARGS%
+set "CTEST_RESULT=%ERRORLEVEL%"
+if not defined CI_CTEST exit /b %CTEST_RESULT%
+python -I "%ROOT%\tools\coverage\req_report.py" --build-dir "%ROOT%\build\win-debug-min" --matrix "%ROOT%\docs\plan\acceptance_matrix.md"
+set "REPORT_RESULT=%ERRORLEVEL%"
+if not "%CTEST_RESULT%"=="0" exit /b %CTEST_RESULT%
+exit /b %REPORT_RESULT%

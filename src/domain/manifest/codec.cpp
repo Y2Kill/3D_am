@@ -324,7 +324,7 @@ struct ManifestDocument::Impl {
       return fragment.text;
     });
     const Analysis checked(text, limits);
-    if (!checked.ambiguity.empty()) blocked(checked.ambiguity);
+    if (!checked.ambiguity.empty() && (!shadow || keys)) blocked(checked.ambiguity);
     auto roots = checked.roots;
     std::sort(roots.begin(), roots.end(), [&](const Root& a, const Root& b) {
       return checked.tree.nodes[a.node].begin < checked.tree.nodes[b.node].begin;

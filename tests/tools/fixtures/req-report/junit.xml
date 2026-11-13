@@ -1,0 +1,6 @@
+<testsuite>
+  <testcase name="Pretty/ParamTest/argument"/>
+  <testcase name="Failing"><failure message="synthetic failure"/></testcase>
+  <testcase name="Skipped"><skipped message="synthetic skip"/></testcase>
+  <testcase name="NoAnnotation"/>
+</testsuite>

@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "name": "manifest.json",
+      "manifest": true,
+      "method": "deflate"
+    },
+    {
+      "name": "generated/payload.bin",
+      "source": "payload.bin",
+      "method": "deflate"
+    }
+  ],
+  "descriptor": true
+}

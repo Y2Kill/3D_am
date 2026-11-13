@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "name": "manifest.json",
+      "manifest": true
+    },
+    {
+      "name": "generated/payload.bin",
+      "source": "payload.bin",
+      "extra_hex": "555405000100e10b5e",
+      "comment": "foreign metadata"
+    }
+  ]
+}

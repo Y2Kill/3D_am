@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "name": "manifest.json",
+      "manifest": true
+    },
+    {
+      "name": "generated/payload.bin",
+      "source": "payload.bin"
+    }
+  ],
+  "zip64": true,
+  "descriptor": true
+}

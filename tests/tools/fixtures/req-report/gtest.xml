@@ -1,0 +1,5 @@
+<testsuites><testsuite name="Suite">
+  <testcase classname="Suite" name="Param/0"><properties><property name="req" value="M-02|R-09.8|O-99"/></properties></testcase>
+  <testcase classname="Suite" name="Failing"><properties><property name="req" value="ADR-0038"/></properties></testcase>
+  <testcase classname="Old" name="Stale"><properties><property name="req" value="Q-01"/></properties></testcase>
+</testsuite></testsuites>

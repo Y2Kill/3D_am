@@ -142,6 +142,7 @@
 "am.resource_exhausted" = "There are not enough resources to complete the operation."
 "am.unknown" = "The data could not be processed (unknown)."
 "am.unsupported" = "The requested feature is not supported."
+"am.manifest.zip_entry_kind" = "A ZIP entry is not a regular file (for example, a symbolic link)."
 "am.zip.duplicate_name" = "The data could not be processed (duplicate name)."
 "am.zip.entry_corrupt" = "The data could not be processed (entry corrupt)."
 "am.zip.invalid_structure" = "The data could not be processed (invalid structure)."

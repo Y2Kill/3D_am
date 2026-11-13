@@ -1,0 +1,58 @@
+{
+  "format": "am-expected",
+  "version": 1,
+  "kind": "golden_zip",
+  "case": "neg-zip-symlink",
+  "description": "Registered entry marked as Unix symlink",
+  "req": [
+    "K-3",
+    "K-6",
+    "ADR-0035"
+  ],
+  "input": {
+    "zip": "asset.zip"
+  },
+  "checks": [
+    {
+      "command": "validate",
+      "args": [],
+      "exit_code": 1,
+      "json": {
+        "command": "validate",
+        "v1": "passed",
+        "v2": "passed",
+        "v3": "failed",
+        "error": "am.manifest.zip_entry_kind",
+        "v3_findings": [
+          {
+            "rule": "zip_entry_kind",
+            "severity": "error",
+            "message_id": "am.manifest.zip_entry_kind"
+          }
+        ]
+      }
+    },
+    {
+      "command": "verify",
+      "args": [
+        "--level",
+        "full"
+      ],
+      "exit_code": 1,
+      "json": {
+        "command": "verify",
+        "v1": "passed",
+        "v2": "passed",
+        "v3": "failed",
+        "error": "am.manifest.zip_entry_kind",
+        "v3_findings": [
+          {
+            "rule": "zip_entry_kind",
+            "severity": "error",
+            "message_id": "am.manifest.zip_entry_kind"
+          }
+        ]
+      }
+    }
+  ]
+}
