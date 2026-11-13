@@ -104,6 +104,7 @@ TEST(AssetService, CreateInspectValidateVerifyExtractRoundTrip) {
   extract.file_ids = {info.value["files"][0]["id"]};
   EXPECT_EQ(value(app::extract_asset(o.output, extract)).value["file_count"], 1);
 #else
+  // docs/specifications/fs_support.md v0.2: Linux writes remain read_only_default until S5 trials.
   auto root = fresh();
   auto o = inputs(root);
   auto r = app::create_asset(o);

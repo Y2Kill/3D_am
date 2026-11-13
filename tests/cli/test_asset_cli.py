@@ -74,6 +74,8 @@ class AssetCli(unittest.TestCase):
         if os.name == "nt":
             self.run_am("asset", "create", *self.files, "-o", target, "--title", "Тестовый asset", json_output=True)
         else:
+            # docs/specifications/fs_support.md v0.2: non-Windows writes stay read_only_default.
+            # Independent fixtures exercise reading without bypassing the production policy.
             asset_id, input_id = str(uuid.uuid4()), str(uuid.uuid4())
             timestamp = "2026-11-12T00:00:00Z"
             payloads, records = {}, []
@@ -136,7 +138,9 @@ class AssetCli(unittest.TestCase):
 
     def test_create_roundtrip(self):
         if os.name != "nt":
-            self.run_am("asset", "create", self.files[0], "-o", self.root / "unsupported.zip", expected=4)
+            # fs_support.md v0.2: ext4/WSL have not passed the S5 filesystem trials.
+            result = self.run_am("asset", "create", self.files[0], "-o", self.root / "unsupported.zip", expected=4, json_output=True)
+            self.assertEqual(result["error"]["message_id"], "am.repo.storage_read_only")
             self.stage_clean()
             return
         target = self.create()
@@ -153,8 +157,8 @@ class AssetCli(unittest.TestCase):
         with zipfile.ZipFile(target) as archive:
             self.assertEqual((output / "manifest.json").read_bytes(), archive.read("manifest.json"))
 
-    @unittest.skipUnless(os.name == "nt", "create requires a verified Windows fixed NTFS filesystem")
     def test_create_refusals(self):
+        # Argument/path refusals need no verified filesystem and run on Linux too.
         existing = self.root / "existing.zip"
         existing.write_bytes(b"keep")
         result = self.run_am("asset", "create", self.files[0], "-o", existing, expected=4, json_output=True)

@@ -12,6 +12,10 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 
 using namespace am;
@@ -45,6 +49,10 @@ void valid(const Path& path) {
 }
 CommitRequest request(const Path& root, const std::string& asset, asset_zip::ReadBudget& budget) {
   CommitRequest r(budget); r.library_root = root; r.target_path = root / "asset.zip"; r.asset_id = asset; r.op_id = id(); r.estimated_size = 6000; r.hooks.mid_write_after_bytes = 2250;
+#ifndef _WIN32
+  // Synthetic protocol tests do not certify the filesystem (fs_support.md v0.2).
+  r.capabilities.mode = StorageMode::full;
+#endif
   if (std::filesystem::exists(r.target_path)) r.base = value(inspect_zip(r.target_path, budget)); else r.kind = "create";
   r.producer = [](asset_zip::ZipWriter& w) -> Result<void> { produce(w); return {}; }; return r;
 }
@@ -100,10 +108,30 @@ TEST(CommitProtocol, CreateUpdateVerifyEvidenceAndCallbacks) {
   auto created = commit_zip(r); ASSERT_TRUE(created) << created.error().ctx.detail; EXPECT_EQ(calls, 2); EXPECT_EQ(created->op_id, r.op_id); EXPECT_EQ(created->size, std::filesystem::file_size(root / "asset.zip"));
 #ifdef _WIN32
   EXPECT_EQ(created->replacement, Replacement::posix_rename);
+#else
+  EXPECT_EQ(created->replacement, Replacement::rename);
 #endif
   auto actual = value(inspect_zip(root / "asset.zip", budget)); EXPECT_EQ(actual.manifest_sha256, created->manifest_sha256); EXPECT_EQ(actual.mtime_ns, created->mtime_ns); valid(root / "asset.zip"); clean(root);
   auto update = request(root, asset, budget); update.producer = [](auto& w) -> Result<void> { produce(w, "two", 't'); return {}; };
   auto updated = commit_zip(update); ASSERT_TRUE(updated) << updated.error().ctx.detail; EXPECT_NE(updated->manifest_sha256, created->manifest_sha256); clean(root);
+#ifndef _WIN32
+  // A pathname swap after verification must fail the post-rename identity check.
+  auto swapped = request(root, asset, budget);
+  swapped.hooks.point = [&](FaultPoint p) -> Result<void> {
+    if (p == FaultPoint::before_replace) {
+      const auto temp = root / ".am/.am-tmp" / (asset + "." + swapped.op_id + ".zip");
+      const auto size = std::filesystem::file_size(temp);
+      write_version(temp, "new", 'q');
+      EXPECT_EQ(std::filesystem::file_size(temp), size);
+    }
+    return {};
+  };
+  auto failed = commit_zip(swapped); ASSERT_FALSE(failed);
+  EXPECT_EQ(failed.error().message_id, "am.commit.replace_failed");
+  valid(root / "asset.zip");
+  auto recovered = value(recover(root)); ASSERT_EQ(recovered.size(), 1u);
+  EXPECT_EQ(recovered[0].outcome, RecoveryOutcome::rolled_back); clean(root);
+#endif
 }
 TEST(CommitProtocol, EveryPreReplaceInjectedErrorRollsBackWithoutChangingTarget) {
   RecordProperty("req", "ADR-0006");
@@ -299,7 +327,16 @@ TEST(CommitProtocol, OrphanAgeAndBusyHandleProtectCleanup) {
   const auto root = fresh(); const auto dir = root / ".am/.am-tmp"; std::filesystem::create_directories(dir);
   write_version(dir / "young.zip"); write_version(dir / "old.zip"); write_version(dir / "busy.zip");
   const auto old_time = std::filesystem::file_time_type::clock::now() - std::chrono::hours(25); std::filesystem::last_write_time(dir / "old.zip", old_time); std::filesystem::last_write_time(dir / "busy.zip", old_time);
-  auto held = value(asset_zip::file_source(dir / "busy.zip")); auto report = value(recover(root));
+#ifdef _WIN32
+  auto held = value(asset_zip::file_source(dir / "busy.zip"));
+#else
+  // POSIX readers do not deny unlink; mark this fixture busy with the advisory lock
+  // used by the cleanup probe, rather than assuming Win32 sharing semantics.
+  struct SharedLock { int fd; ~SharedLock() { if (fd >= 0) ::close(fd); } };
+  SharedLock held{::open((dir / "busy.zip").c_str(), O_RDONLY)};
+  ASSERT_GE(held.fd, 0); ASSERT_EQ(::flock(held.fd, LOCK_SH | LOCK_NB), 0);
+#endif
+  auto report = value(recover(root));
   EXPECT_TRUE(std::filesystem::exists(dir / "young.zip")); EXPECT_FALSE(std::filesystem::exists(dir / "old.zip")); EXPECT_TRUE(std::filesystem::exists(dir / "busy.zip"));
   EXPECT_EQ(std::count_if(report.begin(), report.end(), [](const auto& x) { return x.outcome == RecoveryOutcome::cleaned; }), 1);
 }
@@ -348,5 +385,7 @@ TEST(CommitProtocol, WindowsAndFilesystemEvidence) {
   EXPECT_EQ(std::wstring(filesystem.data()), L"NTFS"); OSVERSIONINFOW version{}; version.dwOSVersionInfoSize = sizeof(version);
   using Version = LONG(WINAPI*)(OSVERSIONINFOW*); Version query = nullptr; auto address = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"); std::memcpy(&query, &address, sizeof(query)); ASSERT_NE(query, nullptr); ASSERT_EQ(query(&version), 0);
   std::wcout << L"ENV Windows=" << version.dwMajorVersion << L'.' << version.dwMinorVersion << L" build=" << version.dwBuildNumber << L" filesystem=" << filesystem.data() << L" volume=" << volume.data() << L'\n';
+#else
+  GTEST_SKIP() << "Win32 OS and NTFS evidence APIs";
 #endif
 }
