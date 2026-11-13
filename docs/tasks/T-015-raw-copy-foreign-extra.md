@@ -41,3 +41,95 @@ ADR-0039 п. 7: читатель принимает любые корректн�
 
 - Показ отброшенных полей пользователю (CLI/GUI), политика «сохранять известные безопасные поля».
 - Golden ZIP (T-013): там добавляется положительный случай чтения с чужим extra field.
+
+## Отчёт исполнителя
+
+**2026-11-13. Ветка:** `codex/T-015`, создана от `main` (`f68fab7`). Коммиты: `9635238` — воспроизведение исходного дефекта; `557159c` — реализация и тесты писателя. Завершающий коммит содержит этот отчёт и статус `review`. Push, слияние и переписывание истории не выполнялись.
+
+**Результат: T-015 выполнена.** Ассет с чужими extra fields и комментарием записи можно изменить через `AssetRepository`; содержимое, сжатые байты и SHA-256 сохраняются, чужие поля и комментарий в новые заголовки не попадают.
+
+### Критерии приёмки
+
+1. Windows min/cli/offline и Linux CLI в WSL — PASS. JUnit сверены с ctest; все имена прежних тестов принятой T-014 сохранены. Windows CLI **290 → 294**, Linux **287 → 291**: добавлены ровно четыре новых теста, старые не удалены и не переименованы. Минимум — прежние 84; 13 платформенных Linux-пропусков совпали с T-014.
+2. Режим отбрасывания, счётчики, приоритет явного переноса и исходный отказ проверены; регрессионный тест репозитория зафиксирован до исправления. Команды и фактические результаты ниже.
+3. Изменены только разрешённые файлы, отчёт и строка реестра. Читатель ZIP, кодек, V3, протокол фиксации, схема, спецификация и ADR не менялись. Коллекция владельца не читалась, зависимости не скачивались; использованы синтетические данные и существующие кэши.
+
+### Реализация и тесты
+
+В `RawCopyOptions` добавлено `drop_unlisted = false`. По умолчанию неизвестное/неразрешённое extra field либо непустой комментарий по-прежнему вызывает `am.zip.write.extra_not_preserved` до начала записи entry. При `true` неразрешённая метаинформация не переносится, а явно разрешённые `carry_extra_ids` и `carry_comment` имеют приоритет. Поле `0x0001` по-прежнему формируется писателем из фактических размеров/смещений, исходное поле не копируется вслепую.
+
+В `WrittenEntry` добавлены `dropped_extra_fields` и `dropped_comment`; они сохраняются и в `WriteSummary`. **`dropped_extra_fields` — число уникальных отброшенных ID на запись по обоим заголовкам вместе**, не сумма физических экземпляров TLV: `0x5455` в local и central → **1**; `0x5455` в обоих и ещё `0x7875` → **2**. Повторения одного ID считаются один раз. `0x0001` и явно перенесённые поля в этот счётчик не входят. `dropped_comment` истинен только для непустого неразрешённого комментария, реально отброшенного режимом `drop_unlisted`. Новые записи имеют 0/false.
+
+В producer репозитория изменён только вызов `copy_raw`: передаётся `RawCopyOptions` с `drop_unlisted = true`; списки явного переноса пусты, `carry_comment = false`. Декодирование/CRC/SHA-256/бюджет проверяются прежним кодом. `ChangeResult` и CLI не расширялись; путь создания новых записей не менялся. В `CHANGELOG.md` добавлена английская строка о возможности изменения таких ассетов.
+
+| Тест | Что проверяет |
+|---|---|
+| `ZipWriter.RawCopyDropsForeignExtraAndCommentWithoutChangingPayload` | Stored и Deflate; исходный ZIP64; одинаковый `0x5455` в local/central и бинарный комментарий; результат без них, счётчики 1/true, те же сжатые байты/CRC/размеры/SHA-256 и расход бюджета; `verify_written` PASS, новые записи 0/false |
+| `ZipWriter.RawCopyExplicitCarryOverridesDropPolicy` | Явный перенос `0x5455` сохраняется при drop; `0x7875` отбрасывается; `carry_comment` имеет приоритет; `verify_written` PASS |
+| `ZipWriter.RawCopyCountsDistinctDroppedExtraIdsAcrossHeaders` | Точная семантика счётчика: два разных ID при дублированном `0x5455` дают 2; пустой комментарий не считается отброшенным |
+| `AssetRepository.MetadataChangeDropsForeignExtraAndCommentWithoutChangingPayload` | Настоящий синтетический ассет 1.0, `0x5455` в обоих заголовках content-entry и комментарий; исходный `verify` full; `SetMetadata` проходит; новые заголовки чистые, сжатые байты/CRC/размеры/SHA-256 прежние; итоговый `verify` full, V3 без находок |
+| Прежний `RawExtraAndCommentPolicyIsExplicitAndRecoverable` | Без изменений: сохранены отказы по умолчанию и возможность повторить вызов после явного разрешения переноса |
+
+Все четыре новых теста содержат `RecordProperty("req", "ADR-0039")`. Фикстура репозитория собрана через существующий независимый `zip_test::build`, без разрешения чужих полей в писателе.
+
+### Доказательство исходного дефекта
+
+До изменений продукционного кода добавлен тест репозитория и выполнен:
+
+```text
+tools\build_cli.cmd --ci -R AssetRepository.MetadataChangeDropsForeignExtraAndCommentWithoutChangingPayload
+0% tests passed, 1 tests failed out of 1
+Total Test time (real) = 1.42 sec
+am.repo.unsupported_container cause=am.zip.write.extra_not_preserved
+Extra id=21589 is not authorized for transfer
+```
+
+Внешний `message_id` переведён существующей границей репозитория в `am.repo.unsupported_container`; исходный требуемый `am.zip.write.extra_not_preserved` сохранён в `cause` и явно выведен тестом. Исходный `verify` уже возвращал `full`: отказ возникал именно при изменении. Логи: `.cache/t015-red-repository-cause.log`, `*-tests.log`, `*-junit.xml`, `*-result.json`; предыдущий первый запуск — `.cache/t015-red-repository.log`.
+
+После исправления тот же тест прошёл 1/1 PASS (ctest 1.63 с), а затем выполнен во всех полных CLI-прогонах. Отдельный набор писателя `tools\build_cli.cmd --ci -R ZipWriter.Raw` — 7/7 PASS, ctest 0.89 с; лог `.cache/t015-targeted-writer.log`.
+
+### Команды и фактические результаты
+
+```text
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 84
+Total Test time (real) =  34.36 sec
+```
+
+Полный вызов: 56.86 с; пропусков: 0.
+
+```text
+tools\build_cli.cmd --ci
+100% tests passed, 0 tests failed out of 294
+Total Test time (real) = 983.37 sec
+```
+
+Полный вызов: 1040.10 с; пропусков: 0.
+
+```text
+tools\build_cli.cmd --offline --ci
+100% tests passed, 0 tests failed out of 294
+Total Test time (real) = 841.18 sec
+```
+
+Полный вызов: 850.22 с; пропусков: 0.
+
+```text
+tools/build_linux.sh cli --ci
+100% tests passed, 0 tests failed out of 291
+Total Test time (real) = 1161.98 sec
+```
+
+Полный вызов: 1310.00 с; пропусков: 13.
+
+Обязательные `arch_check`, `message_catalog_check`, `schema_check`, `sql_check`, CLI и ZIP interoperability выполнены во всех полных CLI-прогонах. JUnit разобран как XML; числа `testcase` совпадают с ctest, failures/errors — 0. CMakeCache CI-прогонов содержит `AM_REQUIRE_PYTHON_TESTS:BOOL=ON`. В Windows offline подтверждены бинарный cache `read` и asset cache `read;x-block-origin`; загрузок зависимостей нет.
+
+Логи и снимки: `.cache/t015-<имя>.log`, `.cache/t015-<имя>-{junit.xml,tests.log,CMakeCache.txt,result.json}`; имена — `final-min`, `final-cli`, `final-offline`, `final-linux-cli`. Linux — WSL Ubuntu, рабочая папка `/mnt/d` (DrvFS/NTFS), не ext4; политика ФС и synthetic capabilities прежние. Python-модули: Windows `.cache/pylib`, Linux `AM_PYTHON_EXTRA_PATH=$PWD/.cache/t005-pylib-linux`, без переустановки. Linux-подготовка с `--offline --ci -N` — только компиляция/перечисление, полный ctest проверен отдельно. Полные Windows- и Linux-прогоны запускались последовательно. WSL после проверок остановлен через `wsl --terminate Ubuntu`.
+
+### Отклонения и вопросы
+
+Открытых вопросов и изменений вне объёма нет. Уточнение счётчика по уникальным ID явно записано в комментарии `WrittenEntry` и выше; оно даёт требуемое значение 1 для одного ID в обоих заголовках. Исходные тесты отказа/явного переноса не менялись; новые тесты добавлены без уменьшения старых проверок.
+
+Потребовалась **чистая пересборка Windows** после изменения структуры `WrittenEntry`: первый инкрементальный запуск упал с SEH `0xc0000005`. `ninja -t deps` показал `#deps 0` у объекта теста репозитория; после правки заголовка он оставался старым и был несовместим с новым layout. `cmake --build --preset win-cli --clean-first` пересобрал все 68 шагов, затем регрессионный тест — PASS. Логи: `.cache/t015-ninja-deps.log`, `.cache/t015-green-repository.log` (промежуточный SEH), `.cache/t015-green-clean-repository.log` (чистая сборка и PASS). Продукционные build-скрипты не менялись, артефакты пересозданы внутри проекта; итоговые проверки использовали согласованную сборку.
+
+Все изменения исполнителя закоммичены. Существующий неотслеживаемый `3D_am_open_questions_e2472e9.zip` не менялся и в коммиты не включён.
