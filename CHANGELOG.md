@@ -17,6 +17,8 @@ All notable user-visible changes are recorded here.
 
 ### Changed
 
+- Manifest V3 checks physical defaults and claim units, required fields of base
+  history changes, and excluded input directories according to ADR-0039.
 - Command parsing uses CLI11, including UTF-8 Windows arguments. Existing
   development commands remain available in a separate help group.
 - ZIP-path findings now identify the offending entry in technical details.

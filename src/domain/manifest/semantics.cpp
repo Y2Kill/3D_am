@@ -376,6 +376,26 @@ class Validator {
                r.pointer + "/file_id");
       }
     });
+    stage({"input_directory_consistency"}, [&] {
+      std::map<const J*, std::multimap<std::string_view, const Row*>> paths_by_input;
+      for (const auto& r : entries) paths_by_input[input_of[r.node]].emplace(str(r.j(), "path"), &r);
+      for (const auto& input : paths_by_input) {
+        const auto& paths = input.second;
+        for (const auto& [path, directory] : paths) {
+          if (str(directory->j(), "entry_kind") != "directory" || path.empty() ||
+              str(directory->j(), "result") != "excluded")
+            continue;
+          auto prefix = std::string(path);
+          if (!prefix.ends_with('/')) prefix += '/';
+          for (auto child = paths.lower_bound(prefix); child != paths.end() && child->first.starts_with(prefix); ++child)
+            if (child->first.size() > prefix.size())
+              expect(str(child->second->j(), "result") == "excluded", "input_directory_consistency",
+                     child->second->pointer + "/result", "Descendant of an excluded directory must be excluded");
+        }
+        // Directory entries persist no destination prefix. Descendant paths alone
+        // do not disambiguate directory renames from independent child renames.
+      }
+    });
     stage({"input_nesting"}, [&] {
       for (const auto& r : objects) {
         auto po = str(r.j(), "parent_object_id"), pe = str(r.j(), "parent_entry_id");
@@ -463,21 +483,11 @@ class Validator {
     if (type == "file_ref" && !claim)
       expect(file_ids.contains(s), default_value ? "field_default" : "value_file_ref", p,
              "File reference is not current");
-    if (physical(field)) {
-      if (default_value) {
-        finding("x02_physical_default_open", p, "Physical default has no established unit contract",
-                FindingSeverity::unverifiable);
-        return;
-      }
-      if (claim) {
-        finding("claim_value_unit_unexpressible", p, "Claim cannot express a physical value unit",
-                FindingSeverity::unverifiable);
-        return;
-      }
-      expect(!unit.empty(), "value_unit_required", p.substr(0, p.size() - 5) + "unit",
+    if (physical(field) && !claim) {
+      expect(!unit.empty(), default_value ? "field_default" : "value_unit_required", p.substr(0, p.size() - 5) + "unit",
              "Physical value requires a unit");
     }
-    if (claim) return;
+    if (claim && !physical(field)) return;
     const auto& constraints = at(field, "constraints");
     const auto rule = default_value ? "field_default" : "value_constraints";
     for (const auto* name : {"minimum", "maximum"}) {
@@ -492,7 +502,7 @@ class Validator {
           auto bu = str(bound, "unit");
           if (unit.empty() || bu.empty()) continue;
           if (unit != bu) {
-            finding("x02_unit_conversion_open", p, "Unit conversion engine is not selected",
+            finding("x02_unit_conversion_open", p, "Unit conversion is not implemented",
                     FindingSeverity::unverifiable);
             comparable = false;
           }
@@ -531,7 +541,7 @@ class Validator {
     });
     stage({"field_constraints", "field_default", "custom_value_field", "value_representation", "value_options",
            "value_file_ref", "value_constraints", "value_unit_required", "value_dependencies_scope",
-           "x02_unit_conversion_open", "x02_physical_default_open"},
+           "x02_unit_conversion_open"},
           [&] {
             for (const auto& f : fields) {
               auto t = str(f.j(), "type");
@@ -549,7 +559,17 @@ class Validator {
                 }
                 if (t == "date" || t == "datetime") date(at(b, "value"), p + "/value", t == "datetime");
               }
-              if (f.j().contains("default")) value(f.j(), at(f.j(), "default"), f.pointer + "/default", "", true);
+              if (f.j().contains("default")) {
+                const auto& d = at(f.j(), "default");
+                auto p = f.pointer + "/default";
+                if (physical(f.j())) {
+                  if (!d.is_object())
+                    finding("field_default", p, "Physical default requires value and unit");
+                  else
+                    value(f.j(), at(d, "value"), p + "/value", str(d, "unit"), true);
+                } else
+                  value(f.j(), d, p, "", true);
+              }
             }
             for (const auto& v : values) {
               auto found = field_ids.find(str(v.row.j(), "field_id"));
@@ -593,7 +613,7 @@ class Validator {
   void metadata_claims() {
     stage(
         {"claim_target_standard", "claim_target_item", "claim_target_custom", "claim_value_type",
-         "claim_value_unit_unexpressible", "claim_evidence", "license_file_ref", "license_spdx", "urls", "timestamps"},
+         "claim_value_unit", "claim_evidence", "license_file_ref", "license_spdx", "urls", "timestamps"},
         [&] {
           const auto& asset = at(root, "asset");
           for (const auto* key : {"created_at", "modified_at"})
@@ -616,6 +636,7 @@ class Validator {
             const auto& o = owners[c.owner];
             const auto& target = at(j, "target");
             auto kind = str(target, "kind"), field = str(target, "field"), relation = str(j, "relation");
+            bool physical_value = false;
             if (kind == "standard" && relation == "supports_selected")
               expect(o.row.j().contains(std::string(field)), "claim_target_standard", c.row.pointer + "/target/field",
                      "Selected field is absent");
@@ -633,9 +654,12 @@ class Validator {
               if (relation == "supports_selected")
                 valid = valid && custom.contains({o.scope, o.id, str(target, "field_id")});
               expect(valid, "claim_target_custom", c.row.pointer + "/target/field_id");
+              physical_value = valid && o.scope != "source" && physical(f->second->j()) && j.contains("value");
               if (valid && (relation == "alternative" || relation == "rejected"))
-                value(f->second->j(), at(j, "value"), c.row.pointer + "/value", "", false, true);
+                value(f->second->j(), at(j, "value"), c.row.pointer + "/value", str(j, "unit"), false, true);
             }
+            expect(physical_value ? !str(j, "unit").empty() : !j.contains("unit"), "claim_value_unit",
+                   c.row.pointer + "/unit", "Unit is required only for a physical custom claim value");
             if (kind == "standard" && j.contains("value")) {
               if (field == "url") url(at(j, "value"), c.row.pointer + "/value");
               if (field == "published_at" || field == "retrieved_at")
@@ -675,6 +699,31 @@ class Validator {
     });
   }
   void histories() {
+    stage({"change_kind_fields"}, [&] {
+      const std::set<std::string_view> kinds{
+          "file_add", "file_remove", "file_replace", "file_move", "metadata_set", "group_add", "group_remove",
+          "group_change", "preview_add", "preview_remove", "claim_add", "claim_remove", "claim_change",
+          "field_definition_change", "extension_change"};
+      auto sha256 = [](std::string_view s) {
+        return s.size() == 64 && std::all_of(s.begin(), s.end(), [](char c) {
+          return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+        });
+      };
+      for (const auto& h : history)
+        for (const auto& change : rows(h.j(), "changes", h.pointer)) {
+          const auto kind = str(change.j(), "kind");
+          if (!kinds.contains(kind)) continue;
+          expect(change.j().contains("target"), "change_kind_fields", change.pointer + "/target",
+                 "Base change kind requires a target");
+          if (kind == "file_replace")
+            for (const auto* name : {"old_sha256", "new_sha256"})
+              expect(sha256(str(change.j(), name)), "change_kind_fields", change.pointer + "/" + name,
+                     "File replacement requires a lowercase SHA-256 hex digest");
+          if (kind == "file_move")
+            expect(paths::check_container_path(str(change.j(), "old_path")).ok(), "change_kind_fields",
+                   change.pointer + "/old_path", "File move requires a safe nonempty original path");
+        }
+    });
     stage({"asset_times"}, [&] {
       if (!history.empty()) {
         const auto& a = at(root, "asset");

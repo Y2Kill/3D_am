@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "am/domain/manifest/codec.hpp"
+#include "am/domain/manifest/semantics.hpp"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -38,6 +39,91 @@ std::string with_data(std::string_view raw) {
 void expect_id(const auto& result, std::string_view id) {
   ASSERT_FALSE(result);
   EXPECT_EQ(result.error().message_id, id) << am::to_log_string(result.error());
+}
+std::string with_history_changes(std::string_view changes) {
+  auto base = Json::parse(read(std::filesystem::path(AM_MANIFEST_SCHEMA).parent_path() / "examples/manifest-1.0.example.json"));
+  base["history"]["entries"][0]["changes"] = "RAW_HISTORY_CHANGES";
+  auto text = base.dump();
+  const auto start = text.find("\"RAW_HISTORY_CHANGES\"");
+  text.replace(start, std::string("\"RAW_HISTORY_CHANGES\"").size(), changes);
+  return text;
+}
+TEST(ManifestCodec, BaseHistoryStringsAreKnownWhileOtherExtrasKeepExactLexemes) {
+  RecordProperty("req", "ADR-0039");
+  const auto hash = std::string(64, 'a');
+  const auto text = with_history_changes(
+      R"([{"kind":"file_replace","target":"file","old_sha256":")" + hash +
+      R"(","new_sha256":")" + hash + R"(","note":1.500},)" +
+      R"({"kind":"file_move","target":"file","old_path":"content/old.bin","note":-0.0},)" +
+      R"({"kind":"preview_set_primary","old_sha256":"unknown","old_path":1e400},)" +
+      R"({"kind":"plugin:org.test.history:replace","old_sha256":1e400,"note":1.500}])");
+  auto doc = parse_manifest(text);
+  ASSERT_TRUE(doc) << am::to_log_string(doc.error());
+  const auto& history = doc->known()["history"]["entries"][0];
+  const auto& changes = history["changes"];
+  EXPECT_EQ(changes[0]["old_sha256"], hash);
+  EXPECT_EQ(changes[0]["new_sha256"], hash);
+  EXPECT_EQ(changes[1]["old_path"], "content/old.bin");
+  EXPECT_TRUE(changes[0]["note"].is_binary());
+  EXPECT_TRUE(changes[1]["note"].is_binary());
+  EXPECT_TRUE(changes[2]["old_sha256"].is_binary());
+  EXPECT_TRUE(changes[2]["old_path"].is_binary());
+  EXPECT_TRUE(changes[3]["old_sha256"].is_binary());
+  EXPECT_TRUE(changes[3]["note"].is_binary());
+  const auto prefix = "/history/" + history["operation_id"].get<std::string>() + "/changes/";
+  const auto keys = doc->opaque_keys();
+  auto contains = [&](const std::string& suffix) {
+    return std::find(keys.begin(), keys.end(), OpaqueKey{prefix + suffix}) != keys.end();
+  };
+  EXPECT_FALSE(contains("0/old_sha256"));
+  EXPECT_FALSE(contains("0/new_sha256"));
+  EXPECT_FALSE(contains("1/old_path"));
+  for (const auto* suffix : {"0/note", "1/note", "2/old_sha256", "2/old_path", "3/old_sha256", "3/note"})
+    EXPECT_TRUE(contains(suffix)) << suffix;
+  auto written = write_manifest(*doc);
+  ASSERT_TRUE(written);
+  EXPECT_EQ(*written, text);
+  EXPECT_TRUE(verify_preserved(text, *written));
+  auto changed_lexeme = text;
+  changed_lexeme.replace(changed_lexeme.find("1.500"), 5, "1.5");
+  expect_id(verify_preserved(text, changed_lexeme), "am.manifest.preservation_failed");
+  doc->known()["asset"]["metadata"]["title"] = "Edited with existing replacement history";
+  auto edited = write_manifest(*doc);
+  ASSERT_TRUE(edited);
+  EXPECT_TRUE(verify_preserved(text, *edited));
+}
+TEST(ManifestCodec, NonStringBaseHistoryFieldsStayOpaqueAndProduceV3Errors) {
+  RecordProperty("req", "ADR-0039");
+  for (const auto* key : {"old_sha256", "new_sha256", "old_path"}) {
+    for (const auto* invalid : {"1e400", "null", "[]", "{\"number\":1.500}"}) {
+      SCOPED_TRACE(std::string(key) + " " + invalid);
+      Json change;
+      if (std::string_view(key) == "old_path")
+        change = {{"kind", "file_move"}, {"target", "file"}, {"old_path", "RAW_BAD_FIELD"}};
+      else {
+        change = {{"kind", "file_replace"}, {"target", "file"},
+                  {"old_sha256", std::string(64, 'a')}, {"new_sha256", std::string(64, 'b')}};
+        change[key] = "RAW_BAD_FIELD";
+      }
+      auto changes = Json::array({change}).dump();
+      changes.replace(changes.find("\"RAW_BAD_FIELD\""), std::string("\"RAW_BAD_FIELD\"").size(), invalid);
+      const auto text = with_history_changes(changes);
+      auto doc = parse_manifest(text);
+      ASSERT_TRUE(doc) << am::to_log_string(doc.error());
+      EXPECT_TRUE(doc->known()["history"]["entries"][0]["changes"][0][key].is_binary());
+      auto written = write_manifest(*doc);
+      ASSERT_TRUE(written);
+      EXPECT_EQ(*written, text);
+      EXPECT_TRUE(verify_preserved(text, *written));
+      auto report = validate_semantics(*doc);
+      ASSERT_TRUE(report);
+      ASSERT_TRUE(report->complete);
+      ASSERT_EQ(report->findings.size(), 1u);
+      EXPECT_EQ(report->findings[0].rule, "change_kind_fields");
+      EXPECT_EQ(report->findings[0].severity, FindingSeverity::error);
+      EXPECT_EQ(report->findings[0].pointer, "/history/entries/0/changes/0/" + std::string(key));
+    }
+  }
 }
 TEST(ManifestCodec, EveryValidFixtureRoundTripsAndValidates) {
   RecordProperty("req", "ADR-0038|R-09.8");

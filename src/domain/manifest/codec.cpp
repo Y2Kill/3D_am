@@ -174,7 +174,11 @@ struct Analysis {
       mark(child(entry, "details"), append(scope, "details"));
       for (Id change : children(child(entry, "changes"))) for (Id value : children(change)) {
         const auto& name = tree.nodes[value].edge;
-        if (name != "kind" && name != "target")
+        const auto kind = string(child(change, "kind"));
+        const bool named_string = tree.nodes[value].kind == Kind::string &&
+            ((kind == "file_replace" && (name == "old_sha256" || name == "new_sha256")) ||
+             (kind == "file_move" && name == "old_path"));
+        if (name != "kind" && name != "target" && !named_string)
           mark(value, append(append(append(scope, "changes"), std::to_string(tree.nodes[change].index)), name));
       }
     }

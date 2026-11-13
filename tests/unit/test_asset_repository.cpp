@@ -110,7 +110,7 @@ TEST(AssetRepository, CreateHistoryManifestFirstAndVerificationReport) {
   std::cout << "CREATE_REPORT " << value(verification_json(created.verification)).dump() << '\n'; clean(root);
 }
 TEST(AssetRepository, TypedOperationsHistoryRawCopyAndRemoval) {
-  RecordProperty("req","ADR-0025|ADR-0035");
+  RecordProperty("req","ADR-0025|ADR-0035|ADR-0039");
   const auto root = fresh(); auto repo = value(AssetRepository::open(root,options())); auto created = create(repo,root,2); auto old = value(repo.snapshot(created.ref));
   const auto file_id = old.manifest().known()["files"][0]["id"].get<std::string>(), path = old.manifest().known()["files"][0]["storage_path"].get<std::string>(); auto original = raw(old,entry(old,path).index);
   const auto derived_hash=old.manifest().known()["files"][0]["sha256"];auto with_dependency=plain(old);with_dependency["files"][1]["derived_from"]=Json::array({Json{{"file_id",file_id},{"sha256",derived_hash}}});fixture(repo,root,created.ref,with_dependency.dump());
@@ -119,10 +119,25 @@ TEST(AssetRepository, TypedOperationsHistoryRawCopyAndRemoval) {
   ChangeRequest replace; replace.ref = created.ref; replace.expected_rev = 3; replace.ops.push_back(ReplaceFileContent{file_id,source(root,"replacement")}); current = value(repo.change(replace)); EXPECT_EQ(current.revision,4u);
   now = value(repo.snapshot(created.ref)); const auto old_sha = now.manifest().known()["files"][0]["sha256"];EXPECT_EQ(now.manifest().known()["files"][1]["derived_from"][0]["sha256"],derived_hash);
   const auto replacement=plain(now)["history"]["entries"][3];EXPECT_EQ(replacement["operation"],"files_changed");EXPECT_EQ(replacement["changes"][0]["old_sha256"],derived_hash);EXPECT_EQ(replacement["changes"][0]["new_sha256"],old_sha);
+  EXPECT_TRUE(now.manifest().known()["history"]["entries"][3]["changes"][0]["old_sha256"].is_string());
+  EXPECT_TRUE(now.manifest().known()["history"]["entries"][3]["changes"][0]["new_sha256"].is_string());
+  const auto semantic = value(manifest::validate_semantics(now.manifest()));
+  EXPECT_TRUE(semantic.complete); EXPECT_TRUE(semantic.findings.empty());
+  EXPECT_EQ(current.verification.v3,CheckStatus::passed);
   for(const auto& key:now.manifest().opaque_keys())if(key.value.starts_with("/history/"+current.op_id+"/"))std::cout<<"REPLACE_HISTORY_OWNER "<<key.value<<'\n';
-  ChangeRequest remove; remove.ref = created.ref; remove.expected_rev = 4; remove.ops.push_back(RemoveFile{file_id}); current = value(repo.change(remove)); EXPECT_EQ(current.revision,5u);
-  now = value(repo.snapshot(created.ref)); const auto& j = now.manifest().known(); EXPECT_EQ(j["files"].size(),2u); EXPECT_EQ(j["historical_files"][0]["last_known_sha256"],old_sha); EXPECT_EQ(j["historical_files"][0]["removed_at_revision"],5);
-  EXPECT_EQ(j["history"]["entries"].size(),5u); for (const auto& e : now.archive().entries()) EXPECT_NE(e.raw_name,path); clean(root);
+  auto edited = value(repo.change(metadata(current,"title",Json("After replacement"))));
+  EXPECT_EQ(edited.revision,5u);
+  auto edited_snapshot = value(repo.snapshot(created.ref));
+  EXPECT_EQ(edited.verification.v3,CheckStatus::passed);
+  EXPECT_TRUE(value(manifest::validate_semantics(edited_snapshot.manifest())).findings.empty());
+  manifest::IntendedChanges history_intent;
+  const auto original_keys = now.manifest().opaque_keys();
+  for (const auto& key : edited_snapshot.manifest().opaque_keys())
+    if (std::find(original_keys.begin(),original_keys.end(),key)==original_keys.end()) history_intent.owners.insert(key);
+  EXPECT_TRUE(manifest::verify_preserved(now.manifest_text(),edited_snapshot.manifest_text(),history_intent));
+  ChangeRequest remove; remove.ref = created.ref; remove.expected_rev = 5; remove.ops.push_back(RemoveFile{file_id}); current = value(repo.change(remove)); EXPECT_EQ(current.revision,6u);
+  now = value(repo.snapshot(created.ref)); const auto& j = now.manifest().known(); EXPECT_EQ(j["files"].size(),2u); EXPECT_EQ(j["historical_files"][0]["last_known_sha256"],old_sha); EXPECT_EQ(j["historical_files"][0]["removed_at_revision"],6);
+  EXPECT_EQ(j["history"]["entries"].size(),6u); for (const auto& e : now.archive().entries()) EXPECT_NE(e.raw_name,path); clean(root);
 }
 TEST(AssetRepository, NoOpDoesNotChangeBytesMtimeOrRevision) {
   RecordProperty("req","ADR-0025");
