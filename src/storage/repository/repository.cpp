@@ -626,7 +626,9 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
         auto fresh = plan.sources.find(name); if (fresh != plan.sources.end()) { write_source(writer,name,fresh->second); return; }
         if (!old) fail(Errc::corrupt_data,"am.manifest.missing_stream",name);
         auto index = original_indices.find(name); if (index == original_indices.end()) fail(Errc::corrupt_data,"am.manifest.missing_stream",name);
-        take(writer.copy_raw(old->archive(),index->second,budget));
+        asset_zip::RawCopyOptions raw_options;
+        raw_options.drop_unlisted = true;
+        take(writer.copy_raw(old->archive(),index->second,budget,raw_options));
       };
       for (const auto& f : registered(doc.known())) emit(f.path);
       if (old) for (const auto& e : old->archive().entries()) if (allowed.contains(e.raw_name)) emit(e.raw_name);
