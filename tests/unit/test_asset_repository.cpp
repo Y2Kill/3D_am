@@ -3,6 +3,7 @@
 #include "am/foundation/paths.hpp"
 #include "am/foundation/uuid.hpp"
 #include "am/foundation/json_text.hpp"
+#include "zip_builder.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
@@ -108,6 +109,71 @@ TEST(AssetRepository, CreateHistoryManifestFirstAndVerificationReport) {
   EXPECT_EQ(created.verification.v1,CheckStatus::passed); EXPECT_EQ(created.verification.v2,CheckStatus::passed); EXPECT_EQ(created.verification.v3,CheckStatus::passed);
   ASSERT_EQ(created.verification.v4.size(),2u); for (const auto& s : created.verification.v4) EXPECT_EQ(s.status,StreamStatus::verified_sha256); EXPECT_EQ(created.verification.container_verification,ContainerVerification::full);
   std::cout << "CREATE_REPORT " << value(verification_json(created.verification)).dump() << '\n'; clean(root);
+}
+TEST(AssetRepository, MetadataChangeDropsForeignExtraAndCommentWithoutChangingPayload) {
+  RecordProperty("req", "ADR-0039");
+  const auto root = fresh();
+  auto repo = value(AssetRepository::open(root, options()));
+  const auto created = create(repo, root);
+  std::string manifest_text, content_path, original_sha;
+  {
+    auto initial = value(repo.snapshot(created.ref));
+    manifest_text = initial.manifest_text();
+    content_path = initial.manifest().known()["files"][0]["storage_path"].get<std::string>();
+    original_sha = initial.manifest().known()["files"][0]["sha256"].get<std::string>();
+  }
+  zip_test::Entry manifest_entry;
+  manifest_entry.name = "manifest.json";
+  manifest_entry.data = manifest_text;
+  zip_test::Entry payload;
+  payload.name = content_path;
+  payload.data = "data-0";
+  payload.method = 8;
+  payload.local_extra = {std::byte{0x55}, std::byte{0x54}, std::byte{1}, std::byte{0}, std::byte{0}};
+  payload.central_extra = payload.local_extra;
+  payload.comment = std::string("c\0\xff", 3);
+  const auto synthetic = zip_test::build({manifest_entry, payload});
+  const auto asset_path = target(root, created.ref.asset_id);
+  ASSERT_TRUE(std::filesystem::remove(asset_path));
+  {
+    std::ofstream out(asset_path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(synthetic.bytes.data()), static_cast<std::streamsize>(synthetic.bytes.size()));
+    ASSERT_TRUE(out);
+  }
+  auto before = value(repo.snapshot(created.ref));
+  const auto& before_entry = entry(before, content_path);
+  EXPECT_EQ(before_entry.local_extra, payload.local_extra);
+  EXPECT_EQ(before_entry.central_extra, payload.central_extra);
+  EXPECT_EQ(before_entry.comment.size(), payload.comment.size());
+  const auto compressed = raw(before, before_entry.index);
+  const auto original_verification = value(repo.verify(created.ref));
+  EXPECT_EQ(original_verification.container_verification, ContainerVerification::full);
+  EXPECT_EQ(original_verification.v3, CheckStatus::passed);
+  auto changed = repo.change(metadata(created));
+  ASSERT_TRUE(changed) << changed.error().message_id << " cause="
+                       << (changed.error().cause ? changed.error().cause->message_id : "none")
+                       << " " << to_log_string(changed.error());
+  EXPECT_EQ(changed->revision, 2u);
+  auto after = value(repo.snapshot(created.ref));
+  const auto& after_entry = entry(after, content_path);
+  EXPECT_TRUE(after_entry.local_extra.empty());
+  EXPECT_TRUE(after_entry.central_extra.empty());
+  EXPECT_TRUE(after_entry.comment.empty());
+  EXPECT_EQ(raw(after, after_entry.index), compressed);
+  EXPECT_EQ(after_entry.crc32, before_entry.crc32);
+  EXPECT_EQ(after_entry.compressed_size, before_entry.compressed_size);
+  EXPECT_EQ(after_entry.uncompressed_size, before_entry.uncompressed_size);
+  EXPECT_EQ(after.manifest().known()["files"][0]["sha256"], original_sha);
+  EXPECT_EQ(after.manifest().known()["asset"]["metadata"]["title"], "new");
+  asset_zip::ReadBudget budget(payload.data.size());
+  const auto verified = value(after.archive().verify_entry(after_entry.index, budget, true));
+  EXPECT_TRUE(verified.sha256);
+  EXPECT_EQ(verified.size, payload.data.size());
+  const auto final_verification = value(repo.verify(created.ref));
+  EXPECT_EQ(final_verification.container_verification, ContainerVerification::full);
+  EXPECT_EQ(final_verification.v3, CheckStatus::passed);
+  EXPECT_TRUE(final_verification.v3_findings.empty());
+  clean(root);
 }
 TEST(AssetRepository, TypedOperationsHistoryRawCopyAndRemoval) {
   RecordProperty("req","ADR-0025|ADR-0035|ADR-0039");
