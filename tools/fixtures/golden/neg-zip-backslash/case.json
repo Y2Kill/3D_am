@@ -1,0 +1,23 @@
+{
+  "entries": [
+    {
+      "name": "manifest.json",
+      "manifest": true
+    },
+    {
+      "name": "generated/payload.bin",
+      "source": "payload.bin"
+    },
+    {
+      "name": "xxxxxxxx",
+      "source": "opaque.bin"
+    }
+  ],
+  "patches": [
+    {
+      "kind": "name",
+      "entry": 2,
+      "value": "bad\\file"
+    }
+  ]
+}

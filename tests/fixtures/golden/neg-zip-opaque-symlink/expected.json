@@ -21,7 +21,15 @@
         "command": "validate",
         "v1": "passed",
         "v2": "passed",
-        "v3": "failed"
+        "v3": "failed",
+        "error": "am.manifest.zip_entry_kind",
+        "v3_findings": [
+          {
+            "rule": "zip_entry_kind",
+            "severity": "error",
+            "message_id": "am.manifest.zip_entry_kind"
+          }
+        ]
       }
     },
     {
@@ -35,7 +43,15 @@
         "command": "verify",
         "v1": "passed",
         "v2": "passed",
-        "v3": "failed"
+        "v3": "failed",
+        "error": "am.manifest.zip_entry_kind",
+        "v3_findings": [
+          {
+            "rule": "zip_entry_kind",
+            "severity": "error",
+            "message_id": "am.manifest.zip_entry_kind"
+          }
+        ]
       }
     }
   ]

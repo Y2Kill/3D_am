@@ -1,0 +1,45 @@
+{
+  "format": "am-expected",
+  "version": 1,
+  "kind": "golden_zip",
+  "case": "neg-v2-type",
+  "description": "V2 invalid type",
+  "req": [
+    "K-3",
+    "K-6",
+    "ADR-0035"
+  ],
+  "input": {
+    "zip": "asset.zip"
+  },
+  "checks": [
+    {
+      "command": "validate",
+      "args": [],
+      "exit_code": 1,
+      "json": {
+        "command": "validate",
+        "v1": "passed",
+        "v2": "failed",
+        "v3": "passed",
+        "error": "am.manifest.schema_violation"
+      }
+    },
+    {
+      "command": "verify",
+      "args": [
+        "--level",
+        "full"
+      ],
+      "exit_code": 1,
+      "json": {
+        "command": "verify",
+        "v1": "passed",
+        "v2": "failed",
+        "v3": "passed",
+        "error": "am.manifest.schema_violation",
+        "container_verification": "partial"
+      }
+    }
+  ]
+}

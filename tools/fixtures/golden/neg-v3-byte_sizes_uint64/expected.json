@@ -1,0 +1,59 @@
+{
+  "format": "am-expected",
+  "version": 1,
+  "kind": "golden_zip",
+  "case": "neg-v3-byte_sizes_uint64",
+  "description": "V3 byte_sizes_uint64",
+  "req": [
+    "K-3",
+    "K-6",
+    "ADR-0035"
+  ],
+  "input": {
+    "zip": "asset.zip"
+  },
+  "checks": [
+    {
+      "command": "validate",
+      "args": [],
+      "exit_code": 1,
+      "json": {
+        "command": "validate",
+        "v1": "passed",
+        "v2": "passed",
+        "v3": "failed",
+        "v3_findings": [
+          {
+            "rule": "byte_sizes_uint64",
+            "severity": "error",
+            "message_id": "am.manifest.byte_sizes_uint64"
+          }
+        ],
+        "error": "am.manifest.byte_sizes_uint64"
+      }
+    },
+    {
+      "command": "verify",
+      "args": [
+        "--level",
+        "full"
+      ],
+      "exit_code": 1,
+      "json": {
+        "command": "verify",
+        "v1": "passed",
+        "v2": "passed",
+        "v3": "failed",
+        "v3_findings": [
+          {
+            "rule": "byte_sizes_uint64",
+            "severity": "error",
+            "message_id": "am.manifest.byte_sizes_uint64"
+          }
+        ],
+        "error": "am.manifest.byte_sizes_uint64",
+        "container_verification": "partial"
+      }
+    }
+  ]
+}

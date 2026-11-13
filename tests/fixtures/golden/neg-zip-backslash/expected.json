@@ -1,0 +1,59 @@
+{
+  "format": "am-expected",
+  "version": 1,
+  "kind": "golden_zip",
+  "case": "neg-zip-backslash",
+  "description": "Unsafe ZIP name: backslash",
+  "req": [
+    "K-3",
+    "K-6",
+    "ADR-0035"
+  ],
+  "input": {
+    "zip": "asset.zip"
+  },
+  "checks": [
+    {
+      "command": "validate",
+      "args": [],
+      "exit_code": 1,
+      "json": {
+        "command": "validate",
+        "v1": "passed",
+        "v2": "passed",
+        "v3": "failed",
+        "v3_findings": [
+          {
+            "rule": "zip_paths",
+            "severity": "error",
+            "message_id": "am.manifest.zip_paths"
+          }
+        ],
+        "error": "am.manifest.zip_paths"
+      }
+    },
+    {
+      "command": "verify",
+      "args": [
+        "--level",
+        "full"
+      ],
+      "exit_code": 1,
+      "json": {
+        "command": "verify",
+        "v1": "passed",
+        "v2": "passed",
+        "v3": "failed",
+        "v3_findings": [
+          {
+            "rule": "zip_paths",
+            "severity": "error",
+            "message_id": "am.manifest.zip_paths"
+          }
+        ],
+        "error": "am.manifest.zip_paths",
+        "container_verification": "partial"
+      }
+    }
+  ]
+}

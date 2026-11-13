@@ -1,0 +1,23 @@
+{
+  "entries": [
+    {
+      "name": "manifest.json",
+      "manifest": true
+    },
+    {
+      "name": "content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/AN_Winry_Hips.stl",
+      "source": "payload-0.bin",
+      "method": "stored"
+    },
+    {
+      "name": "content/debdf916-b47c-41db-b4fd-7aa9511396f3/Dinamuuu3D_WinryRockbell_Alt/very long folder~3fa2b81c/part.stl",
+      "source": "payload-1.bin",
+      "method": "deflate"
+    },
+    {
+      "name": "generated/previews/4a5ad0ca-eb13-45b3-893b-907c1ba8377f.png",
+      "source": "payload-2.bin",
+      "method": "stored"
+    }
+  ]
+}
