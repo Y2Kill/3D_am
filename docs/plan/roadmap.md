@@ -282,6 +282,7 @@
 
 ## CI (ТЗ §12.9.10, поэтапно)
 - С P0.1 (M0): **GitHub Actions** (выбор владельца 2026-11-12) — задача [T-005](../tasks/T-005-ci-github.md), **работает с 2026-11-13** (`.github/workflows/ci.yml`; публикация — `tools/publish_public.sh`).
+  - Обязательные проверки `main` (branch protection, 2026-11-13, решение владельца): `win-debug-min`, `win-cli`, `linux-min`, `linux-cli`; `strict` выкл., force-push и удаление ветки запрещены. `enforce_admins` выкл.: публикация владельцем через `tools/publish_public.sh` (прямой fast-forward push) не блокируется, проверки обязательны для pull request. Красный прогон после публикации управляющий разбирает сразу.
   - Матрица: `win-debug-min`, `win-cli`, `linux-min`, далее `linux-cli`.
   - ctest, включая `arch_check` и `schema_check` (черновая схема манифеста, ADR-0036 п. 8).
   - Конфигурация с `-DAM_REQUIRE_PYTHON_TESTS=ON` и установленным `jsonschema`: отсутствие Python-проверок — ошибка, а не SKIP.
