@@ -1,6 +1,6 @@
 # T-013. Golden ZIP формата 1.0 и инфраструктура тестов M1
 
-**Статус:** in_progress · **Веха:** M1 · **Основание:** ADR-0035 п. 1 (формат публикуется при схеме, валидаторе V1–V4 и golden ZIP; ТЗ §19.6.4), ADR-0029 пп. 4–5 (`expected.json`, генератор, трассировка), `docs/plan/roadmap.md` M1 «Golden ZIP» и «Инфраструктура тестов», замечание 1 приёмки T-012
+**Статус:** review (В-3: CLI принимает symlink-записи ZIP) · **Веха:** M1 · **Основание:** ADR-0035 п. 1 (формат публикуется при схеме, валидаторе V1–V4 и golden ZIP; ТЗ §19.6.4), ADR-0029 пп. 4–5 (`expected.json`, генератор, трассировка), `docs/plan/roadmap.md` M1 «Golden ZIP» и «Инфраструктура тестов», замечание 1 приёмки T-012
 
 ## Цель
 
@@ -239,3 +239,113 @@ unregistered verify exit=3
 3. Запрет незарегистрированного потока в новом контейнере (`am.manifest.unregistered_stream` при `allowed_opaque`) корпусом не проверяется: через публичный API он недостижим, это внутренняя защита фиксации; перенос старого opaque-потока при изменении уже проверяет `AssetRepository.OpaqueAttachmentsAndDependenciesHaveExplicitVerification`. В отчёте исполнителя упомянуть одной строкой в таблице покрытия V4 с этой причиной.
 
 Прочие решения задачи не меняются. Продолжать в той же ветке `codex/T-013`, статус — `in_progress`.
+
+## Отчёт исполнителя — продолжение по решению В-2
+
+Дата: 2026-11-13. Частичная реализация сохранена. Работа остановлена при воспроизведении В-3 по п. 3 `AGENTS.md` и указанию задачи «не подгонять ожидание, остановиться и описать в вопросах». Статус `review` означает передачу вопроса и частичного результата; задача целиком **не выполнена**.
+
+### Ветка и коммиты
+
+- Та же ветка `codex/T-013`, продолжение после решения управляющего `048ce8c`.
+- `ab815bd` — начальный независимый golden-корпус, генератор, прогон, схема/CTest, исправление не-ZIP, регрессионный тест и пользовательская документация.
+- Отчёт В-3 и статус `review` — завершающий коммит ветки (`HEAD`). Слияния, push и переписывания истории не выполнялись.
+
+### Что сделано и что осталось по критериям
+
+1. Обязательная минимальная сборка выполнена: **85/85 PASS**, включая `golden_regen_check` и `schema_check` (11 эталонов). Отрицательные проверки инфраструктуры на временных копиях выполнены успешно. Полные Windows CLI `--ci`, `--offline --ci` и Linux не запускались: после обнаружения В-3 реализация остановлена.
+2. CLI пересобран офлайн. Три теста `AssetRepository.VerifyContainer*`, включая новый `VerifyContainerSeparatesInvalidZipFromOperationalErrors`, — **3/3 PASS**. Отдельно проверены CLI-коды для `corrupt_data`, `unsupported` и отсутствующего входа. Прежние ожидания тестов не менялись. При разработке нового теста исправлены два неверных предположения: отсутствующий файл даёт `io_error`, а наружный ID оборачивается `am.repo.io_error` с сохранением исходной ошибки в `cause`; окончательный тест проверяет код и корневую причину.
+3. Создан частичный корпус из 11 случаев: девять положительных (27 проверок PASS), два отрицательных symlink (четыре проверки FAIL, см. В-3). Полный необязательный манифест, S7, unverifiable, отрицательные V1–V4 и остальные случаи безопасности ещё не добавлены. Таблица ниже описывает только фактически созданные случаи; полное покрытие 39 правил V3 не заявляется.
+4. Регенерация побайтно совпадает. ZIP: **13 220 байт суммарно**, максимальный — **1 330 байт**; весь каталог `tests/fixtures/golden` — **26 348 байт**, 23 файла (11 ZIP, 11 JSON, README). Лимит 64 КиБ на ZIP соблюдён.
+5. `req_report.py`, различение `requirement`/`case`, его selftest, XML GoogleTest и шаги отчёта в сборочных скриптах/CI пока не реализованы; отчёта трассировки и числа тестов без `req` ещё нет. Решение В-1 сохраняет силу для продолжения.
+6. Изменены только разрешённые файлы задачи, задача и реестр. Новых зависимостей нет. Временные входы, копии и журналы — в `.cache/`. Предсуществующий `3D_am_open_questions_e2472e9.zip` не изменён и не включён в коммиты. Продуктовый код V3, ZIP-читатель, кодек, спецификация, ADR, схема манифеста и матрицы не менялись.
+
+### Реализация
+
+Генератор `tools/fixtures/make_golden_zips.py` использует только стандартную библиотеку Python, читает исходный манифест как байты и заменяет только явные метки `@sha256:<ZIP-path>` / `@size:<ZIP-path>`. Фиксированы время 2020-01-01, порядок записей, UUID и UTF-8-флаг. ZIP64 и descriptor создаются Python `zipfile`; чужой extra `0x5455`/комментарий задаются в исходнике случая; отрицательные атрибуты symlink задаются byte patch центрального заголовка. README описывает формат исходников. Генератор не использует наш писатель и не вызывает `am asset create`.
+
+`tests/golden/run_golden.py` проверяет коды и рекурсивное JSON-подмножество. Для массивов используется взаимно однозначное сопоставление без порядка с совпадением длины; неоднозначные совпадения разрешаются поиском увеличивающего пути, а не жадным выбором. Провал содержит случай, команду и путь JSON. `schemas/expected.v1.schema.json` и расширенный `schema_check` проверяют все эталоны; CTest регистрирует `golden_regen_check`, а при наличии CLI — `golden_zip`, с заданными метками требований.
+
+В `verify_container` только ошибки открытия `ZipArchive::open` типа `corrupt_data`/`unsupported` превращены в отчёт V1 failed. Ошибки источника/операции остаются неуспешным `Result`; путь `AssetRepository` не менялся. Обновлены `docs/user/cli.md` и `CHANGELOG.md`.
+
+### Фактические проверки
+
+```text
+tools\build_min.cmd
+100% tests passed, 0 tests failed out of 85
+Total Test time (real) =  17.69 sec
+exit_code: 0
+
+tools\build_cli.cmd --offline -R VerifyContainer
+100% tests passed, 0 tests failed out of 3
+Total Test time (real) =   3.17 sec
+exit_code: 0
+
+python -I tools/fixtures/make_golden_zips.py --check
+PASS golden_regen_check: 11 cases, byte-identical
+exit_code: 0
+
+ctest --test-dir build/win-cli -R ^golden --output-on-failure
+golden_regen_check: Passed
+golden_zip: 11 cases, 31 checks, 4 failures
+50% tests passed, 1 tests failed out of 2
+exit_code: 8
+
+python .cache/t013_check_partial.py
+PASS subset matcher: ambiguous matching, distinct matches, array length, boolean type
+PASS corrupted expectation rejected:
+  $.v1: expected 'failed', got 'passed'
+PASS corrupted copied ZIP rejected:
+  FAIL golden_regen_check: pos-minimal/asset.zip
+All partial infrastructure negative checks passed
+exit_code: 0
+```
+
+Ошибочный эталон и изменённый ZIP проверялись в отдельной копии внутри `.cache/`; исходный корпус не менялся. Логи: `.cache/t013-v2-final-min.log`, `.cache/t013-v2-pass-verify-container.log`, `.cache/t013-v2-golden-ctest.log`, `.cache/t013-v2-negative-checks.log`. Все 11 эталонов прошли `schema_check` — строка `expected schema: 11 golden expectations checked` в `.cache/t013-v2-final-min-tests.log`.
+
+Дополнительные CLI-проверки (входы и JSON в `.cache/t013-open-errors/`):
+
+| Вход | validate / verify full | Отчёт |
+|---|---|---|
+| Не-ZIP без EOCD | 1 / 1 | V1 failed, V2 not_performed, error = am.zip.invalid_structure |
+| ZIP с disk number 1 в EOCD | 1 / 1 | V1 failed, V2 not_performed, error = am.zip.unsupported_feature |
+| Отсутствующий файл | 4 / 4 | Операционная ошибка am.repo.io_error, исходная ошибка источника сохранена |
+
+### Текущее покрытие корпуса
+
+В столбце кода указано заданное ожидание `validate / verify full`; положительные случаи также содержат `inspect`. Их шаблоны не включают ID или время.
+
+| Случай | Уровень/свойство | Код | Фактический итог |
+|---|---|---|---|
+| pos-minimal | V1–V4, один файл | 0 / 0 | PASS, full |
+| pos-descriptor | Deflate + descriptor | 0 / 0 | PASS, full |
+| pos-zip64 | Принудительные ZIP64 local sizes | 0 / 0 | PASS, full |
+| pos-descriptor-zip64 | ZIP64 + descriptor | 0 / 0 | PASS, full |
+| pos-mixed-compression | Stored + Deflate | 0 / 0 | PASS, full |
+| pos-foreign-extra | 0x5455 local/central + комментарий | 0 / 0 | PASS, full |
+| pos-unicode-spaces | UTF-8 и пробелы в пути | 0 / 0 | PASS, full |
+| pos-newer-minor | Версия 1.1 + неизвестный ключ | 3 / 3 | PASS, newer_minor |
+| pos-opaque-stream | Безопасный opaque по В-2 | 0 / 3 | PASS, verified_crc_size_only, partial |
+| neg-zip-symlink | Unix symlink у зарегистрированного потока | 1 / 1 | FAIL: фактически 0 / 0; все V1–V3 passed, full |
+| neg-zip-opaque-symlink | Unix symlink у незарегистрированного потока | 1 / 1 | FAIL: фактически 0 / 3; все V1–V3 passed, partial |
+
+V4: `am.manifest.unregistered_stream` при создании нового контейнера не проверяется корпусом: через публичный API недостижим, внутренняя защита `allowed_opaque`; перенос прежнего opaque уже проверяет `AssetRepository.OpaqueAttachmentsAndDependenciesHaveExplicitVerification` (решение В-2). Отрицательные случаи размера/SHA/CRC/отсутствующего потока/сжатия/шифрования ещё не добавлены. Отрицательное покрытие каталога V3 и таблица «каждое правило → случай/причина» остаются невыполненными.
+
+### Вопросы
+
+**В-3. Разрешить исправление проверки типа ZIP-записи при standalone validate/verify и определить уровень/`message_id` для отказа?**
+
+Пункт 3 задачи требует код 1 для symlink; решение В-2 п. 2 повторяет это требование, включая незарегистрированные записи. Воспроизведение теперь закоммичено в корпусе: `neg-zip-symlink` и `neg-zip-opaque-symlink`. В обоих `case.json` меняется только `external_attr` нужной записи на `0o120777 << 16`; central `create_system = 3` (Unix), поток/CRC/размер/манифест остаются корректными. Это атрибут записи внутри ZIP; ссылок на файловой системе тест не создаёт и ничего не извлекает.
+
+```text
+python -I tests/golden/run_golden.py --am build/win-cli/bin/am.exe --corpus tests/fixtures/golden --case neg-zip-symlink
+  validate: expected exit 1, actual 0; expected V3 failed, actual passed
+  verify full: expected exit 1, actual 0; expected V3 failed, actual passed
+
+python -I tests/golden/run_golden.py --am build/win-cli/bin/am.exe --corpus tests/fixtures/golden --case neg-zip-opaque-symlink
+  validate: expected exit 1, actual 0; expected V3 failed, actual passed
+  verify full: expected exit 1, actual 3; expected V3 failed, actual passed
+```
+
+Причина: ZIP-механизм распознаёт `EntryKind::symlink` (`src/storage/asset_zip/reader.cpp`, разбор Unix mode), но сам допускает чтение такого потока. `check_normative_profile` выдаёт `am.zip.profile.entry_kind` для любого не-regular типа (`src/storage/asset_zip/profile.cpp:24`); в standalone-пути этот профиль не вызывается. Репозиторный `Invariants::validate` добавляет `zip_paths`, но проверяет только длину/безопасность имени и коллизии, без `EntryInfo::kind`. Поэтому все V1–V3 проходят и V4 считает зарегистрированный symlink проверенным по SHA.
+
+Ожидания не изменены на фактические 0/3; исправление проверки безопасности не включено в единственное разрешённое изменение `repository.cpp` по п. 6 (классификация ошибки открытия ZIP). Нужно решение управляющего о месте и объёме исправления, уровне и стабильном ID находки. Нельзя без отдельного решения просто подключить весь `check_normative_profile`: он также выдаёт нарушение для data descriptor, тогда как положительный descriptor обязателен в этом корпусе. После решения продолжать в той же ветке `codex/T-013` с сохранённой частичной реализацией.
