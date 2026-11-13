@@ -65,5 +65,6 @@ echo VCPKG_BINARY_SOURCES=%VCPKG_BINARY_SOURCES%
 echo X_VCPKG_ASSET_SOURCES=%X_VCPKG_ASSET_SOURCES%
 cmake --preset win-cli %CI_CONFIG% %PYTHON_CONFIG% || exit /b 1
 cmake --build --preset win-cli || exit /b 1
+call "%ROOT%\tools\check_ninja_deps.cmd" "%ROOT%\build\win-cli" || exit /b 1
 ctest --preset win-cli %CI_CTEST% %CTEST_ARGS% || exit /b 1
 endlocal

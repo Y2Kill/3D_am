@@ -47,5 +47,6 @@ if defined AM_PYTHON_EXTRA_PATH set PYTHON_CONFIG="-DAM_PYTHON_EXTRA_PATH=%AM_PY
 cd /d "%ROOT%" || exit /b 1
 cmake --preset win-debug-min %CI_CONFIG% %FETCH_CONFIG% %PYTHON_CONFIG% || exit /b 1
 cmake --build --preset win-debug-min || exit /b 1
+call "%ROOT%\tools\check_ninja_deps.cmd" "%ROOT%\build\win-debug-min" || exit /b 1
 ctest --preset win-debug-min %CI_CTEST% %CTEST_ARGS% || exit /b 1
 endlocal
