@@ -91,7 +91,8 @@ Config load_config(const Path& root) {
   Config c;
   c.library_id = string("library_id"); c.name = string("name"); c.created_at = string("created_at");
   const auto id = Uuid::parse_canonical(c.library_id);
-  if (!id || id->version() != 7) fail(Errc::corrupt_data, "am.library.config_invalid", "library_id");
+  if (!id || id->version() != 7 || (id->bytes()[8] & 0xc0) != 0x80)
+    fail(Errc::corrupt_data, "am.library.config_invalid", "library_id");
   if (!valid_time(c.created_at)) fail(Errc::corrupt_data, "am.library.config_invalid", "created_at");
   return c;
 }

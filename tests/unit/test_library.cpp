@@ -120,8 +120,10 @@ TEST(Library, ConfigTypesVersionsDatesAndUnknownKeys) {
   auto root = initialized(); auto original = bytes(root / "am-library.toml");
   auto original_lib = value(lib::Library::open(root, options(lib::Mode::read_only)));
   const auto id = original_lib.config().library_id, date = original_lib.config().created_at;
+  auto invalid_variant = id; invalid_variant[19] = '0';
   for (const auto& [from, to, key] : {std::tuple{id, std::string("invalid-uuid"), "library_id"},
         std::tuple{id, am::Uuid::v4().to_string(), "library_id"},
+        std::tuple{id, invalid_variant, "library_id"},
         std::tuple{date, std::string("2026-02-30T00:00:00.000Z"), "created_at"},
         std::tuple{std::string("schema_version = 1"), std::string("schema_version = '1'"), "schema_version"}}) {
     auto modified = original; replace(modified, from, to); write(root / "am-library.toml", modified);
@@ -284,7 +286,9 @@ TEST(Library, IndexRecreationPreservesWalFileSet) {
   }
   ASSERT_EQ(mains.size(), 1u);
   EXPECT_TRUE(fs::exists(fs::path(mains[0].native() + fs::path("-wal").native())));
-  if (shm) EXPECT_TRUE(fs::exists(fs::path(mains[0].native() + fs::path("-shm").native())));
+  if (shm) {
+    EXPECT_TRUE(fs::exists(fs::path(mains[0].native() + fs::path("-shm").native())));
+  }
   EXPECT_EQ(opened.database_info(DatabaseKind::index).user_version, 1);
 }
 TEST(Library, JournalAndAssetRepositoryShareLibraryState) {
