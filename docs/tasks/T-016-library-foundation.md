@@ -1,6 +1,6 @@
 # T-016. Основа библиотеки: каталог, владелец записи, три базы и их версии (M2, P0.5 — часть 1)
 
-**Статус:** in_progress · **Веха:** M2 · **Основание:** ADR-0007 (каталог и три базы SQLite), ADR-0031 пп. 1–3 (владелец записи, режим «только чтение», `StorageCapabilities`), ADR-0025 (`AssetRepository` — единственный писатель ZIP), `docs/specifications/versioning.md` строки 4–5 (версии баз и `am-library.toml`), ТЗ §14.5.10, §14.7.7, §14.7.11, критерий K-123; `docs/plan/roadmap.md` M2
+**Статус:** review (В-1: строгий read_only для SQLite WAL) · **Веха:** M2 · **Основание:** ADR-0007 (каталог и три базы SQLite), ADR-0031 пп. 1–3 (владелец записи, режим «только чтение», `StorageCapabilities`), ADR-0025 (`AssetRepository` — единственный писатель ZIP), `docs/specifications/versioning.md` строки 4–5 (версии баз и `am-library.toml`), ТЗ §14.5.10, §14.7.7, §14.7.11, критерий K-123; `docs/plan/roadmap.md` M2
 
 ## Цель
 
@@ -95,4 +95,86 @@
 
 ## Отчёт исполнителя
 
-_(заполняет исполнитель)_
+Дата: 2026-11-14. Выполнение остановлено при предварительной проверке read-only поведения используемой SQLite; оформлен В-1. Статус `review` — передача вопроса и частичного результата, а не готовность всей T-016 к приёмке. Основание остановки — п. 3 `AGENTS.md`: при противоречии задачи коду исполнитель описывает вопрос, не принимает архитектурное решение самостоятельно.
+
+### Ветка и коммиты
+
+- Ветка `codex/T-016`, создана от `main` (`d90a758`).
+- `69608ff` — согласованный п. 9: `pending_ops_new` в общей state.sql, удаление динамического DDL, SQL-проверки и метки требований, статусы `in_progress`.
+- Отчёт В-1 и статус `review` — завершающий коммит ветки (`HEAD`). Слияния, push и переписывания истории не выполнялись.
+
+### Что сделано по критериям приёмки
+
+1. `tools\build_min.cmd --ci` реально выполнена: **86/86 PASS**, `req_report` — 0 неверных ID. CLI пересобран офлайн, выполнен только целевой прогон трёх тестов `StateJournal`: **3/3 PASS**, 0 неверных ID. Полные CLI `--ci`, CLI `--offline --ci` и Linux не запускались: после воспроизведения В-1 действует правило остановки. Их успех не заявляется.
+2. Из тестов 1–9 частично выполнен п. 7: общая схема state.sqlite содержит таблицу evidence, существующие тесты журнала проходят. Новые проверки `DDL-SJ` и `DDL-SE` в `sql_check` проверяют покрытие всех таблиц, к которым обращается журнал, и состав/FK CASCADE таблицы `pending_ops_new`. Имена реально запущенных C++-тестов:
+   - `StateJournal.SchemaVersionTablesAndDurableTransitionsAcrossConnections`;
+   - `StateJournal.InvalidTransitionAndVersionDoNotModifyRows`;
+   - `StateJournal.EvidenceFailureRollsBackTheStateTransition`.
+
+   Тесты 1–6, 8–9 и взаимодействие `StateJournal` с ещё не реализованной `Library` не добавлены. Полные тесты протокола/репозитория также не запускались. Эксперимент для В-1 ниже — проверка поведения backend, а не тест готовой `Library`.
+3. Новые `message_id` и `am library init/info` пока не реализованы; пример вывода `am library info --json` не формировался.
+4. Изменены только разрешённые файлы: `schemas/sql/state.sql`, `src/storage/db/state_journal.cpp`, `tests/schema/sql_check.py`, `tests/CMakeLists.txt`, задача и строка реестра. `AssetRepository`, публичные интерфейсы, кодек, опубликованные схема/golden ZIP 1.0, ADR, спецификации, матрицы и зависимости не менялись. Все синтетические базы/пробы/логи находятся в `.cache/`; материалы коллекции не читались и не копировались. Предсуществующий незарегистрированный `3D_am_open_questions_e2472e9.zip` оставлен без изменений и не включён в коммиты.
+
+### Согласованная часть п. 9
+
+Определение `pending_ops_new` перенесено из `StateJournal::open` в `state.sql` без изменения колонок, ограничений и версии 1. Удалена только строка динамического `CREATE TABLE IF NOT EXISTS`; существующее встраивание `state_schema_sql` из SQL-файла сохранено. Схема стала единым источником DDL журнала; создание/открытие трёх баз через `Library` ещё предстоит реализовать. `sql_check` дополнен двумя проверками; его CTest-метки дополнены `req:ADR-0006` и `req:ADR-0007`.
+
+### Команды и фактические итоги
+
+```text
+python -I tests/schema/sql_check.py --root .
+PASS DDL-SJ state.sql contains every table referenced by StateJournal (ADR-0006, ADR-0007)
+PASS DDL-SE pending_ops_new evidence schema and cascade match the journal (ADR-0006)
+OK: 0 failure(s)
+19 PASS checks; exit_code: 0
+
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) =  21.91 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+
+tools\build_cli.cmd --offline --ci -R StateJournal
+100% tests passed, 0 tests failed out of 3
+Total Test time (real) =   1.04 sec
+req_report: 42 IDs, 300 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+В последнем `req_report` число 300 — весь зарегистрированный inventory: реально выполнены 3 теста, остальные 297 имеют `NOT_RUN`. Это не полный прогон 300 тестов.
+
+Локальные свидетельства: `.cache/t016-sql-check.log`, `.cache/t016-baseline-min-ci.log`/`-junit.xml`, `.cache/t016-journal-regression.log`/`-junit.xml`/`-req_report.json`, `.cache/t016-readonly-probe/results.json`, `.cache/t016-readonly-probe/readonly-shm.json`. Воспроизведение backend — `.cache/t016_sqlite_probe.py`.
+
+### Отклонения
+
+Работа остановлена до создания модуля `Library`: запрошенная гарантия «ни одного изменения файла» не обеспечивается предписанным флагом SQLite. Реализация дополнительной стратегии предотвращения побочных записей без решения управляющего не выбрана. Не применялись обходы с `immutable=1`, копированием баз, изменением ACL/режима журналов или попыткой удалить созданные SQLite файлы после чтения: они изменили бы гарантии конкурентного чтения, состав работы либо уже нарушили бы запрет создания файлов.
+
+### Вопросы
+
+**В-1. Какой механизм строгого read-only использовать для баз WAL, включая момент определения `unavailable`?**
+
+Пункт 7 требует не создавать, не менять и не удалять ни одного файла библиотеки, в том числе WAL/SHM, при `SQLITE_OPEN_READONLY`. ADR-0007 и п. 8 требуют WAL для всех трёх баз. Проверка проведена через C API **той SQLite DLL, которую использует текущая CLI-сборка**: `build/win-cli/bin/sqlite3.dll`, `sqlite3_libversion() = 3.53.4` (не Python sqlite3). Созданы только синтетические базы в `.cache/t016-readonly-probe/`, по одной таблице и `user_version = 1`. Читатель открыт с флагом `SQLITE_OPEN_READONLY`; выполнены `PRAGMA user_version` и SELECT; дескриптор закрыт. Снимок содержит пути, размер, mtime и SHA-256 каждого файла.
+
+```text
+python .cache/t016_sqlite_probe.py
+closed changed during: ['state.sqlite-shm', 'state.sqlite-wal'] changed after: ['state.sqlite-shm', 'state.sqlite-wal']
+active_writer changed during: ['state.sqlite-shm'] changed after: ['state.sqlite-shm']
+wal_without_shm changed during: ['state.sqlite-shm'] changed after: ['state.sqlite-shm']
+SQLite 3.53.4
+readonly_shm URI query result: 0 changed after: ['state.sqlite-shm', 'state.sqlite-wal']
+```
+
+| Состояние до чтения | Фактический побочный эффект |
+|---|---|
+| Закрытая WAL-база, только `state.sqlite` (8192 байта), без sidecars | После чтения остались новые `state.sqlite-wal` (0 байт) и `state.sqlite-shm` (32768 байт) |
+| Писатель держит базу открытой, WAL/SHM уже существуют | Изменился SHA-256 содержимого SHM; писатель во время пробы ничего не выполнял |
+| WAL оставлен через `SQLITE_FCNTL_PERSIST_WAL`, SHM отсутствует | Читатель создал новый SHM |
+| URI `mode=ro&readonly_shm=1` и `SQLITE_OPEN_READONLY \| SQLITE_OPEN_URI` на копии закрытой базы | Запрос успешен, но WAL/SHM всё равно появились |
+
+Это не ошибка SQL-запроса: чтение успешно, поэтому простой перехват ошибки с переводом базы в `unavailable` не предотвращает изменения. Даже если отказ произойдёт позже, проверять возможность открытия методом «попробовать SQLite, затем объявить недоступной» уже поздно — побочные файлы могут быть созданы.
+
+Проверен и исходный код используемой SQLite в `.cache/vcpkg/buildtrees/sqlite3/src/nf-3530400-891c4575fa.clean/sqlite3.c`: открытие WAL использует `SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_WAL` (строка 69244), независимо от read-only флага основного файла. Win32 shared-memory путь открывает/отображает отдельный SHM. Таким образом, `SQLITE_OPEN_READONLY` запрещает SQL-запись в основную базу, но не является гарантией отсутствия побочных файлов/записей WAL-инфраструктуры.
+
+Нужно согласовать стратегию **предотвращения** таких операций: например, отдельный защищённый read-only VFS/адаптер для библиотечных соединений, запрещающий создание/удаление/запись WAL и SHM до обращения к файловой системе, с `unavailable` при невозможности безопасного открытия; либо иную явную политику, определяющую, какие состояния заранее считать недоступными и как тогда получать `user_version`/статус `newer`. `immutable=1` не выбран самостоятельно: работающий писатель может менять базу/WAL, поэтому объявлять исходный файл неизменяемым нельзя.
+
+Пока этот механизм не определён, слой `Library` не может обоснованно гарантировать п. 7 и тест 4. Продолжать после решения следует в той же ветке `codex/T-016`.
