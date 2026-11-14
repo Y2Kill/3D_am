@@ -6,6 +6,8 @@ filters, index usage and the fact that SQLite SUM() is not exact.
 Uses only the Python standard library. Exit codes: 0 pass, 1 failure.
 """
 import argparse
+from pathlib import Path
+import re
 import sqlite3
 import sys
 
@@ -113,6 +115,18 @@ except sqlite3.IntegrityError:
 u = load("userdata")
 fks = u.execute("PRAGMA foreign_key_list(suggestion_decisions)").fetchall()
 check("U-14", "userdata.suggestion_decisions has no foreign keys (ADR-0036 item 3)", fks == [], str(fks))
+
+state = load("state")
+journal_source = (Path(args.root) / "src/storage/db/state_journal.cpp").read_text(encoding="utf-8")
+referenced = set(re.findall(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_]+)", journal_source))
+tables = {row[0] for row in state.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+check("DDL-SJ", "state.sql contains every table referenced by StateJournal (ADR-0006, ADR-0007)",
+      bool(referenced) and referenced <= tables, str(sorted(referenced - tables)))
+check("DDL-SE", "pending_ops_new evidence schema and cascade match the journal (ADR-0006)",
+      [row[1] for row in state.execute("PRAGMA table_info(pending_ops_new)")] ==
+      ["op_id", "new_size", "new_file_sha256", "new_manifest_sha256"] and
+      any(row[2] == "pending_ops" and row[3] == "op_id" and row[6] == "CASCADE"
+          for row in state.execute("PRAGMA foreign_key_list(pending_ops_new)")))
 
 print(f"{'OK' if not failures else 'FAILED'}: {failures} failure(s)")
 sys.exit(1 if failures else 0)

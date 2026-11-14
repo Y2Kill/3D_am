@@ -23,6 +23,14 @@ CREATE TABLE pending_ops (
   job_id       TEXT
 );
 
+-- Verified replacement evidence used by the commit journal (ADR-0006).
+CREATE TABLE pending_ops_new (
+  op_id TEXT PRIMARY KEY REFERENCES pending_ops(op_id) ON DELETE CASCADE,
+  new_size INTEGER NOT NULL,
+  new_file_sha256 TEXT NOT NULL,
+  new_manifest_sha256 TEXT NOT NULL
+);
+
 -- Активные снимки чтения для режима «поколений» (ADR-0025 п. 3): старая ревизия
 -- .am/gen/<uuid>.<rev>.zip удаляется, когда на неё нет снимков. При старте таблица
 -- очищается (процессы-читатели завершены) и ненужные поколения удаляются.

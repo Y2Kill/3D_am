@@ -1,6 +1,6 @@
 # T-016. Основа библиотеки: каталог, владелец записи, три базы и их версии (M2, P0.5 — часть 1)
 
-**Статус:** ready · **Веха:** M2 · **Основание:** ADR-0007 (каталог и три базы SQLite), ADR-0031 пп. 1–3 (владелец записи, режим «только чтение», `StorageCapabilities`), ADR-0025 (`AssetRepository` — единственный писатель ZIP), `docs/specifications/versioning.md` строки 4–5 (версии баз и `am-library.toml`), ТЗ §14.5.10, §14.7.7, §14.7.11, критерий K-123; `docs/plan/roadmap.md` M2
+**Статус:** in_progress · **Веха:** M2 · **Основание:** ADR-0007 (каталог и три базы SQLite), ADR-0031 пп. 1–3 (владелец записи, режим «только чтение», `StorageCapabilities`), ADR-0025 (`AssetRepository` — единственный писатель ZIP), `docs/specifications/versioning.md` строки 4–5 (версии баз и `am-library.toml`), ТЗ §14.5.10, §14.7.7, §14.7.11, критерий K-123; `docs/plan/roadmap.md` M2
 
 ## Цель
 
