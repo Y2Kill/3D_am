@@ -6,6 +6,11 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- `am library init` and read-only `am library info`, including JSON database
+  versions, rebuild status, storage capabilities, and write-owner diagnostics.
+- Library storage foundation with a lifetime write-owner lock, three versioned
+  SQLite databases, migration backups, and disposable-index recreation.
+
 - Asset format 1.0 is published: normative schema
   [`schemas/manifest-1.0.schema.json`](schemas/manifest-1.0.schema.json) and the
   golden ZIP corpus in [`tests/fixtures/golden/`](tests/fixtures/golden/README.md).
