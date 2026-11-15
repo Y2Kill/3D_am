@@ -63,6 +63,19 @@ if defined AM_PYTHON_EXTRA_PATH set PYTHON_CONFIG="-DAM_PYTHON_EXTRA_PATH=%AM_PY
 cd /d "%ROOT%" || exit /b 1
 echo VCPKG_BINARY_SOURCES=%VCPKG_BINARY_SOURCES%
 echo X_VCPKG_ASSET_SOURCES=%X_VCPKG_ASSET_SOURCES%
+rem Generation and build must see one console code page: CMake writes the
+rem localized cl.exe /showIncludes prefix into rules.ninja in the console
+rem code page, and a mismatch silently drops header dependencies.
+set "AM_OLD_CP="
+for /f "tokens=2 delims=:" %%C in ('chcp') do set "AM_OLD_CP=%%C"
+if defined AM_OLD_CP set "AM_OLD_CP=%AM_OLD_CP: =%"
+chcp 65001 >nul
+call :run_build
+set "AM_RESULT=%ERRORLEVEL%"
+if defined AM_OLD_CP chcp %AM_OLD_CP% >nul
+exit /b %AM_RESULT%
+
+:run_build
 cmake --preset win-cli %CI_CONFIG% %PYTHON_CONFIG% || exit /b 1
 cmake --build --preset win-cli || exit /b 1
 call "%ROOT%\tools\check_ninja_deps.cmd" "%ROOT%\build\win-cli" || exit /b 1
