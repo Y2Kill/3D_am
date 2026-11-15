@@ -356,7 +356,10 @@ TEST(Indexer, CommitObserverUpdatesFtsAndFailureKeepsCommittedZip) {
   repo::ChangeRequest change;
   change.ref = created.change.ref;
   change.expected_rev = 1;
-  change.ops.push_back(repo::SetMetadata{"asset", "title", repo::Json("AfterTitle")});
+  repo::SetMetadata metadata;
+  metadata.field = "title";
+  metadata.value.emplace("AfterTitle");
+  change.ops.push_back(std::move(metadata));
   auto moved = std::move(catalog);
   auto changed = value(moved.change(change));
   EXPECT_EQ(changed.change.revision, 2u);
