@@ -119,7 +119,9 @@ class LibraryCli(unittest.TestCase):
         if os.name != "nt":
             refused = self.run_am("rebuild", 4)
             self.assertEqual(refused["error"]["message_id"], "am.library.storage_read_only")
-            self.skipTest("Production writes require a verified fixed NTFS volume; service rebuild is tested with injected capabilities")
+            reason = "Production writes require a verified fixed NTFS volume; service rebuild is tested with injected capabilities"
+            print(reason)
+            self.skipTest(reason)
         rebuilt = self.run_am("rebuild")
         self.assertEqual(rebuilt["indexed"], 0)
         self.assertEqual(rebuilt["skipped"], [])
