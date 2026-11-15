@@ -1,6 +1,6 @@
 # T-016. Основа библиотеки: каталог, владелец записи, три базы и их версии (M2, P0.5 — часть 1)
 
-**Статус:** in_progress (продолжение по В-1) · **Веха:** M2 · **Основание:** ADR-0007 (каталог и три базы SQLite), ADR-0031 пп. 1–3 (владелец записи, режим «только чтение», `StorageCapabilities`), ADR-0025 (`AssetRepository` — единственный писатель ZIP), `docs/specifications/versioning.md` строки 4–5 (версии баз и `am-library.toml`), ТЗ §14.5.10, §14.7.7, §14.7.11, критерий K-123; `docs/plan/roadmap.md` M2
+**Статус:** review (выполнено по решению В-1; отчёт ниже) · **Веха:** M2 · **Основание:** ADR-0007 (каталог и три базы SQLite), ADR-0031 пп. 1–3 (владелец записи, режим «только чтение», `StorageCapabilities`), ADR-0025 (`AssetRepository` — единственный писатель ZIP), `docs/specifications/versioning.md` строки 4–5 (версии баз и `am-library.toml`), ТЗ §14.5.10, §14.7.7, §14.7.11, критерий K-123; `docs/plan/roadmap.md` M2
 
 ## Цель
 
@@ -193,3 +193,174 @@ readonly_shm URI query result: 0 changed after: ['state.sqlite-shm', 'state.sqli
 5. Эксперимент `.cache/t016_sqlite_probe.py` перенести не нужно; в отчёте достаточно ссылки. `docs/user/cli.md` в разделе `am library info` одной фразой: чтение может создать служебные файлы SQLite `-wal`/`-shm` рядом с существующими базами.
 
 Прочие решения задачи не меняются. Продолжать в той же ветке `codex/T-016`, статус — `in_progress`.
+
+## Отчёт исполнителя — продолжение по решению В-1
+
+Дата: 2026-11-15. Решение управляющего В-1 из `345fde3` выполнено; собственный VFS не добавлялся. Окончательные результаты этого этапа приведены ниже; первый отчёт выше описывает историческую остановку.
+
+### Ветка и коммиты
+
+- Ветка `codex/T-016`, исходная база `main` — `d90a758`; продолжение в той же ветке.
+- `69608ff` — общая SQL-схема журнала, выполнено на первом этапе.
+- `7ce1d25` — первый отчёт с вопросом В-1; `345fde3` — решение управляющего.
+- `13302a4` — Library, блокировка, три базы, миграции, фасад, CLI, сообщения, документация и тесты.
+- `67c5a9c` — проверка RFC-варианта UUIDv7 и устранение предупреждения GCC в новом тесте.
+- Итоговый отчёт и статус `review` — отдельный завершающий коммит этой ветки. Слияния, push и переписывания истории не выполнялись.
+
+### Реализация
+
+- `Library::init` создаёт раскладку ADR-0007 и три базы, записывает `am-library.toml` последним через временный файл и переименование. Возвращает конфигурацию, не оставляет соединения/владельца открытыми. UUIDv7 и UTC-время с миллисекундами; пустое имя допустимо. Повторное создание и непустой каталог отвергаются, прерванное создание не становится библиотекой.
+- TOML разбирается toml++; проверяются обязательные поля, типы, формат, версия, UUIDv7 и время. Неизвестные ключи принимаются, исходный файл не переписывается.
+- `Library::open` использует существующий `detect_storage_capabilities`, проверяет доступ к существующему каталогу без создания пробного файла. Новая библиотечная структура возможностей дополняет существующую классификацию полями `readable`/`writable`; базовая часть передаётся в `AssetRepository` без изменения его интерфейса.
+- Владелец записи захватывается до открытия баз: Windows `LockFileEx`, один байт по `1 << 62`; Linux `flock`. JSON-диагностика содержит PID, host, application_version, acquired_at. Блокировка удерживается до закрытия репозитория и соединений; повторное открытие в том же процессе отвергается. В чтении существующая блокировка только проверяется и сразу освобождается; отсутствующий lock-файл не создаётся.
+- Схемы всех трёх баз встроены из SQL-файлов. Для userdata/state проверяются версии, пустая версия 0 инициализируется; неподдерживаемая версия отвергается без неявного понижения режима. Перед миграциями создаётся `VACUUM INTO`-копия в `.am/backup/`, шаги выполняются транзакционно с проверкой целостности/версии; при отказе изменения откатываются, копия сохраняется. Производственный список шагов пуст; проверочный шаг передаётся параметром.
+- Несовместимый/повреждённый индекс сохраняется комплектом с WAL/SHM под `index.sqlite.stale-…`, затем создаётся заново с `rebuild_required=1`; отсутствующий индекс создаётся без изменения ассетов и userdata. Настроены WAL, foreign_keys, NORMAL для index и FULL для userdata/state.
+- В чтении основные файлы баз и данные библиотеки не меняются. SQLite может создавать/менять WAL/SHM существующих баз по решению В-1. При `writable=false` выбор производится до SQLite: отсутствующий/пустой WAL → `immutable`; ненулевой WAL → `unavailable/wal_pending`. Ошибка открытия → `unavailable/open_failed` с SQLite detail. Отсутствующие базы остаются `missing`.
+- Фасад в `am_application` и команды `am library init/info`; info всегда открывает для чтения, выдаёт статусы/версии баз, read_mode/reason, индекс, владельца и возможности. Коды выхода: init success 0, непустой каталог/не библиотека 4, повреждённая конфигурация 1. Добавлены английские сообщения, CLI guide и CHANGELOG.
+
+### Критерии приёмки и тесты
+
+1. Полные команды сборок и фактические итоги — ниже. Число зарегистрированных тестов увеличилось на 17 относительно прежнего CLI-набора платформы (13 C++ + 4 CLI); `req_report` проверяет ID. Пропуски, если есть, перечислены отдельно, не считаются выполненными тестами.
+2. Соответствие тестов 1–9 задачи:
+
+| Пункт | Проверки |
+|---|---|
+| 1. init/open | `Library.InitLayoutConfigAndDatabasePragmas`, `Library.ConfigValidationAndUnknownKeys`, `Library.ConfigTypesVersionsDatesAndUnknownKeys`; дополнительно `Library.EmptyDatabasesInitializeButNonemptyVersionZeroIsRejected` |
+| 2. Прерванный init | `Library.InterruptedInitHasNoConfiguration` |
+| 3. Владелец | `Library.OwnerLockLifetimeSameProcessAndStaleDiagnostics`, `cli_library_owner_lock` (блокировка из отдельного процесса Python) |
+| 4 и 4б по В-1 | `Library.ReadOnlyPreservesDataAndRejectsMutation`, `Library.ImmutableFallbackAndPendingWal`, `Library.WritablePolicyRefusesWithoutDowngrade`; сравнение размеров и SHA-256, Unicode/пробелы/спецсимволы URI, отказ изменяющей операции репозитория и SQL-записи; CLI проверяет сохранность данных и отсутствие баз для missing |
+| 5. Версии/индекс | `Library.DatabaseVersionsAndIndexRecreation`, `Library.EmptyDatabasesInitializeButNonemptyVersionZeroIsRejected`, `Library.IndexRecreationPreservesWalFileSet` |
+| 6. Миграции | `Library.MigrationBackupSuccessAndRollback`: успешный шаг и отказ после изменения данных/DDL, проверка исходной версии/данных резервной копии |
+| 7. Журнал | `Library.JournalAndAssetRepositoryShareLibraryState`, существующие StateJournal/CommitProtocol/AssetRepository и `sql_check` в полных прогонах |
+| 8. AssetRepository | `Library.JournalAndAssetRepositoryShareLibraryState`: создание ZIP через Library и чтение через вторую Library read_only |
+| 9. CLI | `cli_library_init_info`, `cli_library_refusals`, `cli_library_missing_databases` (также unavailable/open_failed), `cli_library_owner_lock` |
+
+3. Новые message_id и фактический JSON-пример — ниже.
+4. Изменения ограничены разделом «Файлы» задачи. Интерфейс AssetRepository, ADR, спецификации, матрицы, опубликованный формат/корпус 1.0, зависимости и материалы владельца не изменялись. Все пробы, синтетические библиотеки, логи и временные файлы — в `.cache/`. Коллекция не читалась и не копировалась. Предсуществующий незарегистрированный `3D_am_open_questions_e2472e9.zip` оставлен без изменений и не включён в коммиты.
+
+### Команды и фактические результаты
+
+```text
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) =  17.02 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 86 PASS, 0 SKIP, 0 FAIL из 86 зарегистрированных тестов.
+
+```text
+tools\build_cli.cmd --ci
+100% tests passed, 0 tests failed out of 317
+Total Test time (real) = 746.23 sec
+req_report: 45 IDs, 317 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 317 PASS, 0 SKIP, 0 FAIL из 317 зарегистрированных тестов.
+
+```text
+tools\build_cli.cmd --offline --ci
+100% tests passed, 0 tests failed out of 317
+Total Test time (real) = 683.63 sec
+req_report: 45 IDs, 317 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 317 PASS, 0 SKIP, 0 FAIL из 317 зарегистрированных тестов.
+
+```text
+tools/build_linux.sh cli --ci (WSL)
+100% tests passed, 0 tests failed out of 314
+Total Test time (real) = 1244.28 sec
+req_report: 45 IDs, 314 tests, 48 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 301 PASS, 13 SKIP, 0 FAIL из 314 зарегистрированных тестов.
+
+Время Linux-прогона включает паузу очереди CTest для исключения пересечения с Windows на общих тестовых файлах; это результат функционального прогона, не замер производительности.
+
+Пропущены существующие платформенные проверки (это не PASS):
+
+- `AssetService.CreateRefusalsAndPublishRaceNeverReplaceOutput`;
+- `AssetService.PostCreateFailureDeletesOnlyTheNewOutput`;
+- `AssetService.ValidationAndExtractionUseSharedV3AndPreserveSuccessfulFiles`;
+- `AssetService.StreamScopesMinorAndCorruption`;
+- `CommitProtocol.FallbackOnlyForUnsupportedAndChecksTheMovedIdentity`;
+- `CommitProtocol.ProtectedTemporaryFileDeniesAnotherWriter`;
+- `CommitProtocol.LockHeldByAnotherProcessIsReleasedByKill`;
+- `CommitProtocol.KillEveryCheckpointThreeTimesAndRecover`;
+- `CommitProtocol.RecoveryUsesWholeFileIdentityNotOnlyManifest`;
+- `CommitProtocol.OpenReaderKeepsOldBytesAndNewReadersSeeNewVersion`;
+- `CommitProtocol.WindowsAndFilesystemEvidence`;
+- `AssetRepository.AnotherProcessLockPreventsLostRevisionAndIsReleasedByKill`;
+- `AssetRepository.KillEveryRepositoryCheckpointThreeTimesWithOpenSnapshot`;
+
+Первый текущий запуск `tools\build_min.cmd --ci` в ограниченной песочнице завершился 85 PASS / 1 FAIL: `schema_check` получил `AttributeError: module jsonschema has no attribute Draft202012Validator` из-за отсутствия доступа к `.cache/pylib` (известное ограничение из `AGENTS.md`). Без изменения кода выполнен полный повтор с разрешённым доступом; его успешный итог приведён выше. Исходный отказ сохранён в `.cache/t016-completion-min.log`. Доступ к WSL также потребовал запуска вне ограниченной песочницы.
+
+При проверке незавершённой работы 2026-11-15 функциональных правок не потребовалось: реализация уже находилась в `13302a4`/`67c5a9c`, оставались обязательные полные прогоны и оформление сдачи.
+
+Промежуточная CLI-фикстура на предыдущем этапе исправлена: `?` запрещён в имени каталога Windows, на Windows оставлены Unicode/пробелы/`#%`, на Linux также `?`. Промежуточный Linux-прогон остановлен после предупреждения GCC вокруг GoogleTest-макроса; добавлены скобки, выполнен полный повтор. Эти промежуточные результаты не подменяют итоговые прогоны выше.
+
+Свидетельства: `.cache/t016-completion-min-access-*`, `.cache/t016-completion-cli-*`, `.cache/t016-completion-offline-*`, `.cache/t016-completion-linux-*` (логи, JUnit, req_report и result.json). Целевой прогон `.cache/t016-final-library-targeted-*`: 17/17 PASS, 0 неверных ID; это не полный CLI-прогон. Пример текущего запуска сохранён в `.cache/t016-completion-example.json`.
+
+### Новые message_id
+
+`am.library.config_invalid`, `am.library.config_newer`, `am.library.not_empty`, `am.library.not_found`, `am.library.parent_missing`, `am.library.storage_read_only`, `am.library.not_writable`, `am.library.locked`, `am.library.db_version`, `am.library.db_error`, `am.library.migration_invalid`, `am.library.migration_failed`, `am.library.io_error`, `am.library.out_of_memory`, `am.library.internal`.
+
+Метки представления: `am.app.label.library_id`, `name`, `schema_version`, `mode`, `capabilities`, `write_unavailable_reason`, `owner`, `owner_detail`, `databases` (все с префиксом `am.app.label.`; created_at уже существовал). Полноту проверяет `message_catalog_check`.
+
+### Фактический пример `am library info --json`
+
+Синтетическая библиотека создана командой `am library init <каталог-в-.cache> --name "T-016 example" --json`; следующий вывод получен реальным запуском CLI, только форматирование JSON изменено:
+
+```json
+{
+  "library_id": "01a1e068-4025-7182-8195-79e5cb40a743",
+  "name": "T-016 example",
+  "created_at": "2026-11-15T18:11:30.982Z",
+  "schema_version": 1,
+  "mode": "read_only",
+  "capabilities": {
+    "mode": "full",
+    "max_file_size": 18446744073709551615,
+    "posix_rename": true,
+    "replace_file": true,
+    "locks_reliable": true,
+    "durability": "assumed",
+    "filesystem": "NTFS",
+    "remote": false,
+    "readable": true,
+    "writable": true
+  },
+  "write_unavailable_reason": "",
+  "owner": "free",
+  "databases": {
+    "index": {
+      "state": "ok",
+      "user_version": 1,
+      "read_mode": "wal",
+      "rebuild_required": true
+    },
+    "userdata": {
+      "state": "ok",
+      "user_version": 1,
+      "read_mode": "wal"
+    },
+    "state": {
+      "state": "ok",
+      "user_version": 1,
+      "read_mode": "wal"
+    }
+  },
+  "command": "library info"
+}
+```
+
+### Отклонения и вопросы
+
+Гарантия read_only и тест 4 реализованы в уточнённой редакции В-1; прежний запрет на SQLite sidecars не применяется. Проверочный v1→v2 внедряется для userdata, производственных миграций нет. На Linux производственная классификация файловой системы остаётся `read_only_default` по существующей политике; модульные сценарии записи используют явно синтетические возможности, не сертифицируют файловую систему. Динамическое состояние при отключении носителя и удаление stale-файлов остаются вне задачи.
+
+В-1 закрыт реализацией решения управляющего. Новых вопросов нет.
