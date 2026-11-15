@@ -6,6 +6,9 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Transactional library index rebuilds with `am library rebuild`, read-only
+  `am library list`, indexed-asset counts in `info`, and post-commit indexing.
+- Exact byte-size totals and preserved custom-field JSON in the disposable index.
 - `am library init` and read-only `am library info`, including JSON database
   versions, rebuild status, storage capabilities, and write-owner diagnostics.
 - Library storage foundation with a lifetime write-owner lock, three versioned

@@ -15,6 +15,8 @@ am asset verify <zip> [--level quick|selective|full] [--file <FileID>]... [--jso
 am asset extract <zip> -d <dir> [--file <FileID>]... [--manifest] [--json] [--verbose]
 am library init <dir> [--name <text>] [--json] [--verbose]
 am library info <dir> [--json] [--verbose]
+am library rebuild <dir> [--json] [--verbose]
+am library list <dir> [--json] [--trash] [--verbose]
 ```
 
 ### Library initialization and status
@@ -47,6 +49,26 @@ pending WAL pages is opened as immutable; a nonempty WAL instead produces
 `info` returns 0 when the library configuration is understood, even if a database
 is missing or unavailable. A directory without configuration returns 4; invalid
 configuration returns 1. Unknown TOML keys are accepted without rewriting them.
+
+### Library index
+
+`am library rebuild <dir> --json` takes the library write-owner lock and rebuilds
+the index in one transaction from `assets/*/*.zip` and `trash/*.zip`. It does not
+change asset ZIPs or user data. Existing readers see the previous index until
+commit. The result contains `indexed`, `skipped` (path, reason, message ID),
+`ignored`, and `duration_ms`. Unreadable ZIPs, unsupported formats, mismatched
+IDs, and duplicate IDs are reported without failing the whole rebuild. Files
+with other names are ignored. These files are never removed. A successful
+rebuild returns 0 even when files were skipped; lock, read-only, I/O, and
+transaction failures return 4.
+
+`am library list <dir> --json` reads the current index and returns `assets` plus
+`rebuild_required`. Rows contain `asset_id`, `revision`, `title`, `health`,
+`file_count`, `content_bytes`, and `in_trash`. Byte counts are decimal strings;
+an unknown or overflowing total is null. `--trash` includes trash rows. A stale
+index produces a warning and still returns 0. Use `rebuild` to refresh it;
+filesystem change detection is planned separately. `info` also reports
+`indexed_assets` (null if the index is unavailable).
 
 ### Create
 

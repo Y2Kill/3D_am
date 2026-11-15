@@ -424,6 +424,7 @@ Result<Library> Library::open(const Path& path, const OpenOptions& options) {
     repository::RepositoryOptions repo;
     repo.library_id = p->config.library_id; repo.mode = p->mode; repo.application_version = options.application_version;
     repo.capabilities = static_cast<const repository::StorageCapabilities&>(p->caps);
+    repo.on_indexed = options.on_indexed;
     p->assets.emplace(take(repository::AssetRepository::open(root, std::move(repo))));
     return Library(std::move(p));
   });

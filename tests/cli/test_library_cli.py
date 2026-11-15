@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import unittest
 import uuid
@@ -108,6 +109,57 @@ class LibraryCli(unittest.TestCase):
             self.assertEqual(info["owner"], "locked")
             self.assertIn("process-test", info["owner_detail"])
         self.assertEqual(self.run_am("info")["owner"], "free")
+
+    def test_rebuild_list(self):
+        self.run_am("init")
+        initial = self.run_am("list")
+        self.assertEqual(initial["assets"], [])
+        self.assertTrue(initial["rebuild_required"])
+        self.assertEqual(self.run_am("info")["indexed_assets"], 0)
+        if os.name != "nt":
+            refused = self.run_am("rebuild", 4)
+            self.assertEqual(refused["error"]["message_id"], "am.library.storage_read_only")
+            self.skipTest("Production writes require a verified fixed NTFS volume; service rebuild is tested with injected capabilities")
+        rebuilt = self.run_am("rebuild")
+        self.assertEqual(rebuilt["indexed"], 0)
+        self.assertEqual(rebuilt["skipped"], [])
+        self.assertEqual(rebuilt["ignored"], [])
+        self.assertGreaterEqual(rebuilt["duration_ms"], 0)
+        for number in range(2):
+            source = self.work / f"source-{number}.bin"
+            source.write_bytes(bytes([number]) * 19)
+            output = self.work / f"asset-{number}.zip"
+            created = subprocess.run([str(CONFIG.am), "asset", "create", str(source), "-o", str(output), "--title", f"Indexed {number}", "--json"], capture_output=True, encoding="utf-8", timeout=60)
+            self.assertEqual(created.returncode, 0, (created.stdout, created.stderr))
+            inspected = subprocess.run([str(CONFIG.am), "asset", "inspect", str(output), "--json"], capture_output=True, encoding="utf-8", timeout=60)
+            self.assertEqual(inspected.returncode, 0, inspected.stderr)
+            asset_id = json.loads(inspected.stdout)["asset_id"]
+            destination = self.root / "assets" / asset_id[-2:] / (asset_id + ".zip")
+            destination.parent.mkdir(exist_ok=True)
+            shutil.copyfile(output, destination)
+        before = self.snapshot()
+        userdata_before = hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest()
+        rebuilt = self.run_am("rebuild")
+        self.assertEqual(rebuilt["indexed"], 2)
+        listed = self.run_am("list")
+        self.assertFalse(listed["rebuild_required"])
+        self.assertEqual({row["title"] for row in listed["assets"]}, {"Indexed 0", "Indexed 1"})
+        for row in listed["assets"]:
+            self.assertEqual(row["revision"], 1)
+            self.assertEqual(row["content_bytes"], "19")
+            self.assertEqual(row["file_count"], 1)
+            self.assertEqual(row["health"], "ok")
+            self.assertFalse(row["in_trash"])
+        self.assertEqual(self.run_am("info")["indexed_assets"], 2)
+        after = self.snapshot()
+        for path, data in before.items():
+            if path.endswith(".zip") or path == "am-library.toml":
+                self.assertEqual(after[path], data)
+        self.assertEqual(hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest(), userdata_before)
+        self.assertEqual(self.run_am("list", 0, "--trash")["assets"], listed["assets"])
+        plain = subprocess.run([str(CONFIG.am), "library", "list", str(self.root)], capture_output=True, encoding="utf-8")
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertIn("Indexed 0", plain.stdout)
 
 
 if __name__ == "__main__":

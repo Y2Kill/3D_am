@@ -35,6 +35,7 @@ struct OpenOptions {
   std::string application_version;
   std::optional<StorageCapabilities> capabilities;
   std::vector<Migration> migrations;
+  std::function<void(const repository::IndexedEvent&)> on_indexed;
 };
 struct InitOptions {
   std::string name;

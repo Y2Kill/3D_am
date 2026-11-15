@@ -130,6 +130,16 @@ int main(int argc, char** argv) {
   library_info->add_option("dir", library_info_root)->required();
   presentation(library_info);
   library_info->callback([&] { render("library info", app::inspect_library(path(library_info_root))); });
+  std::string library_rebuild_root, library_list_root; bool library_list_trash = false;
+  auto* library_rebuild = library->add_subcommand("rebuild", "Rebuild the index from asset and trash ZIPs");
+  library_rebuild->add_option("dir", library_rebuild_root)->required();
+  presentation(library_rebuild);
+  library_rebuild->callback([&] { render("library rebuild", app::rebuild_library(path(library_rebuild_root))); });
+  auto* library_list = library->add_subcommand("list", "List indexed assets without changing library data");
+  library_list->add_option("dir", library_list_root)->required();
+  library_list->add_flag("--trash", library_list_trash, "Include indexed assets from trash");
+  presentation(library_list);
+  library_list->callback([&] { render("library list", app::list_library(path(library_list_root),library_list_trash)); });
   auto* asset = cli.add_subcommand("asset", "Create, inspect, check, and extract a standalone asset ZIP");
   asset->require_subcommand(1);
   std::vector<std::string> inputs;
