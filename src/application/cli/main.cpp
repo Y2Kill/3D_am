@@ -1,4 +1,5 @@
 #include "am/application/asset_service.hpp"
+#include "am/application/library_service.hpp"
 #include "am/application/development.hpp"
 #include <CLI/CLI.hpp>
 #include <filesystem>
@@ -41,7 +42,14 @@ void print_diagnostics(const app::AssetOutcome& result, bool verbose) {
 }
 void print_text(const std::string& command, const app::AssetOutcome& result, bool verbose) {
   const auto& j = result.value;
-  if (command == "validate" || command == "verify") {
+  if (command.starts_with("library ")) {
+    for (const auto& [key, value] : j.items()) {
+      std::cout << app::message_text(std::string("am.app.label.") + key) << ": ";
+      if (value.is_string()) std::cout << value.get<std::string>();
+      else std::cout << value.dump();
+      std::cout << '\n';
+    }
+  } else if (command == "validate" || command == "verify") {
     for (auto key : {"v1", "v2", "v3"})
       if (j.contains(key)) std::cout << key << ": " << j[key].get<std::string>() << '\n';
     if (j.contains("container_verification"))
@@ -89,6 +97,7 @@ int main(int argc, char** argv) {
     selected_command = command;
     if (!result) {
       code = static_cast<int>(app::error_exit_code(result.error()));
+      if (result.error().message_id == "am.library.config_invalid") code = 1;
       if (json) std::cout << Json{{"command", command}, {"error", error_value(result.error())}}.dump() << '\n';
       print_error(result.error(), verbose);
       return;
@@ -109,6 +118,18 @@ int main(int argc, char** argv) {
     cmd->add_flag("--json", json, "Print one UTF-8 JSON object");
     cmd->add_flag("--verbose", verbose, "Include technical details and causes");
   };
+  auto* library = cli.add_subcommand("library", "Create a library or read its status");
+  library->require_subcommand(1);
+  std::string library_root, library_name, library_info_root;
+  auto* library_init = library->add_subcommand("init", "Initialize a new or empty library directory");
+  library_init->add_option("dir", library_root)->required();
+  library_init->add_option("--name", library_name, "Library name");
+  presentation(library_init);
+  library_init->callback([&] { render("library init", app::init_library(path(library_root), library_name)); });
+  auto* library_info = library->add_subcommand("info", "Read library status without changing library data");
+  library_info->add_option("dir", library_info_root)->required();
+  presentation(library_info);
+  library_info->callback([&] { render("library info", app::inspect_library(path(library_info_root))); });
   auto* asset = cli.add_subcommand("asset", "Create, inspect, check, and extract a standalone asset ZIP");
   asset->require_subcommand(1);
   std::vector<std::string> inputs;

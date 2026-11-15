@@ -98,7 +98,6 @@ Result<std::shared_ptr<StateJournal>> StateJournal::open(const std::filesystem::
       if (sqlite3_column_int(version.value, 0) != 1) return error("Unsupported state.sqlite user_version", Errc::unsupported, "am.commit.journal_version");
     }
     exec(impl->db, "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
-    exec(impl->db, "CREATE TABLE IF NOT EXISTS pending_ops_new(op_id TEXT PRIMARY KEY REFERENCES pending_ops(op_id) ON DELETE CASCADE,new_size INTEGER NOT NULL,new_file_sha256 TEXT NOT NULL,new_manifest_sha256 TEXT NOT NULL)");
     return std::shared_ptr<StateJournal>(new StateJournal(std::move(impl)));
   } catch (const Error& e) { return e; }
   catch (const std::bad_alloc&) { return error("Allocation failed", Errc::resource_exhausted, "am.commit.out_of_memory"); }

@@ -12,7 +12,7 @@ if(AM_WITH_CONTAINER)
   string(REPLACE "\n" "\n)AMMSG\",\nR\"AMMSG(" AM_MESSAGE_PARTS "${AM_MESSAGE_TEXT}")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/messages_resource.hpp"
     CONTENT "#pragma once\ninline constexpr const char* message_parts[] = {R\"AMMSG(${AM_MESSAGE_PARTS})AMMSG\"};\n")
-  am_add_module(application SOURCES common/asset_service.cpp common/development.cpp common/messages.cpp
+  am_add_module(application SOURCES common/asset_service.cpp common/library_service.cpp common/development.cpp common/messages.cpp
     DEPENDS ${AM_APP_DEPS})
   set_property(SOURCE common/messages.cpp APPEND PROPERTY OBJECT_DEPENDS
     "${AM_MESSAGES};${CMAKE_CURRENT_BINARY_DIR}/generated/messages_resource.hpp")

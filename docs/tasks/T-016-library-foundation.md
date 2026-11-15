@@ -1,6 +1,6 @@
 # T-016. Основа библиотеки: каталог, владелец записи, три базы и их версии (M2, P0.5 — часть 1)
 
-**Статус:** ready · **Веха:** M2 · **Основание:** ADR-0007 (каталог и три базы SQLite), ADR-0031 пп. 1–3 (владелец записи, режим «только чтение», `StorageCapabilities`), ADR-0025 (`AssetRepository` — единственный писатель ZIP), `docs/specifications/versioning.md` строки 4–5 (версии баз и `am-library.toml`), ТЗ §14.5.10, §14.7.7, §14.7.11, критерий K-123; `docs/plan/roadmap.md` M2
+**Статус:** review (выполнено по решению В-1; отчёт ниже) · **Веха:** M2 · **Основание:** ADR-0007 (каталог и три базы SQLite), ADR-0031 пп. 1–3 (владелец записи, режим «только чтение», `StorageCapabilities`), ADR-0025 (`AssetRepository` — единственный писатель ZIP), `docs/specifications/versioning.md` строки 4–5 (версии баз и `am-library.toml`), ТЗ §14.5.10, §14.7.7, §14.7.11, критерий K-123; `docs/plan/roadmap.md` M2
 
 ## Цель
 
@@ -95,4 +95,272 @@
 
 ## Отчёт исполнителя
 
-_(заполняет исполнитель)_
+Дата: 2026-11-14. Выполнение остановлено при предварительной проверке read-only поведения используемой SQLite; оформлен В-1. Статус `review` — передача вопроса и частичного результата, а не готовность всей T-016 к приёмке. Основание остановки — п. 3 `AGENTS.md`: при противоречии задачи коду исполнитель описывает вопрос, не принимает архитектурное решение самостоятельно.
+
+### Ветка и коммиты
+
+- Ветка `codex/T-016`, создана от `main` (`d90a758`).
+- `69608ff` — согласованный п. 9: `pending_ops_new` в общей state.sql, удаление динамического DDL, SQL-проверки и метки требований, статусы `in_progress`.
+- Отчёт В-1 и статус `review` — завершающий коммит ветки (`HEAD`). Слияния, push и переписывания истории не выполнялись.
+
+### Что сделано по критериям приёмки
+
+1. `tools\build_min.cmd --ci` реально выполнена: **86/86 PASS**, `req_report` — 0 неверных ID. CLI пересобран офлайн, выполнен только целевой прогон трёх тестов `StateJournal`: **3/3 PASS**, 0 неверных ID. Полные CLI `--ci`, CLI `--offline --ci` и Linux не запускались: после воспроизведения В-1 действует правило остановки. Их успех не заявляется.
+2. Из тестов 1–9 частично выполнен п. 7: общая схема state.sqlite содержит таблицу evidence, существующие тесты журнала проходят. Новые проверки `DDL-SJ` и `DDL-SE` в `sql_check` проверяют покрытие всех таблиц, к которым обращается журнал, и состав/FK CASCADE таблицы `pending_ops_new`. Имена реально запущенных C++-тестов:
+   - `StateJournal.SchemaVersionTablesAndDurableTransitionsAcrossConnections`;
+   - `StateJournal.InvalidTransitionAndVersionDoNotModifyRows`;
+   - `StateJournal.EvidenceFailureRollsBackTheStateTransition`.
+
+   Тесты 1–6, 8–9 и взаимодействие `StateJournal` с ещё не реализованной `Library` не добавлены. Полные тесты протокола/репозитория также не запускались. Эксперимент для В-1 ниже — проверка поведения backend, а не тест готовой `Library`.
+3. Новые `message_id` и `am library init/info` пока не реализованы; пример вывода `am library info --json` не формировался.
+4. Изменены только разрешённые файлы: `schemas/sql/state.sql`, `src/storage/db/state_journal.cpp`, `tests/schema/sql_check.py`, `tests/CMakeLists.txt`, задача и строка реестра. `AssetRepository`, публичные интерфейсы, кодек, опубликованные схема/golden ZIP 1.0, ADR, спецификации, матрицы и зависимости не менялись. Все синтетические базы/пробы/логи находятся в `.cache/`; материалы коллекции не читались и не копировались. Предсуществующий незарегистрированный `3D_am_open_questions_e2472e9.zip` оставлен без изменений и не включён в коммиты.
+
+### Согласованная часть п. 9
+
+Определение `pending_ops_new` перенесено из `StateJournal::open` в `state.sql` без изменения колонок, ограничений и версии 1. Удалена только строка динамического `CREATE TABLE IF NOT EXISTS`; существующее встраивание `state_schema_sql` из SQL-файла сохранено. Схема стала единым источником DDL журнала; создание/открытие трёх баз через `Library` ещё предстоит реализовать. `sql_check` дополнен двумя проверками; его CTest-метки дополнены `req:ADR-0006` и `req:ADR-0007`.
+
+### Команды и фактические итоги
+
+```text
+python -I tests/schema/sql_check.py --root .
+PASS DDL-SJ state.sql contains every table referenced by StateJournal (ADR-0006, ADR-0007)
+PASS DDL-SE pending_ops_new evidence schema and cascade match the journal (ADR-0006)
+OK: 0 failure(s)
+19 PASS checks; exit_code: 0
+
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) =  21.91 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+
+tools\build_cli.cmd --offline --ci -R StateJournal
+100% tests passed, 0 tests failed out of 3
+Total Test time (real) =   1.04 sec
+req_report: 42 IDs, 300 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+В последнем `req_report` число 300 — весь зарегистрированный inventory: реально выполнены 3 теста, остальные 297 имеют `NOT_RUN`. Это не полный прогон 300 тестов.
+
+Локальные свидетельства: `.cache/t016-sql-check.log`, `.cache/t016-baseline-min-ci.log`/`-junit.xml`, `.cache/t016-journal-regression.log`/`-junit.xml`/`-req_report.json`, `.cache/t016-readonly-probe/results.json`, `.cache/t016-readonly-probe/readonly-shm.json`. Воспроизведение backend — `.cache/t016_sqlite_probe.py`.
+
+### Отклонения
+
+Работа остановлена до создания модуля `Library`: запрошенная гарантия «ни одного изменения файла» не обеспечивается предписанным флагом SQLite. Реализация дополнительной стратегии предотвращения побочных записей без решения управляющего не выбрана. Не применялись обходы с `immutable=1`, копированием баз, изменением ACL/режима журналов или попыткой удалить созданные SQLite файлы после чтения: они изменили бы гарантии конкурентного чтения, состав работы либо уже нарушили бы запрет создания файлов.
+
+### Вопросы
+
+**В-1. Какой механизм строгого read-only использовать для баз WAL, включая момент определения `unavailable`?**
+
+Пункт 7 требует не создавать, не менять и не удалять ни одного файла библиотеки, в том числе WAL/SHM, при `SQLITE_OPEN_READONLY`. ADR-0007 и п. 8 требуют WAL для всех трёх баз. Проверка проведена через C API **той SQLite DLL, которую использует текущая CLI-сборка**: `build/win-cli/bin/sqlite3.dll`, `sqlite3_libversion() = 3.53.4` (не Python sqlite3). Созданы только синтетические базы в `.cache/t016-readonly-probe/`, по одной таблице и `user_version = 1`. Читатель открыт с флагом `SQLITE_OPEN_READONLY`; выполнены `PRAGMA user_version` и SELECT; дескриптор закрыт. Снимок содержит пути, размер, mtime и SHA-256 каждого файла.
+
+```text
+python .cache/t016_sqlite_probe.py
+closed changed during: ['state.sqlite-shm', 'state.sqlite-wal'] changed after: ['state.sqlite-shm', 'state.sqlite-wal']
+active_writer changed during: ['state.sqlite-shm'] changed after: ['state.sqlite-shm']
+wal_without_shm changed during: ['state.sqlite-shm'] changed after: ['state.sqlite-shm']
+SQLite 3.53.4
+readonly_shm URI query result: 0 changed after: ['state.sqlite-shm', 'state.sqlite-wal']
+```
+
+| Состояние до чтения | Фактический побочный эффект |
+|---|---|
+| Закрытая WAL-база, только `state.sqlite` (8192 байта), без sidecars | После чтения остались новые `state.sqlite-wal` (0 байт) и `state.sqlite-shm` (32768 байт) |
+| Писатель держит базу открытой, WAL/SHM уже существуют | Изменился SHA-256 содержимого SHM; писатель во время пробы ничего не выполнял |
+| WAL оставлен через `SQLITE_FCNTL_PERSIST_WAL`, SHM отсутствует | Читатель создал новый SHM |
+| URI `mode=ro&readonly_shm=1` и `SQLITE_OPEN_READONLY \| SQLITE_OPEN_URI` на копии закрытой базы | Запрос успешен, но WAL/SHM всё равно появились |
+
+Это не ошибка SQL-запроса: чтение успешно, поэтому простой перехват ошибки с переводом базы в `unavailable` не предотвращает изменения. Даже если отказ произойдёт позже, проверять возможность открытия методом «попробовать SQLite, затем объявить недоступной» уже поздно — побочные файлы могут быть созданы.
+
+Проверен и исходный код используемой SQLite в `.cache/vcpkg/buildtrees/sqlite3/src/nf-3530400-891c4575fa.clean/sqlite3.c`: открытие WAL использует `SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_WAL` (строка 69244), независимо от read-only флага основного файла. Win32 shared-memory путь открывает/отображает отдельный SHM. Таким образом, `SQLITE_OPEN_READONLY` запрещает SQL-запись в основную базу, но не является гарантией отсутствия побочных файлов/записей WAL-инфраструктуры.
+
+Нужно согласовать стратегию **предотвращения** таких операций: например, отдельный защищённый read-only VFS/адаптер для библиотечных соединений, запрещающий создание/удаление/запись WAL и SHM до обращения к файловой системе, с `unavailable` при невозможности безопасного открытия; либо иную явную политику, определяющую, какие состояния заранее считать недоступными и как тогда получать `user_version`/статус `newer`. `immutable=1` не выбран самостоятельно: работающий писатель может менять базу/WAL, поэтому объявлять исходный файл неизменяемым нельзя.
+
+Пока этот механизм не определён, слой `Library` не может обоснованно гарантировать п. 7 и тест 4. Продолжать после решения следует в той же ветке `codex/T-016`.
+
+### Решение управляющего по В-1 (2026-11-14)
+
+**Требование п. 7 сужается до того, что требует ADR-0031; собственный VFS не пишем.** Формулировка «ни одного файла, включая `-wal`/`-shm`» — моё превышение ADR-0031 п. 2: тот требует, чтобы режим «только чтение» не менял **данные** библиотеки и отвергал изменяющие команды. `-shm` (и пустой `-wal`) в режиме WAL — протокол, которым читатель согласуется с работающим писателем; запрет на них лишил бы чтение согласованности рядом с владельцем. Эксперимент исполнителя (SQLite 3.53.4, исходник `sqlite3.c`) это подтверждает: `SQLITE_OPEN_READONLY` и `readonly_shm=1` побочные файлы не исключают.
+
+1. **Гарантия режима `read_only` (вместо п. 7, первая фраза):** не создаются, не изменяются и не удаляются `am-library.toml`, всё в `assets/` и `trash/`, `.am/library.lock`, `.am/.am-tmp/`, `.am/backup/`, `.am/cache/`, `.am/sessions/`, **основные файлы баз** (`*.sqlite` — побайтно, SHA-256). Допускаются только служебные файлы SQLite `-wal`/`-shm` **уже существующих** баз — их создание и изменение средствами SQLite при чтении. Файлы для отсутствующих баз не создаются (база — `missing`).
+2. **Каталог `.am/` недоступен на запись** (`StorageCapabilities.writable = false` или отказ ОС при открытии): тогда SQLite не может создать `-shm`, и обычное открытие WAL-базы невозможно. Правило:
+   - нет `<db>-wal` или он нулевого размера → открыть `file:…?mode=ro&immutable=1` (писателя без права записи быть не может; сетевые ФС и так `read_only_default`);
+   - `<db>-wal` ненулевой → база `unavailable` с причиной `wal_pending`: неперенесённые страницы WAL нельзя прочитать без `-shm`, а `immutable` их проигнорировал бы и выдал устаревшие данные.
+   - Выбор пути — **до** вызова SQLite, по `capabilities.writable` и наличию/размеру `-wal`; ошибку открытия после этого — `unavailable` с текстом SQLite в `detail`.
+3. **Тест 4 переформулирован:** снимок `{путь, размер, SHA-256}` всех файлов `root`, **кроме** `*.sqlite-wal`/`*.sqlite-shm` существующих баз, до и после `open(read_only)` + чтение + `info` — совпадает; новых файлов, кроме служебных файлов SQLite существующих баз, нет. Дополнительно (тест 4б): `open(read_only)` с внедрёнными `capabilities.writable = false` и закрытой базой без `-wal` → открыта через `immutable=1`, **ни одного** нового файла; с ненулевым `-wal` (оставить через `SQLITE_FCNTL_PERSIST_WAL` или копией файлов из живой базы) → статус `unavailable`, `wal_pending`.
+4. **`info`** показывает для базы `state = unavailable` и `reason ∈ {wal_pending, open_failed}`; поле `read_mode ∈ {wal, immutable}` для открытых баз.
+5. Эксперимент `.cache/t016_sqlite_probe.py` перенести не нужно; в отчёте достаточно ссылки. `docs/user/cli.md` в разделе `am library info` одной фразой: чтение может создать служебные файлы SQLite `-wal`/`-shm` рядом с существующими базами.
+
+Прочие решения задачи не меняются. Продолжать в той же ветке `codex/T-016`, статус — `in_progress`.
+
+## Отчёт исполнителя — продолжение по решению В-1
+
+Дата: 2026-11-15. Решение управляющего В-1 из `345fde3` выполнено; собственный VFS не добавлялся. Окончательные результаты этого этапа приведены ниже; первый отчёт выше описывает историческую остановку.
+
+### Ветка и коммиты
+
+- Ветка `codex/T-016`, исходная база `main` — `d90a758`; продолжение в той же ветке.
+- `69608ff` — общая SQL-схема журнала, выполнено на первом этапе.
+- `7ce1d25` — первый отчёт с вопросом В-1; `345fde3` — решение управляющего.
+- `13302a4` — Library, блокировка, три базы, миграции, фасад, CLI, сообщения, документация и тесты.
+- `67c5a9c` — проверка RFC-варианта UUIDv7 и устранение предупреждения GCC в новом тесте.
+- Итоговый отчёт и статус `review` — отдельный завершающий коммит этой ветки. Слияния, push и переписывания истории не выполнялись.
+
+### Реализация
+
+- `Library::init` создаёт раскладку ADR-0007 и три базы, записывает `am-library.toml` последним через временный файл и переименование. Возвращает конфигурацию, не оставляет соединения/владельца открытыми. UUIDv7 и UTC-время с миллисекундами; пустое имя допустимо. Повторное создание и непустой каталог отвергаются, прерванное создание не становится библиотекой.
+- TOML разбирается toml++; проверяются обязательные поля, типы, формат, версия, UUIDv7 и время. Неизвестные ключи принимаются, исходный файл не переписывается.
+- `Library::open` использует существующий `detect_storage_capabilities`, проверяет доступ к существующему каталогу без создания пробного файла. Новая библиотечная структура возможностей дополняет существующую классификацию полями `readable`/`writable`; базовая часть передаётся в `AssetRepository` без изменения его интерфейса.
+- Владелец записи захватывается до открытия баз: Windows `LockFileEx`, один байт по `1 << 62`; Linux `flock`. JSON-диагностика содержит PID, host, application_version, acquired_at. Блокировка удерживается до закрытия репозитория и соединений; повторное открытие в том же процессе отвергается. В чтении существующая блокировка только проверяется и сразу освобождается; отсутствующий lock-файл не создаётся.
+- Схемы всех трёх баз встроены из SQL-файлов. Для userdata/state проверяются версии, пустая версия 0 инициализируется; неподдерживаемая версия отвергается без неявного понижения режима. Перед миграциями создаётся `VACUUM INTO`-копия в `.am/backup/`, шаги выполняются транзакционно с проверкой целостности/версии; при отказе изменения откатываются, копия сохраняется. Производственный список шагов пуст; проверочный шаг передаётся параметром.
+- Несовместимый/повреждённый индекс сохраняется комплектом с WAL/SHM под `index.sqlite.stale-…`, затем создаётся заново с `rebuild_required=1`; отсутствующий индекс создаётся без изменения ассетов и userdata. Настроены WAL, foreign_keys, NORMAL для index и FULL для userdata/state.
+- В чтении основные файлы баз и данные библиотеки не меняются. SQLite может создавать/менять WAL/SHM существующих баз по решению В-1. При `writable=false` выбор производится до SQLite: отсутствующий/пустой WAL → `immutable`; ненулевой WAL → `unavailable/wal_pending`. Ошибка открытия → `unavailable/open_failed` с SQLite detail. Отсутствующие базы остаются `missing`.
+- Фасад в `am_application` и команды `am library init/info`; info всегда открывает для чтения, выдаёт статусы/версии баз, read_mode/reason, индекс, владельца и возможности. Коды выхода: init success 0, непустой каталог/не библиотека 4, повреждённая конфигурация 1. Добавлены английские сообщения, CLI guide и CHANGELOG.
+
+### Критерии приёмки и тесты
+
+1. Полные команды сборок и фактические итоги — ниже. Число зарегистрированных тестов увеличилось на 17 относительно прежнего CLI-набора платформы (13 C++ + 4 CLI); `req_report` проверяет ID. Пропуски, если есть, перечислены отдельно, не считаются выполненными тестами.
+2. Соответствие тестов 1–9 задачи:
+
+| Пункт | Проверки |
+|---|---|
+| 1. init/open | `Library.InitLayoutConfigAndDatabasePragmas`, `Library.ConfigValidationAndUnknownKeys`, `Library.ConfigTypesVersionsDatesAndUnknownKeys`; дополнительно `Library.EmptyDatabasesInitializeButNonemptyVersionZeroIsRejected` |
+| 2. Прерванный init | `Library.InterruptedInitHasNoConfiguration` |
+| 3. Владелец | `Library.OwnerLockLifetimeSameProcessAndStaleDiagnostics`, `cli_library_owner_lock` (блокировка из отдельного процесса Python) |
+| 4 и 4б по В-1 | `Library.ReadOnlyPreservesDataAndRejectsMutation`, `Library.ImmutableFallbackAndPendingWal`, `Library.WritablePolicyRefusesWithoutDowngrade`; сравнение размеров и SHA-256, Unicode/пробелы/спецсимволы URI, отказ изменяющей операции репозитория и SQL-записи; CLI проверяет сохранность данных и отсутствие баз для missing |
+| 5. Версии/индекс | `Library.DatabaseVersionsAndIndexRecreation`, `Library.EmptyDatabasesInitializeButNonemptyVersionZeroIsRejected`, `Library.IndexRecreationPreservesWalFileSet` |
+| 6. Миграции | `Library.MigrationBackupSuccessAndRollback`: успешный шаг и отказ после изменения данных/DDL, проверка исходной версии/данных резервной копии |
+| 7. Журнал | `Library.JournalAndAssetRepositoryShareLibraryState`, существующие StateJournal/CommitProtocol/AssetRepository и `sql_check` в полных прогонах |
+| 8. AssetRepository | `Library.JournalAndAssetRepositoryShareLibraryState`: создание ZIP через Library и чтение через вторую Library read_only |
+| 9. CLI | `cli_library_init_info`, `cli_library_refusals`, `cli_library_missing_databases` (также unavailable/open_failed), `cli_library_owner_lock` |
+
+3. Новые message_id и фактический JSON-пример — ниже.
+4. Изменения ограничены разделом «Файлы» задачи. Интерфейс AssetRepository, ADR, спецификации, матрицы, опубликованный формат/корпус 1.0, зависимости и материалы владельца не изменялись. Все пробы, синтетические библиотеки, логи и временные файлы — в `.cache/`. Коллекция не читалась и не копировалась. Предсуществующий незарегистрированный `3D_am_open_questions_e2472e9.zip` оставлен без изменений и не включён в коммиты.
+
+### Команды и фактические результаты
+
+```text
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) =  17.02 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 86 PASS, 0 SKIP, 0 FAIL из 86 зарегистрированных тестов.
+
+```text
+tools\build_cli.cmd --ci
+100% tests passed, 0 tests failed out of 317
+Total Test time (real) = 746.23 sec
+req_report: 45 IDs, 317 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 317 PASS, 0 SKIP, 0 FAIL из 317 зарегистрированных тестов.
+
+```text
+tools\build_cli.cmd --offline --ci
+100% tests passed, 0 tests failed out of 317
+Total Test time (real) = 683.63 sec
+req_report: 45 IDs, 317 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 317 PASS, 0 SKIP, 0 FAIL из 317 зарегистрированных тестов.
+
+```text
+tools/build_linux.sh cli --ci (WSL)
+100% tests passed, 0 tests failed out of 314
+Total Test time (real) = 1244.28 sec
+req_report: 45 IDs, 314 tests, 48 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 301 PASS, 13 SKIP, 0 FAIL из 314 зарегистрированных тестов.
+
+Время Linux-прогона включает паузу очереди CTest для исключения пересечения с Windows на общих тестовых файлах; это результат функционального прогона, не замер производительности.
+
+Пропущены существующие платформенные проверки (это не PASS):
+
+- `AssetService.CreateRefusalsAndPublishRaceNeverReplaceOutput`;
+- `AssetService.PostCreateFailureDeletesOnlyTheNewOutput`;
+- `AssetService.ValidationAndExtractionUseSharedV3AndPreserveSuccessfulFiles`;
+- `AssetService.StreamScopesMinorAndCorruption`;
+- `CommitProtocol.FallbackOnlyForUnsupportedAndChecksTheMovedIdentity`;
+- `CommitProtocol.ProtectedTemporaryFileDeniesAnotherWriter`;
+- `CommitProtocol.LockHeldByAnotherProcessIsReleasedByKill`;
+- `CommitProtocol.KillEveryCheckpointThreeTimesAndRecover`;
+- `CommitProtocol.RecoveryUsesWholeFileIdentityNotOnlyManifest`;
+- `CommitProtocol.OpenReaderKeepsOldBytesAndNewReadersSeeNewVersion`;
+- `CommitProtocol.WindowsAndFilesystemEvidence`;
+- `AssetRepository.AnotherProcessLockPreventsLostRevisionAndIsReleasedByKill`;
+- `AssetRepository.KillEveryRepositoryCheckpointThreeTimesWithOpenSnapshot`;
+
+Первый текущий запуск `tools\build_min.cmd --ci` в ограниченной песочнице завершился 85 PASS / 1 FAIL: `schema_check` получил `AttributeError: module jsonschema has no attribute Draft202012Validator` из-за отсутствия доступа к `.cache/pylib` (известное ограничение из `AGENTS.md`). Без изменения кода выполнен полный повтор с разрешённым доступом; его успешный итог приведён выше. Исходный отказ сохранён в `.cache/t016-completion-min.log`. Доступ к WSL также потребовал запуска вне ограниченной песочницы.
+
+При проверке незавершённой работы 2026-11-15 функциональных правок не потребовалось: реализация уже находилась в `13302a4`/`67c5a9c`, оставались обязательные полные прогоны и оформление сдачи.
+
+Промежуточная CLI-фикстура на предыдущем этапе исправлена: `?` запрещён в имени каталога Windows, на Windows оставлены Unicode/пробелы/`#%`, на Linux также `?`. Промежуточный Linux-прогон остановлен после предупреждения GCC вокруг GoogleTest-макроса; добавлены скобки, выполнен полный повтор. Эти промежуточные результаты не подменяют итоговые прогоны выше.
+
+Свидетельства: `.cache/t016-completion-min-access-*`, `.cache/t016-completion-cli-*`, `.cache/t016-completion-offline-*`, `.cache/t016-completion-linux-*` (логи, JUnit, req_report и result.json). Целевой прогон `.cache/t016-final-library-targeted-*`: 17/17 PASS, 0 неверных ID; это не полный CLI-прогон. Пример текущего запуска сохранён в `.cache/t016-completion-example.json`.
+
+### Новые message_id
+
+`am.library.config_invalid`, `am.library.config_newer`, `am.library.not_empty`, `am.library.not_found`, `am.library.parent_missing`, `am.library.storage_read_only`, `am.library.not_writable`, `am.library.locked`, `am.library.db_version`, `am.library.db_error`, `am.library.migration_invalid`, `am.library.migration_failed`, `am.library.io_error`, `am.library.out_of_memory`, `am.library.internal`.
+
+Метки представления: `am.app.label.library_id`, `name`, `schema_version`, `mode`, `capabilities`, `write_unavailable_reason`, `owner`, `owner_detail`, `databases` (все с префиксом `am.app.label.`; created_at уже существовал). Полноту проверяет `message_catalog_check`.
+
+### Фактический пример `am library info --json`
+
+Синтетическая библиотека создана командой `am library init <каталог-в-.cache> --name "T-016 example" --json`; следующий вывод получен реальным запуском CLI, только форматирование JSON изменено:
+
+```json
+{
+  "library_id": "01a1e068-4025-7182-8195-79e5cb40a743",
+  "name": "T-016 example",
+  "created_at": "2026-11-15T18:11:30.982Z",
+  "schema_version": 1,
+  "mode": "read_only",
+  "capabilities": {
+    "mode": "full",
+    "max_file_size": 18446744073709551615,
+    "posix_rename": true,
+    "replace_file": true,
+    "locks_reliable": true,
+    "durability": "assumed",
+    "filesystem": "NTFS",
+    "remote": false,
+    "readable": true,
+    "writable": true
+  },
+  "write_unavailable_reason": "",
+  "owner": "free",
+  "databases": {
+    "index": {
+      "state": "ok",
+      "user_version": 1,
+      "read_mode": "wal",
+      "rebuild_required": true
+    },
+    "userdata": {
+      "state": "ok",
+      "user_version": 1,
+      "read_mode": "wal"
+    },
+    "state": {
+      "state": "ok",
+      "user_version": 1,
+      "read_mode": "wal"
+    }
+  },
+  "command": "library info"
+}
+```
+
+### Отклонения и вопросы
+
+Гарантия read_only и тест 4 реализованы в уточнённой редакции В-1; прежний запрет на SQLite sidecars не применяется. Проверочный v1→v2 внедряется для userdata, производственных миграций нет. На Linux производственная классификация файловой системы остаётся `read_only_default` по существующей политике; модульные сценарии записи используют явно синтетические возможности, не сертифицируют файловую систему. Динамическое состояние при отключении носителя и удаление stale-файлов остаются вне задачи.
+
+В-1 закрыт реализацией решения управляющего. Новых вопросов нет.

@@ -1,7 +1,7 @@
-# Asset command-line interface
+# Command-line interface
 
-`am` operates on standalone asset ZIP files. Library commands and editing an existing
-asset are planned for a later milestone. All text and JSON output is UTF-8.
+`am` operates on standalone asset ZIP files and library directories. Editing an
+existing asset through the CLI is planned for a later milestone. All text and JSON output is UTF-8.
 
 Run `am --help` or `am asset <command> --help` for command help.
 
@@ -13,7 +13,40 @@ am asset inspect <zip> [--json] [--verbose]
 am asset validate <zip> [--json] [--verbose]
 am asset verify <zip> [--level quick|selective|full] [--file <FileID>]... [--json] [--verbose]
 am asset extract <zip> -d <dir> [--file <FileID>]... [--manifest] [--json] [--verbose]
+am library init <dir> [--name <text>] [--json] [--verbose]
+am library info <dir> [--json] [--verbose]
 ```
+
+### Library initialization and status
+
+`am library init "My library" --name "Models"` initializes a new or empty directory.
+Its parent must exist. It creates `assets/`, `trash/`, the `.am/` working directories,
+and three SQLite databases, then publishes `am-library.toml` last. Initialization
+does not retain a write-owner lock. Reinitializing an existing library or any
+nonempty directory returns exit code 4 (`am.library.not_empty`).
+
+An interrupted initialization may leave a nonempty directory without
+`am-library.toml`. Inspect and remove that incomplete directory before retrying;
+initialization does not repair or overwrite it.
+
+`am library info "My library" --json` opens the library read-only. It reports
+`library_id`, `name`, `created_at`, `schema_version`, `mode`, `capabilities`,
+`write_unavailable_reason`, `owner` (`free` or `locked`), and `databases` with
+`index`, `userdata`, and `state`. Each database has `state` and `user_version`
+(null when unknown). States are `ok`, `missing`, `incompatible`, `newer`, or
+`unavailable`. An open database also reports `read_mode` (`wal` or `immutable`);
+an unavailable database reports `reason` (`wal_pending` or `open_failed`). The
+index reports `rebuild_required` when its schema is understood. Locked-owner
+diagnostics appear in `owner_detail` and do not establish ownership themselves.
+
+Reading may create SQLite service files `-wal`/`-shm` beside existing databases.
+Library data and main database files remain unchanged; missing databases are not
+created. When the working directory is not writable, an existing database without
+pending WAL pages is opened as immutable; a nonempty WAL instead produces
+`unavailable`/`wal_pending` so uncheckpointed data cannot be silently omitted.
+`info` returns 0 when the library configuration is understood, even if a database
+is missing or unavailable. A directory without configuration returns 4; invalid
+configuration returns 1. Unknown TOML keys are accepted without rewriting them.
 
 ### Create
 
