@@ -1,6 +1,6 @@
 # T-017. Индексатор и перестройка индекса библиотеки (M2, P0.5 — часть 2)
 
-**Статус:** in_progress (продолжение по В-2) · **Веха:** M2 · **Основание:** ADR-0007 (индекс перестраиваемый, `userdata` — нет), ADR-0024 (уровни), ADR-0025 (`AssetRepository` — единственный писатель ZIP, событие после фиксации), ADR-0037 п. 10 / O-16 (точные `uint64` в индексе), `schemas/sql/index.sql`, спецификация формата 1.0 §4–§9; `docs/plan/roadmap.md` M2 («`Indexer`, `rebuild` (без потери `userdata`) … шина событий после фиксации»); замечание 1 приёмки T-016
+**Статус:** review (В-1/В-2 выполнены; итоговый отчёт ниже) · **Веха:** M2 · **Основание:** ADR-0007 (индекс перестраиваемый, `userdata` — нет), ADR-0024 (уровни), ADR-0025 (`AssetRepository` — единственный писатель ZIP, событие после фиксации), ADR-0037 п. 10 / O-16 (точные `uint64` в индексе), `schemas/sql/index.sql`, спецификация формата 1.0 §4–§9; `docs/plan/roadmap.md` M2 («`Indexer`, `rebuild` (без потери `userdata`) … шина событий после фиксации»); замечание 1 приёмки T-016
 
 ## Цель
 
@@ -340,3 +340,188 @@ exit_code: 130
   - Можно реализовать в Python CLI-тесте поверх `am library rebuild --json`. Случаи с одинаковым AssetID в корпусе (если они есть) разнести по отдельным библиотекам и в отчёте указать, как это сделано.
 
 Продолжать в ветке `codex/T-017`, затем завершить обязательные прогоны (Windows min/CLI, Linux CLI полностью, offline).
+
+## Отчёт исполнителя — завершение по В-1 и В-2
+
+Дата: 2026-11-16. Решения управляющего В-1 (`94bf322`) и В-2 (`8992b58`) выполнены. Предыдущие отчёты выше описывают исторические остановки; окончательная реализация и результаты сдачи приведены здесь.
+
+### Ветка и коммиты
+
+- Ветка `codex/T-017`, исходная база main — `b8bc3ad`.
+- `8aaf606` — вопрос В-1; `94bf322` — решение управляющего.
+- `8d7ce6d` — SQLite-обёртка, IndexStore, Indexer/Catalog, CLI, сообщения, документация и тесты 1–9.
+- `69281a8` — устранение предупреждения GCC в новом тесте; `a4de3a6` — явный вывод причины платформенного CLI SKIP.
+- `d3da3e7` — отчёт В-2; `8992b58` — решение управляющего.
+- `0e8342e` — В-2: обязательные passed V1/V2, проекция V3-corrupt без дочерних строк, регрессии 10–11 и весь golden-корпус.
+- Окончательный отчёт и статус review — завершающий коммит ветки (HEAD). Слияния, push и переписывания истории не выполнялись.
+
+### Критерии приёмки
+
+1. Все четыре обязательных полных прогона завершились с exit 0; фактические итоги ниже. Минимальный набор — 86, CLI — 331 на Windows и 328 на Linux. По сравнению с принятой T-016 добавлено 14 тестов: 2 Sqlite, 11 Indexer, 1 CLI. req_report — 0 неверных ID. arch_check, schema_check, sql_check, проверки golden ZIP и каталога сообщений выполнены в полных прогонах. В производственном коде новые SQL и sqlite3.h находятся только в storage; services вызывает IndexStore без SQL.
+2. Тесты 1–11 реализованы и выполнены; имена и соответствие:
+
+| Пункт | Проверки |
+|---|---|
+| 1. SQLite | `Sqlite.BoundValuesPreserveNulUnicodeIntegerRealAndNull`, `Sqlite.TransactionRollbackCommitAndPrepareError`: длины текста с NUL/Unicode, int64, REAL, NULL, перенос владения транзакцией, commit/rollback, ошибочный и пустой prepare |
+| 2. Отображение | `Indexer.GoldenFullMapsEverySupportedTableAndNames`, `Indexer.ExactPluginFragmentsAndNumericLexemesArePreserved`: все десять заполняемых таблиц, FTS, исходные байты манифеста, plugin JSON во всех трёх scopes, точные integer/decimal и числовой фильтр; дополнительно `Indexer.VolumesCategorySegmentsUnitsAndHealth` |
+| 3. Переполнение | `Indexer.Uint64OverflowAndUnrepresentableNumericFilter`: сумма двух максимальных uint64 → NULL и предупреждение; максимальные размеры сохраняются как TEXT в assets/files/input_entries/input_objects; непредставимый числовой фильтр → NULL, точный txt остаётся |
+| 4. Rebuild | `Indexer.RebuildReportsConflictsAndPreservesUserdataAndZips`: четыре разных ассета, дубликат в trash, один ассет только в trash, посторонние файлы, плохой ZIP, несовпадающее имя; indexed=4, три причины skipped; userdata и ZIP неизменны |
+| 5. Удалённый индекс | `Indexer.DeletedIndexRebuildRestoresSameRows`: пересоздание индекса через принятую Library, rebuild, равенство выборок; дополнительно `.cache/t017_v2_full_row_probe.py` проверил равенство всех 21 столбца SELECT * FROM assets и SHA-256 userdata/ZIP |
+| 6. Атомарность | `Indexer.RebuildRollbackPreservesRowsFlagAndReaderView`: внедрённый отказ после первой вставки; отдельный читатель видит прежние строки, после отказа прежними остаются строки и rebuild_required; успешный повтор виден читателю после COMMIT |
+| 7. После фиксации | `Indexer.CommitObserverUpdatesFtsAndFailureKeepsCommittedZip`: create/change, revision/title и замена FTS, перенос Catalog без потери observer; отказ индексации оставляет ZIP зафиксированным, возвращает предупреждение и ставит rebuild_required=1; remove удаляет строки и FTS |
+| 8. Только чтение | `Indexer.ReadOnlyListWithWriterPreservesData`: list через Indexer и фасад при владельце записи в том же процессе; снимок SHA-256 файлов данных совпадает, попытка rebuild отвергается |
+| 9. CLI | `cli_library_rebuild_list`: init, предупреждение о необходимости rebuild, пустая перестройка, создание двух ZIP через CLI, inspect ID, копирование по библиотечным путям, rebuild/list/info и текстовый вывод; Windows выполняет весь сценарий, ограничение Linux описано ниже |
+| 10. V3-corrupt | `Indexer.V3CorruptKeepsSummaryAndAssetFtsWithoutChildRows`: замена ранее проиндексированного pos-full на neg-v3-unique_ids; успешный COMMIT, health/detail, NULL preview, фактическая длина files, 0 дочерних строк, FTS по названию, повторный update, сохранность ZIP; другой исправный ассет остаётся в индексе |
+| 11. Весь корпус | `Indexer.EntireGoldenCorpusRebuildsUsingExpectedValidationLevels`: все 79 опубликованных случаев, каждый в отдельной временной библиотеке из-за повторяющихся AssetID; состояние или пропуск по validate-уровням expected.json; V4 не учитывается, исходные ZIP не меняются |
+
+3. Незаполняемые поля перечислены отдельно ниже, включая политику В-2.
+4. Изменения ограничены разделом «Файлы» T-017. В Library изменены только on_indexed и его передача в RepositoryOptions. AssetRepository, протокол фиксации, state_journal, SQL-схемы, кодек, V1–V4, опубликованный формат/golden ZIP, зависимости, ADR, спецификации, матрицы и roadmap не менялись. Предсуществующий незарегистрированный `3D_am_open_questions_e2472e9.zip` оставлен без изменений и не включён в коммиты. Коллекция не читалась и не копировалась. Все временные файлы, логи, пробы и синтетические рабочие библиотеки — в `.cache/`.
+
+### Реализация и сохранность данных
+
+- `Connection` владеет или заимствует соединение, `Statement` связывает значения параметрами и сохраняет длины текста, `Transaction` откатывается в деструкторе без commit. Ошибки возвращаются как Result с `am.db.*`. Принятый код Library/StateJournal на обёртку не переводился.
+- `IndexStore` хранит обычные структуры без JSON-зависимости в интерфейсе. Замена ассета удаляет прежние строки, включая FTS, и вставляет новые в одной транзакции; дочерние обычные строки удаляются через FK CASCADE. Перестройка использует один BEGIN IMMEDIATE на весь сценарий, снимает rebuild_required и записывает rebuilt_at только перед успешным COMMIT.
+- Манифест проверяется V1–V3 через verify_container с streams=false. Полезные потоки не распаковываются для индексирования. manifest_json копируется побайтно, SHA-256 считается по тем же байтам. Для plugin-значений берётся исходный диапазон строгого JSON-дерева; DOM-дескрипторы непрозрачных значений не сериализуются в индекс.
+- Размеры хранятся строками. Сумма — проверяемое сложение uint64 в C++; CAST/SUM/TOTAL и преобразования размеров в double не применяются. REAL используется только для приблизительных фильтров integer/decimal custom fields, исходный txt сохраняется.
+- `tag_search_key` — единственная точка получения ключа тегов, тождественная исходной строке с комментарием O-08. Категории — компактные JSON-массивы сегментов, в том числе с `/` внутри сегмента. Имена для fts_names дедуплицируются внутри ассета. Набор кандидатов сортируется: активные assets обрабатываются перед trash; повторный ID отчётливо пропускается.
+- `Catalog` владеет Library и Indexer. Его callback передаётся через разрешённый on_indexed; обёртки create/change возвращают фиксацию и предупреждения. При отказе индексации фиксация не откатывается, ставится rebuild_required. Состояние callback остаётся по стабильному адресу после перемещения Catalog.
+- По В-1 применена **побайтовая проверка SHA-256 основного userdata.sqlite**, до открытия и после закрытия Library, на корректно закрытой исходной базе. В тесте добавлены пользовательские строки; SHA-256 совпадает. Переход к сравнению логического содержимого не понадобился. ZIP-файлы сравниваются по SHA-256; тест чтения сравнивает все файлы данных, исключая разрешённые В-1 T-016 SQLite WAL/SHM.
+
+### Выполнение В-2 и дополнительные регрессии
+
+- Indexer проверяет, что V1 и V2 имеют статус passed, до отображения полей. При провале возвращается исходная первая ошибка в skipped; отсутствующие/неверно типизированные обязательные поля не заменяются выдуманными значениями.
+- Если V2 не выполнялась для newer_minor, запись также не создаётся: применяется строгая граница «только passed V1/V2» из п. 1 В-2. В rebuild это skipped/unsupported с am.catalog.schema_unverified. Опубликованный `pos-newer-minor` проверен в общем корпусе.
+- Для passed V1/V2 и failed V3 остаются assets и fts_assets. Сохраняются исходный манифест/хеш, сведения ZIP, версия, даты, заголовок/описание, incomplete, formats, длина files и проверенная сумма размеров. health=corrupt; health_detail начинается с message_id первой находки V3. primary_preview остаётся NULL.
+- Для V3-corrupt не формируются files, input_entries, input_objects, sources, asset_tags, asset_categories, asset_fields и fts_names. Ссылки и конфликтующие ID не разрешаются, первая/последняя дочерняя запись не выбирается, INSERT OR IGNORE не используется. Замена ранее исправного ассета очищает его прежние дочерние строки в той же транзакции.
+- Регрессия 10 использует исходный neg-v3-unique_ids и сначала индексирует pos-full под тем же AssetID. Повторный rebuild успешно заменяет проекцию; другой исправный ассет не теряется. Отдельно проверены FTS по названию, NULL preview, отсутствие всех восьми видов дочерних строк и повторный update.
+- **Уточнение факта корпуса:** опубликованный neg-v3-unique_ids содержит 3 элемента files[], а не 2 из примера в тексте решения. Код и тест следуют нормативному правилу п. 3 В-2 `file_count = длина files[]`: фактически 3. Сам ZIP не менялся.
+- Регрессия 11 копирует каждый из 79 исходных ZIP в отдельную временную библиотеку по его AssetID либо подставному UUIDv4, если ID прочитать нельзя. Случаи намеренно повторяют ID; раздельные библиотеки исключают маскировку ошибок через duplicate_id. Для каждого выполняется rebuild, ожидаемая классификация берётся из validate-части expected.json; потоки V4 не проверяются. Для V3-corrupt дополнительно проверены отсутствие дочерних строк, NULL preview и наличие fts_assets. SHA-256 исходной и рабочей копии ZIP сравниваются после проверки.
+
+### Команды и фактические результаты
+
+```text
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) =  16.32 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 86 PASS, 0 SKIP, 0 FAIL из 86 зарегистрированных тестов.
+
+```text
+tools\build_cli.cmd --ci
+100% tests passed, 0 tests failed out of 331
+Total Test time (real) = 809.40 sec
+req_report: 45 IDs, 331 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 331 PASS, 0 SKIP, 0 FAIL из 331 зарегистрированных тестов.
+
+```text
+tools\build_cli.cmd --offline --ci
+100% tests passed, 0 tests failed out of 331
+Total Test time (real) = 797.18 sec
+req_report: 45 IDs, 331 tests, 49 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 331 PASS, 0 SKIP, 0 FAIL из 331 зарегистрированных тестов.
+
+```text
+tools/build_linux.sh cli --ci (WSL)
+100% tests passed, 0 tests failed out of 328
+Total Test time (real) = 1025.73 sec
+req_report: 45 IDs, 328 tests, 48 without req, 0 invalid IDs
+exit_code: 0
+```
+
+Фактически: 314 PASS, 14 SKIP, 0 FAIL из 328 зарегистрированных тестов.
+
+Пропуски (не считаются PASS):
+
+- `AssetService.CreateRefusalsAndPublishRaceNeverReplaceOutput`;
+- `AssetService.PostCreateFailureDeletesOnlyTheNewOutput`;
+- `AssetService.ValidationAndExtractionUseSharedV3AndPreserveSuccessfulFiles`;
+- `AssetService.StreamScopesMinorAndCorruption`;
+- `CommitProtocol.FallbackOnlyForUnsupportedAndChecksTheMovedIdentity`;
+- `CommitProtocol.ProtectedTemporaryFileDeniesAnotherWriter`;
+- `CommitProtocol.LockHeldByAnotherProcessIsReleasedByKill`;
+- `CommitProtocol.KillEveryCheckpointThreeTimesAndRecover`;
+- `CommitProtocol.RecoveryUsesWholeFileIdentityNotOnlyManifest`;
+- `CommitProtocol.OpenReaderKeepsOldBytesAndNewReadersSeeNewVersion`;
+- `CommitProtocol.WindowsAndFilesystemEvidence`;
+- `AssetRepository.AnotherProcessLockPreventsLostRevisionAndIsReleasedByKill`;
+- `AssetRepository.KillEveryRepositoryCheckpointThreeTimesWithOpenSnapshot`;
+- `cli_library_rebuild_list`;
+
+Свидетельства: `.cache/t017-v2-final-min-*`, `.cache/t017-v2-final-cli-*`, `.cache/t017-v2-final-offline-*`, `.cache/t017-v2-final-linux-*` — log, result.json, JUnit, req_report и CMakeCache. Это полные прогоны без фильтрации на окончательном производственном коде 0e8342e. Целевые `.cache/t017-v2-targeted-*` и `.cache/t017-v2-targeted-linux-*` — отдельно 11/11 Indexer PASS на каждой платформе; они не подменяют полные наборы.
+
+Первоначальная ошибка SQL UNIQUE из В-2 больше не воспроизводится: `.cache/t017_v2_corrupt_probe.py` скопировал неизменённый golden ZIP в новую библиотеку; rebuild вернул exit 0, indexed=1, skipped=[] (исходный вывод `.cache/t017-v2-corrupt-probe.json`). Исторические остановленные прогоны и неудачная проба сохранены отдельно, их результаты не подменяют итоговые.
+
+### Какие поля index.sql не заполняются
+
+По п. 3 задачи пока не создаются строки в следующих таблицах:
+
+- `image_hashes`: asset_id, ref, sha256, phash, dhash, w, h; вычисляемые ph0–ph3 соответственно тоже без строк. Требуется обработка изображений.
+- `mesh_features`: asset_id, file_id, sha256, triangles, area, volume, ext_sorted, d2_hist, geom_fp, algo_ver. Требуется анализ геометрии.
+- `asset_minhash`: asset_id, sig. Расчёт признаков похожести — следующая работа.
+- `fts_docs`: asset_id, file_id, body. Извлечение текста документов — последующая обработка/плагины.
+- `suggestions`: id, asset_id, owner_scope, owner_id, target_json, value_json, handler, handler_version, basis, confidence, content_key, candidate_key, basis_key, created_at, state. Предложения анализа вне T-017; их решения в userdata не затрагиваются.
+
+В заполняемых таблицах необязательные исходные поля (например, размер/хеш отсутствующего тома, URL источника, unit, primary_preview) остаются NULL, когда их нет в манифесте. `asset_fields.num` не заполняется для plugin-типов и непредставимых чисел; точный txt сохраняется. `assets.content_bytes` — NULL при неизвестном размере или переполнении с диагностикой последнего. Остальные поля таблицы assets и данные десяти назначенных таблиц отображаются по задаче. Статус missing не вычисляется: сверка ФС — T-018.
+
+Дополнительно по В-2 у V3-corrupt не заполняются все столбцы files/input_entries/input_objects/sources/asset_tags/asset_categories/asset_fields/fts_names и assets.primary_preview; assets и fts_assets сохраняются. При отсутствии passed V1/V2 строка assets и её дочерние строки не создаются, случай отражается в skipped.
+
+### Новые message_id
+
+`am.db.bind`, `am.db.error`, `am.db.exec`, `am.db.index`, `am.db.open`, `am.db.out_of_memory`, `am.db.prepare`, `am.db.step`, `am.db.transaction`; `am.catalog.out_of_memory`, `am.catalog.error`, `am.catalog.manifest_invalid`, `am.catalog.schema_unverified`, `am.catalog.read_only`, `am.catalog.id_mismatch`, `am.catalog.duplicate_id`, `am.catalog.index_update_failed`, `am.catalog.rebuild_required`.
+
+Метки представления `am.app.label.indexed_assets`, `assets`, `rebuild_required`, `indexed`, `duration_ms`, `skipped`, `ignored` (все с префиксом am.app.label.). Полноту проверяет message_catalog_check.
+
+### Реальные примеры CLI
+
+Получены `.cache/t017_v2_example.py` на обычном синтетическом ассете; исходные результаты — `.cache/t017-v2-example.json`. Изменено только форматирование JSON.
+
+`am library rebuild <dir> --json`:
+
+```json
+{
+  "indexed": 1,
+  "duration_ms": 288,
+  "skipped": [],
+  "ignored": [],
+  "command": "library rebuild"
+}
+```
+
+`am library list <dir> --json`:
+
+```json
+{
+  "assets": [
+    {
+      "asset_id": "ebbff3ce-674d-49c7-830b-460c22806c5f",
+      "revision": 1,
+      "title": "T-017 sample",
+      "health": "ok",
+      "file_count": 1,
+      "content_bytes": "18",
+      "in_trash": false
+    }
+  ],
+  "rebuild_required": false,
+  "command": "library list"
+}
+```
+
+Следующий info сообщил indexed_assets=1.
+
+### Отклонения и вопросы
+
+В-1 и В-2 закрыты по решениям управляющего. Единственное фактическое расхождение с примером В-2 — число файлов neg-v3-unique_ids: 3 вместо упомянутых 2; применена длина опубликованного files[], без изменения корпуса.
+
+На Linux производственная классификация носителя остаётся read_only_default. CLI-тест проверяет начальное чтение и ожидаемый отказ записи, затем явно SKIP; положительный сценарий CLI выполнен на Windows. Все сервисные регрессии, включая 79 golden ZIP, на Linux выполняются с синтетическими возможностями по принятому подходу T-016. 13 прежних платформенных пропусков и этот один новый SKIP перечислены выше и не считаются PASS. Неподдерживаемая для валидации newer_minor пропускается по уточнённой границе В-2, а не индексируется как прошедшая схему.
+
+Stat/sync, перемещение в корзину, add-ready, разрешение конфликтов ID, пользовательский поиск, признаки/анализ и алгоритм ключа тегов остаются вне задачи. Новых вопросов нет.
