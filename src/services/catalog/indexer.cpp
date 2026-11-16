@@ -535,7 +535,7 @@ Result<SyncReport> Indexer::sync(const SyncOptions& options) {
     return out;
   });
 }
-Result<void> Indexer::update(const repository::AssetRef& ref) {
+Result<void> Indexer::update(const repository::AssetRef& ref, bool in_trash) {
   return guard<void>([&]() -> Result<void> {
     writable(library_);
     if (ref.library_id != library_.config().library_id)
@@ -544,8 +544,8 @@ Result<void> Indexer::update(const repository::AssetRef& ref) {
     if (!id || id->version() != 4 || (id->bytes()[8] & 0xc0) != 0x80)
       return error(Errc::invalid_argument, "am.catalog.manifest_invalid", "Asset ID is not UUIDv4");
     if (hooks_.before_update) take(hooks_.before_update(ref.asset_id));
-    const auto relative = "assets/" + ref.asset_id.substr(34) + "/" + ref.asset_id + ".zip";
-    auto record = take(read(root_ / fs::path(std::u8string(relative.begin(), relative.end())), relative, false));
+    const auto relative = (in_trash ? "trash/" : "assets/" + ref.asset_id.substr(34) + "/") + ref.asset_id + ".zip";
+    auto record = take(read(root_ / fs::path(std::u8string(relative.begin(), relative.end())), relative, in_trash));
     if (record.summary.asset_id != ref.asset_id) return error(Errc::corrupt_data, "am.catalog.id_mismatch", relative);
     take(store_.replace(record));
     return {};
@@ -575,7 +575,7 @@ struct Catalog::Impl {
   void observe(const repository::IndexedEvent& event) {
     const std::lock_guard lock(mutex);
     auto indexed = event.kind == "remove" || event.kind == "purge" ? indexer->remove(event.ref.asset_id)
-                                                                   : indexer->update(event.ref);
+                                                                   : indexer->update(event.ref, event.kind == "trash");
     if (!indexed) {
       auto marked = indexer->mark_rebuild_required();
       auto warning = error(Errc::io_error, "am.catalog.index_update_failed", event.ref.asset_id)
@@ -630,6 +630,30 @@ Result<CatalogChange> Catalog::change(const repository::ChangeRequest& request) 
     impl_->warnings.clear();
     auto changed = take(impl_->library->assets().change(request));
     return CatalogChange{std::move(changed), std::move(impl_->warnings)};
+  });
+}
+Result<CatalogLifecycle> Catalog::trash(const repository::AssetRef& ref) {
+  return guard<CatalogLifecycle>([&]() -> Result<CatalogLifecycle> {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->warnings.clear();
+    auto changed = take(impl_->library->assets().trash(ref));
+    return CatalogLifecycle{std::move(changed), std::move(impl_->warnings)};
+  });
+}
+Result<CatalogLifecycle> Catalog::restore(const repository::AssetRef& ref) {
+  return guard<CatalogLifecycle>([&]() -> Result<CatalogLifecycle> {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->warnings.clear();
+    auto changed = take(impl_->library->assets().restore(ref));
+    return CatalogLifecycle{std::move(changed), std::move(impl_->warnings)};
+  });
+}
+Result<CatalogLifecycle> Catalog::purge(const repository::AssetRef& ref) {
+  return guard<CatalogLifecycle>([&]() -> Result<CatalogLifecycle> {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->warnings.clear();
+    auto changed = take(impl_->library->assets().purge(ref));
+    return CatalogLifecycle{std::move(changed), std::move(impl_->warnings)};
   });
 }
 }  // namespace am::catalog

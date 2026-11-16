@@ -110,6 +110,67 @@ class LibraryCli(unittest.TestCase):
             self.assertIn("process-test", info["owner_detail"])
         self.assertEqual(self.run_am("info")["owner"], "free")
 
+    def test_trash(self):
+        self.run_am("init")
+        self.assertIsNone(self.run_am("info")["trash"])
+        refused = self.run_am("purge", 2, "--all")
+        self.assertEqual(refused["error"]["message_id"], "am.cli.purge_confirmation_required")
+        if os.name != "nt":
+            refused = self.run_am("trash", 4, str(uuid.uuid4()))
+            self.assertEqual(refused["error"]["message_id"], "am.library.storage_read_only")
+            reason = "Production writes require a verified fixed NTFS volume; service trash is tested with injected capabilities"
+            print(reason)
+            self.skipTest(reason)
+        self.run_am("rebuild")
+        ids, originals, sizes = [], {}, {}
+        for number in range(2):
+            source = self.work / f"trash-source-{number}.bin"
+            source.write_bytes(bytes([number]) * 23)
+            output = self.work / f"trash-asset-{number}.zip"
+            created = subprocess.run([str(CONFIG.am), "asset", "create", str(source), "-o", str(output), "--title", f"Trash {number}", "--json"], capture_output=True, encoding="utf-8", timeout=60)
+            self.assertEqual(created.returncode, 0, (created.stdout, created.stderr))
+            inspected = subprocess.run([str(CONFIG.am), "asset", "inspect", str(output), "--json"], capture_output=True, encoding="utf-8", timeout=60)
+            self.assertEqual(inspected.returncode, 0, inspected.stderr)
+            asset_id = json.loads(inspected.stdout)["asset_id"]
+            destination = self.root / "assets" / asset_id[-2:] / (asset_id + ".zip")
+            destination.parent.mkdir(exist_ok=True)
+            shutil.copyfile(output, destination)
+            ids.append(asset_id)
+            originals[asset_id] = hashlib.sha256(output.read_bytes()).hexdigest()
+            sizes[asset_id] = output.stat().st_size
+        self.assertEqual(self.run_am("sync")["added"], 2)
+        userdata = hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest()
+        moved = self.run_am("trash", 0, *ids)
+        self.assertEqual([row["asset_id"] for row in moved["results"]], ids)
+        self.assertEqual([row["status"] for row in moved["results"]], ["done", "done"])
+        self.assertTrue(all(row["error"] is None for row in moved["results"]))
+        self.assertEqual(self.run_am("list")["assets"], [])
+        self.assertTrue(all(row["in_trash"] for row in self.run_am("list", 0, "--trash")["assets"]))
+        self.assertEqual(self.run_am("info")["trash"], {"assets": 2, "bytes": str(sum(sizes.values()))})
+        for asset_id in ids:
+            self.assertEqual(hashlib.sha256((self.root / "trash" / (asset_id + ".zip")).read_bytes()).hexdigest(), originals[asset_id])
+        self.assertEqual(self.run_am("restore", 0, ids[0])["results"][0]["status"], "done")
+        self.assertEqual(self.run_am("info")["trash"], {"assets": 1, "bytes": str(sizes[ids[1]])})
+        self.assertEqual(self.run_am("purge", 2, ids[1])["error"]["message_id"], "am.cli.purge_confirmation_required")
+        self.assertTrue((self.root / "trash" / (ids[1] + ".zip")).exists())
+        foreign = self.root / "trash/foreign.zip"
+        foreign.write_bytes(b"unrelated file")
+        foreign_directory = self.root / "trash" / (str(uuid.uuid4()) + ".zip")
+        foreign_directory.mkdir()
+        purged = self.run_am("purge", 0, "--all", "--yes")
+        self.assertEqual(purged["results"], [{"asset_id": ids[1], "status": "done", "error": None}])
+        self.assertEqual(foreign.read_bytes(), b"unrelated file")
+        self.assertTrue(foreign_directory.is_dir())
+        missing = str(uuid.uuid4())
+        mixed = self.run_am("trash", 4, missing, ids[0])
+        self.assertEqual([row["status"] for row in mixed["results"]], ["failed", "done"])
+        self.assertEqual(mixed["results"][0]["error"]["message_id"], "am.repo.asset_not_found")
+        plain = subprocess.run([str(CONFIG.am), "library", "restore", str(self.root), ids[0]], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertIn(ids[0], plain.stdout)
+        self.assertIn("done", plain.stdout)
+        self.assertEqual(hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest(), userdata)
+
     def test_sync(self):
         self.run_am("init")
         if os.name != "nt":

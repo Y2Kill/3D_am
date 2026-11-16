@@ -9,7 +9,7 @@
 #include "am/foundation/result.hpp"
 
 namespace am::db {
-enum class CommitState { prepared, verified, committed, indexed };
+enum class CommitState { prepared, verified, committed, indexed, failed };
 std::string_view state_name(CommitState state) noexcept;
 struct BaseSnapshot {
   std::uint64_t size = 0;
