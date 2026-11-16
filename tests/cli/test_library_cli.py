@@ -9,6 +9,8 @@ import shutil
 import sys
 import unittest
 import uuid
+import zipfile
+from datetime import datetime, timedelta
 
 CONFIG = None
 
@@ -109,6 +111,75 @@ class LibraryCli(unittest.TestCase):
             self.assertEqual(info["owner"], "locked")
             self.assertIn("process-test", info["owner_detail"])
         self.assertEqual(self.run_am("info")["owner"], "free")
+
+    def test_add_ready(self):
+        self.run_am("init")
+        bad_arguments = self.run_am("add-ready", 2, "first.zip", "second.zip", "--replace", "0" * 64)
+        self.assertEqual(bad_arguments["error"]["message_id"], "am.repo.invalid_operation")
+        if os.name != "nt":
+            refused = self.run_am("add-ready", 4, "source.zip")
+            self.assertEqual(refused["error"]["message_id"], "am.library.storage_read_only")
+            reason = "Production writes require a verified fixed NTFS volume; service add-ready is tested with injected capabilities"
+            print(reason)
+            self.skipTest(reason)
+        self.run_am("rebuild")
+        source = self.work / "ready-source.bin"
+        source.write_bytes(b"ready asset payload")
+        ready = self.work / "ready.zip"
+        created = subprocess.run([str(CONFIG.am), "asset", "create", str(source), "-o", str(ready), "--title", "Ready original", "--json"], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(created.returncode, 0, (created.stdout, created.stderr))
+        foreign = self.work / "foreign.zip"
+        with zipfile.ZipFile(foreign, "w") as archive:
+            archive.writestr("source.txt", b"ordinary ZIP")
+        batch = self.run_am("add-ready", 4, str(ready), str(ready), str(foreign))
+        self.assertEqual([r["status"] for r in batch["results"]], ["imported", "identical", "failed"])
+        first, identical, rejected = batch["results"]
+        self.assertEqual(first["classification"], "new")
+        self.assertTrue(identical["zip_bytes_identical"])
+        self.assertEqual(rejected["classification"], "not_own")
+        self.assertIsNone(rejected["asset_id"])
+        self.assertEqual(rejected["error"]["message_id"], "am.repo.not_own_format")
+        asset_id = first["asset_id"]
+        destination = self.root / "assets" / asset_id[-2:] / (asset_id + ".zip")
+        self.assertEqual(destination.read_bytes(), ready.read_bytes())
+        with zipfile.ZipFile(ready) as archive:
+            contents = {info.filename: archive.read(info) for info in archive.infolist()}
+        manifest = json.loads(contents["manifest.json"])
+        modified = datetime.fromisoformat(manifest["asset"]["modified_at"].replace("Z", "+00:00")) + timedelta(seconds=1)
+        timestamp = modified.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        manifest["asset"]["revision"] = 2
+        manifest["asset"]["modified_at"] = timestamp
+        manifest["asset"]["metadata"]["title"] = "Ready newer"
+        manifest["history"]["entries"].append({
+            "revision": 2, "operation_id": str(uuid.uuid4()), "timestamp": timestamp,
+            "operation": "metadata_changed", "tool": {"application_version": "0.1.0-test"},
+            "changes": [{"kind": "metadata_set", "target": "asset", "field": "title"}], "details": {}})
+        contents["manifest.json"] = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        class Utf8Info(zipfile.ZipInfo):
+            def _encodeFilenameFlags(self):
+                return self.filename.encode("utf-8"), self.flag_bits | 0x800
+        newer = self.work / "newer.zip"
+        with zipfile.ZipFile(newer, "w") as archive:
+            for name, data in contents.items():
+                info = Utf8Info(name)
+                info.create_system = 0
+                info.external_attr = 0x20
+                archive.writestr(info, data)
+        valid = subprocess.run([str(CONFIG.am), "asset", "validate", str(newer), "--json"], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(valid.returncode, 0, (valid.stdout, valid.stderr))
+        current_bytes = destination.read_bytes()
+        conflict = self.run_am("add-ready", 4, str(newer))["results"][0]
+        self.assertEqual(conflict["status"], "conflict")
+        self.assertEqual(conflict["classification"], "newer_revision")
+        self.assertEqual((conflict["current"]["revision"], conflict["incoming"]["revision"]), (1, 2))
+        self.assertEqual(destination.read_bytes(), current_bytes)
+        userdata = hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest()
+        replaced = self.run_am("add-ready", 0, str(newer), "--replace", conflict["current"]["manifest_sha256"], "--verbose")["results"][0]
+        self.assertEqual(replaced["status"], "replaced")
+        self.assertIn("verification", replaced)
+        self.assertEqual(destination.read_bytes(), newer.read_bytes())
+        self.assertEqual(self.run_am("list")["assets"][0]["revision"], 2)
+        self.assertEqual(hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest(), userdata)
 
     def test_trash(self):
         self.run_am("init")

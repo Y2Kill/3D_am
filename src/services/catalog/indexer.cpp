@@ -656,4 +656,15 @@ Result<CatalogLifecycle> Catalog::purge(const repository::AssetRef& ref) {
     return CatalogLifecycle{std::move(changed), std::move(impl_->warnings)};
   });
 }
+Result<repository::ImportReadyResult> Catalog::import_ready(const repository::ImportReadyRequest& request,
+                                                            repository::ImportReadyResult* failure) {
+  return guard<repository::ImportReadyResult>([&]() -> Result<repository::ImportReadyResult> {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->warnings.clear();
+    auto imported = impl_->library->assets().import_ready(request, failure);
+    if (!imported) return imported.error();
+    for (auto& warning : impl_->warnings) imported->warnings.push_back(std::move(warning));
+    return imported;
+  });
+}
 }  // namespace am::catalog

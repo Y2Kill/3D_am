@@ -304,6 +304,18 @@ Result<db::BaseSnapshot> inspect_zip(const Path& path, asset_zip::ReadBudget& bu
   try { auto source = NativeFile::open(normalized(path)); return db::BaseSnapshot{source->size(), source->mtime_ns, manifest_hash(source, budget, limits), {}}; }
   catch (const Error& e) { return e; } catch (const std::bad_alloc&) { return oom(); } catch (const std::exception& e) { return io(e.what()); }
 }
+Result<db::BaseSnapshot> inspect_copy_source(const Path& path) {
+  try {
+    auto source = NativeFile::open(normalized(path));
+    return db::BaseSnapshot{source->size(), source->mtime_ns, {}, {}};
+  } catch (const Error& e) {
+    return e;
+  } catch (const std::bad_alloc&) {
+    return oom();
+  } catch (const std::exception& e) {
+    return io(e.what());
+  }
+}
 Result<CommitResult> commit_zip(const CommitRequest& r) {
   std::shared_ptr<db::CommitJournal> journal; db::PendingOperation row; bool inserted = false, moved = false; std::shared_ptr<NativeFile> protected_file;
   // This lock deliberately outlives cleanup and every journal transition.
@@ -313,23 +325,71 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
     row.op_id = r.op_id.empty() ? Uuid::v4().to_string() : r.op_id; row.asset_id = r.asset_id; row.kind = r.kind; row.base = r.base; row.expected_rev = r.expected_rev; row.job_id = r.job_id;
     lock.emplace(take(AssetLock::acquire(r.library_root, r.asset_id, r.lock_timeout))); hit(r.hooks, FaultPoint::after_lock);
     const auto paths = layout(r.library_root, r.target_path, r.asset_id, row.op_id); row.target_path = paths.target; row.temp_path = paths.temp;
-    if (!r.producer) throw io("Producer is missing");
-    if (!matches_base(paths.target, r.base, r.budget, r.zip_limits)) throw base_changed();
+    if (!r.producer && !r.copy_source) throw io("Producer is missing");
+    if (r.producer && r.copy_source)
+      fail(Errc::invalid_argument, "am.repo.invalid_operation", "Exactly one commit content source is required");
+    if (r.copy_source && r.copy_source->prepare) row.base = take(r.copy_source->prepare());
+    if (!r.copy_source && !matches_base(paths.target, r.base, r.budget, r.zip_limits)) throw base_changed();
     const auto available = r.hooks.free_space ? take(r.hooks.free_space(paths.temp_dir)) : free_space(paths.temp_dir);
     const auto margin = std::max<U64>(r.estimated_size / 20 + (r.estimated_size % 20 != 0 ? 1 : 0), 256ULL * 1024 * 1024); // hypothesis, O-17
     if (r.estimated_size > UINT64_MAX - margin || available < r.estimated_size + margin) fail(Errc::insufficient_space, "am.commit.insufficient_space", "Free space is below estimate plus hypothesis reserve");
     journal = journal_for(paths.root, r.journal); take(journal->insert(row)); inserted = true; hit(r.hooks, FaultPoint::after_prepared);
     auto sink = r.hooks.create_sink ? take(r.hooks.create_sink(paths.temp)) : take(asset_zip::file_sink(paths.temp));
     auto hooked = std::make_shared<HookSink>(); hooked->inner = sink; hooked->hooks = &r.hooks; hooked->threshold = r.hooks.mid_write_after_bytes.value_or(std::max<U64>(1, r.estimated_size / 2));
-    asset_zip::WriterOptions writer_options; writer_options.zip_limits = r.zip_limits; writer_options.limits.max_file_size = r.capabilities.max_file_size;
-    auto writer = take(asset_zip::ZipWriter::create(hooked, writer_options)); take(r.producer(writer)); hooked->producer_active = false;
-    auto summary = take(writer.finish()); hit(r.hooks, FaultPoint::after_finish);
+    asset_zip::WriteSummary summary;
+    std::optional<std::string> copied_hash;
+    if (r.copy_source) {
+      auto source = NativeFile::open(normalized(r.copy_source->path));
+      const auto initial_size = source->size();
+      const auto initial_mtime = source->mtime_ns;
+      auto changed_source = [] {
+        return error(Errc::conflict, "am.repo.import_source_changed", "Import source changed while copying");
+      };
+      if (r.copy_source->expected &&
+          (initial_size != r.copy_source->expected->size || initial_mtime != r.copy_source->expected->mtime_ns))
+        throw changed_source();
+      if (initial_size > r.capabilities.max_file_size)
+        fail(Errc::insufficient_space, "am.repo.file_too_large", "Import exceeds destination file size limit");
+      auto hash = take(asset_zip::Sha256::create());
+      std::array<std::byte, 65536> buffer{};
+      for (U64 offset = 0; offset < initial_size;) {
+        const auto n = take(source->read_at(offset, buffer));
+        if (!n) throw changed_source();
+        const auto block = std::span(buffer).first(n);
+        take(hash.update(block));
+        take(hooked->write_at(offset, block));
+        offset += n;
+      }
+      copied_hash = hex(take(hash.finish()));
+      summary.file_size = initial_size;
+      summary.zip_limits = r.zip_limits;
+      hooked->producer_active = false;
+      take(hooked->flush());
+      take(hooked->close());
+      source->close();
+      hit(r.hooks, FaultPoint::after_finish);
+      auto after = inspect_copy_source(r.copy_source->path);
+      if (!after || after->size != initial_size || after->mtime_ns != initial_mtime) throw changed_source();
+    } else {
+      asset_zip::WriterOptions writer_options;
+      writer_options.zip_limits = r.zip_limits;
+      writer_options.limits.max_file_size = r.capabilities.max_file_size;
+      auto writer = take(asset_zip::ZipWriter::create(hooked, writer_options));
+      take(r.producer(writer));
+      hooked->producer_active = false;
+      summary = take(writer.finish());
+      hit(r.hooks, FaultPoint::after_finish);
+    }
     protected_file = NativeFile::open(paths.temp, true);
     const auto hash_start = std::chrono::steady_clock::now(); const auto digest = file_hash(protected_file);
     const auto hash_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - hash_start).count();
     std::string manifest;
     try {
-      take(asset_zip::verify_written(protected_file, summary, r.budget));
+      if (r.copy_source) {
+        if (protected_file->size() != summary.file_size || !copied_hash || digest != *copied_hash)
+          fail(Errc::corrupt_data, "am.repo.import_invalid", "Temporary copy differs from copied bytes");
+      } else
+        take(asset_zip::verify_written(protected_file, summary, r.budget));
       auto probe = take(asset_zip::probe_container(protected_file, r.zip_limits));
       if (probe.outcome != asset_zip::ProbeOutcome::own) { if (probe.error) throw *probe.error; throw error(Errc::corrupt_data, "am.commit.verification_failed", "Container probe is not own"); }
       auto archive = take(asset_zip::ZipArchive::open(protected_file, r.zip_limits)); if (r.verifier) take(r.verifier(archive));
@@ -340,10 +400,18 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
     catch (...) { throw verification_error(io("Unknown verifier exception")); }
     hit(r.hooks, FaultPoint::after_verify);
     db::NewFileEvidence evidence{protected_file->size(), digest, manifest};
+    if (r.copy_source && r.copy_source->publish && !take(r.copy_source->publish(evidence))) {
+      cleanup();
+      inserted = false;
+      CommitResult result;
+      result.no_op = true;
+      return result;
+    }
     take(journal->advance(row.op_id, db::CommitState::prepared, db::CommitState::verified, evidence)); row.state = db::CommitState::verified; row.verified = evidence;
     hit(r.hooks, FaultPoint::after_verified_journal);
-    if (!matches_base(paths.target, r.base, r.budget, r.zip_limits)) throw base_changed();
+    if (!matches_base(paths.target, row.base, r.budget, r.zip_limits)) throw base_changed();
     hit(r.hooks, FaultPoint::before_replace);
+    if (r.copy_source && !matches_base(paths.target, row.base, r.budget, r.zip_limits)) throw base_changed();
     const auto method = replace_file(protected_file, paths.target, evidence, r.hooks, moved); hit(r.hooks, FaultPoint::after_replace);
     take(journal->advance(row.op_id, db::CommitState::verified, db::CommitState::committed)); row.state = db::CommitState::committed; hit(r.hooks, FaultPoint::after_committed_journal);
     if (r.on_committed) take(r.on_committed(row));

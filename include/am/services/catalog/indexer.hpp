@@ -84,6 +84,8 @@ class Catalog {
   Result<CatalogLifecycle> trash(const repository::AssetRef&);
   Result<CatalogLifecycle> restore(const repository::AssetRef&);
   Result<CatalogLifecycle> purge(const repository::AssetRef&);
+  Result<repository::ImportReadyResult> import_ready(const repository::ImportReadyRequest&,
+                                                     repository::ImportReadyResult* failure_details = nullptr);
 
  private:
   struct Impl;

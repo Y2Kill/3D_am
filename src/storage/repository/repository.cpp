@@ -1,4 +1,5 @@
 #include "am/storage/repository/repository.hpp"
+#include "am/storage/asset_zip/probe.hpp"
 #include "am/foundation/json_text.hpp"
 #include "am/foundation/paths.hpp"
 #include "am/foundation/unicode.hpp"
@@ -408,6 +409,13 @@ Result<std::vector<commit::RecoveryItem>> AssetRepository::recover() {
     options.lock_timeout = impl_->options.lock_timeout;
     options.zip_limits = impl_->options.zip_limits;
     options.on_committed = [&](const db::PendingOperation& row) -> Result<void> {
+      if (row.kind == "import_ready" && impl_->options.on_indexed) {
+        auto snap = take(load({impl_->options.library_id, row.asset_id}, false));
+        try {
+          impl_->options.on_indexed({snap.ref(), snap.revision(), row.op_id, row.kind});
+        } catch (...) {
+        }
+      }
       if ((row.kind == "trash" || row.kind == "restore" || row.kind == "purge") && impl_->options.on_indexed) {
         try {
           impl_->options.on_indexed({{impl_->options.library_id, row.asset_id}, 0, row.op_id, row.kind});
@@ -416,7 +424,22 @@ Result<std::vector<commit::RecoveryItem>> AssetRepository::recover() {
       }
       return {};
     };
-    return commit::recover(impl_->root, options);
+    const auto before = take(impl_->journal->list());
+    auto recovered = take(commit::recover(impl_->root, options));
+    // The shared FSM only cleans an already-indexed row. An import can crash
+    // before its repository notification, so replay that new-kind notification.
+    for (auto& item : recovered)
+      if (item.outcome == commit::RecoveryOutcome::cleaned) {
+        for (const auto& row : before)
+          if (row.op_id == item.op_id && row.kind == "import_ready" && row.state == db::CommitState::indexed) {
+            auto notified = options.on_committed(row);
+            if (!notified) {
+              item.outcome = commit::RecoveryOutcome::failed;
+              item.error = notified.error();
+            }
+          }
+      }
+    return recovered;
   });
 }
 Result<LifecycleResult> AssetRepository::lifecycle(const AssetRef& ref, std::string_view kind) {
@@ -447,6 +470,252 @@ Result<LifecycleResult> AssetRepository::lifecycle(const AssetRef& ref, std::str
 Result<LifecycleResult> AssetRepository::trash(const AssetRef& ref) { return lifecycle(ref, "trash"); }
 Result<LifecycleResult> AssetRepository::restore(const AssetRef& ref) { return lifecycle(ref, "restore"); }
 Result<LifecycleResult> AssetRepository::purge(const AssetRef& ref) { return lifecycle(ref, "purge"); }
+
+namespace {
+Path import_path(const Path& path) {
+  auto result = std::filesystem::weakly_canonical(std::filesystem::absolute(path));
+#ifdef _WIN32
+  auto text = result.wstring();
+  if (text.starts_with(L"\\\\?\\UNC\\"))
+    result = Path(L"\\\\" + text.substr(8));
+  else if (text.starts_with(L"\\\\?\\"))
+    result = Path(text.substr(4));
+#endif
+  return result;
+}
+bool import_inside(const Path& root, const Path& source) {
+  auto a = root.begin(), b = source.begin();
+  for (; a != root.end(); ++a, ++b) {
+    if (b == source.end()) return false;
+#ifdef _WIN32
+    const auto x = a->wstring(), y = b->wstring();
+    if (CompareStringOrdinal(x.c_str(), static_cast<int>(x.size()), y.c_str(), static_cast<int>(y.size()), TRUE) !=
+        CSTR_EQUAL)
+      return false;
+#else
+    if (*a != *b) return false;
+#endif
+  }
+  return true;
+}
+ImportAssetInfo import_info(const ManifestRead& manifest, U64 size) {
+  const auto& j = manifest.document.known();
+  const auto asset = j.find("asset"), format = j.find("format");
+  if (asset == j.end() || !asset->is_object() || format == j.end() || !format->is_object())
+    fail(Errc::corrupt_data, "am.repo.import_invalid", "Required asset identity is unavailable");
+  const auto rev = revision(j);
+  const auto version = format->find("version");
+  const auto id = Uuid::parse_canonical(string(*asset, "id"));
+  if (!rev || !id || id->version() != 4 || (id->bytes()[8] & 0xc0) != 0x80 || version == format->end() ||
+      !version->is_object() || !version->contains("minor") || !number((*version)["minor"]))
+    fail(Errc::corrupt_data, "am.repo.import_invalid", "Required asset identity or version is unavailable");
+  return {std::to_string(size), rev, number((*version)["minor"]), hash_text(manifest.text)};
+}
+std::string import_file_hash(const std::shared_ptr<const asset_zip::RandomAccessSource>& source) {
+  auto sha = take(asset_zip::Sha256::create());
+  std::array<std::byte, 65536> buffer{};
+  for (U64 offset = 0; offset < source->size();) {
+    const auto count = take(source->read_at(offset, buffer));
+    if (!count) fail(Errc::conflict, "am.repo.import_current_changed", "Unexpected current file EOF");
+    take(sha.update(std::span(buffer).first(count)));
+    offset += count;
+  }
+  return hex(take(sha.finish()));
+}
+}  // namespace
+Result<ImportReadyResult> AssetRepository::import_ready(const ImportReadyRequest& incoming,
+                                                        ImportReadyResult* failure) {
+  if (failure) *failure = {};
+  return guard<ImportReadyResult>([&]() -> Result<ImportReadyResult> {
+    ImportReadyResult out;
+    out.ref.library_id = impl_->options.library_id;
+    auto operation = guard<void>([&]() -> Result<void> {
+      impl_->require_write();
+      const auto source_path = import_path(incoming.source), root = import_path(impl_->root);
+      if (import_inside(root, source_path))
+        fail(Errc::invalid_argument, "am.repo.import_source_inside_library", "Source is inside destination library");
+      if (!std::filesystem::is_regular_file(paths::native(source_path)))
+        fail(Errc::invalid_argument, "am.repo.invalid_operation", "Import source must be an explicit regular file");
+      const auto source_base = take(commit::inspect_copy_source(source_path));
+      {
+        auto source = take(asset_zip::file_source(source_path, true));
+        const auto probe =
+            take(asset_zip::probe_container(source, impl_->options.zip_limits, impl_->options.codec_limits));
+        if (probe.outcome != asset_zip::ProbeOutcome::own) {
+          if (probe.outcome == asset_zip::ProbeOutcome::own_unsupported_version) {
+            out.classification = "unsupported_version";
+            fail(Errc::unsupported, "am.repo.import_unsupported_version",
+                 "Incoming major format version is unsupported");
+          }
+          if (probe.outcome == asset_zip::ProbeOutcome::own_corrupt) {
+            out.classification = "invalid";
+            out.verification.emplace();
+            out.verification->v1 = CheckStatus::failed;
+            out.verification->error = probe.error;
+            fail(Errc::corrupt_data, "am.repo.import_invalid", "Incoming own container is corrupt");
+          }
+          out.classification = "not_own";
+          fail(Errc::unsupported, "am.repo.not_own_format", "Source is not an own asset ZIP");
+        }
+        auto archive = take(asset_zip::ZipArchive::open(source, impl_->options.zip_limits));
+        asset_zip::ReadBudget budget(impl_->options.read_budget);
+        const auto manifest = read_manifest(archive, impl_->options.codec_limits, budget);
+        out.incoming = import_info(manifest, source_base.size);
+        out.ref.asset_id = string(manifest.document.known()["asset"], "id");
+      }
+      (void)impl_->path(out.ref);
+      Impl::Lease lease(*impl_, out.ref);
+      bool publish = false;
+      std::string current_zip_hash;
+      asset_zip::ReadBudget budget(impl_->options.read_budget);
+      commit::CommitRequest request(budget);
+      request.library_root = impl_->root;
+      request.target_path = impl_->path(out.ref);
+      request.asset_id = out.ref.asset_id;
+      request.kind = "import_ready";
+      request.estimated_size = source_base.size;
+      request.capabilities = impl_->capabilities;
+      request.zip_limits = impl_->options.zip_limits;
+      request.journal = impl_->journal;
+      request.lock_timeout = impl_->options.lock_timeout;
+      request.hooks = impl_->options.test_hooks.commit;
+      request.copy_source.emplace();
+      request.copy_source->path = source_path;
+      request.copy_source->expected = source_base;
+      request.copy_source->prepare = [&]() -> Result<std::optional<db::BaseSnapshot>> {
+        return guard<std::optional<db::BaseSnapshot>>([&]() -> Result<std::optional<db::BaseSnapshot>> {
+          const auto target = impl_->path(out.ref), trash = impl_->root / "trash" / (out.ref.asset_id + ".zip");
+          const bool in_trash = std::filesystem::exists(paths::native(trash));
+          const auto current_path = in_trash ? trash : target;
+          std::optional<db::BaseSnapshot> base;
+          if (std::filesystem::exists(paths::native(current_path))) {
+            out.current =
+                ImportAssetInfo{std::to_string(std::filesystem::file_size(paths::native(current_path))), {}, {}, {}};
+            auto readable = guard<void>([&]() -> Result<void> {
+              auto input = take(asset_zip::file_source(current_path, true));
+              auto archive = take(asset_zip::ZipArchive::open(input, impl_->options.zip_limits));
+              const auto manifest = read_manifest(archive, impl_->options.codec_limits, budget);
+              const auto info = import_info(manifest, input->size());
+              if (string(manifest.document.known()["asset"], "id") != out.ref.asset_id)
+                fail(Errc::corrupt_data, "am.repo.import_invalid", "Current asset identity differs from path");
+              current_zip_hash = import_file_hash(input);
+              out.current = info;
+              base = take(commit::inspect_zip(current_path, budget, impl_->options.zip_limits));
+              if (base->manifest_sha256 != *info.manifest_sha256)
+                fail(Errc::conflict, "am.repo.import_current_changed", "Current manifest changed during acquisition");
+              return {};
+            });
+            if (!readable) {
+              if (readable.error().code == Errc::resource_exhausted ||
+                  readable.error().message_id == "am.repo.import_current_changed")
+                throw readable.error();
+              out.current = ImportAssetInfo{out.current->zip_size, {}, {}, {}};
+              base.reset();
+            }
+          }
+          if (in_trash)
+            out.classification = "in_trash";
+          else if (!out.current)
+            out.classification = "new";
+          else if (!out.current->manifest_sha256)
+            out.classification = "current_unreadable";
+          else if (out.current->manifest_sha256 == out.incoming->manifest_sha256)
+            out.classification = "identical";
+          else if (*out.incoming->revision > *out.current->revision)
+            out.classification = "newer_revision";
+          else if (*out.incoming->revision < *out.current->revision)
+            out.classification = "older_revision";
+          else
+            out.classification = "same_revision_different";
+          const bool replaceable = out.classification == "newer_revision" || out.classification == "older_revision" ||
+                                   out.classification == "same_revision_different";
+          if (incoming.replace_expected) {
+            if (!replaceable)
+              fail(Errc::invalid_argument, "am.repo.import_replace_not_applicable",
+                   "Replacement is not applicable to this classification");
+            if (*incoming.replace_expected != *out.current->manifest_sha256)
+              fail(Errc::conflict, "am.repo.import_current_changed",
+                   "Current manifest no longer equals the observed manifest");
+          }
+          publish = out.classification == "new" || (replaceable && incoming.replace_expected.has_value());
+          if (!publish) {
+            out.status = out.classification == "identical" ? "identical" : "conflict";
+            if (out.status == "conflict")
+              out.error = error(Errc::conflict, "am.repo.import_conflict", out.classification);
+          }
+          return in_trash ? std::nullopt : base;
+        });
+      };
+      request.verifier = [&](const asset_zip::ZipArchive& zip) -> Result<void> {
+        return guard<void>([&]() -> Result<void> {
+          const auto actual = read_manifest(zip, impl_->options.codec_limits, budget);
+          if (hash_text(actual.text) != *out.incoming->manifest_sha256)
+            fail(Errc::conflict, "am.repo.import_source_changed", "Incoming manifest changed before copying");
+          out.verification = impl_->check(out.ref, zip, actual.document, VerifyLevel::full, {}, budget);
+          const auto& v = *out.verification;
+          bool valid = v.v1 == CheckStatus::passed &&
+                       (v.v2 == CheckStatus::passed || v.v2 == CheckStatus::not_applicable_newer_minor) &&
+                       (v.v3 == CheckStatus::passed || v.v3 == CheckStatus::partial ||
+                        (v.format_support == FormatSupport::newer_minor && v.v3 == CheckStatus::not_performed));
+          for (const auto& stream : v.v4)
+            if (stream.status != StreamStatus::verified_sha256 && stream.status != StreamStatus::verified_crc_size_only)
+              valid = false;
+          if (!valid || v.error) {
+            auto e = error(Errc::corrupt_data, "am.repo.import_invalid", "Incoming copy failed required verification");
+            if (v.error) e = std::move(e).caused_by(*v.error);
+            throw e;
+          }
+          if (v.format_support == FormatSupport::newer_minor)
+            out.warnings.push_back(
+                error(Errc::unsupported, "am.repo.import_newer_minor", "Incoming minor version is newer")
+                    .with_severity(Severity::warning));
+          return {};
+        });
+      };
+      request.copy_source->publish = [&](const db::NewFileEvidence& evidence) -> Result<bool> {
+        if (out.classification == "identical") out.zip_bytes_identical = current_zip_hash == evidence.file_sha256;
+        return publish;
+      };
+      auto committed = commit::commit_zip(request);
+      if (!committed) {
+        if (committed.error().message_id == "am.commit.verification_failed") {
+          for (const Error* cause = &committed.error(); cause; cause = cause->cause.get())
+            if (cause->message_id == "am.repo.import_source_changed") return *cause;
+          if (!out.verification) {
+            out.verification.emplace();
+            out.verification->v1 = CheckStatus::failed;
+            out.verification->error = committed.error();
+          }
+          return error(Errc::corrupt_data, "am.repo.import_invalid", "Temporary import verification failed")
+              .caused_by(committed.error());
+        }
+        return committed.error();
+      }
+      if (!committed->no_op) {
+        out.op_id = committed->op_id;
+        out.status = out.classification == "new" ? "imported" : "replaced";
+        if (out.classification == "older_revision")
+          out.warnings.push_back(
+              error(Errc::conflict, "am.repo.import_older_revision", "Explicit replacement uses an older revision")
+                  .with_severity(Severity::warning));
+        if (impl_->options.on_indexed) {
+          try {
+            impl_->options.on_indexed({out.ref, *out.incoming->revision, *out.op_id, "import_ready"});
+          } catch (...) {
+          }
+        }
+      }
+      return {};
+    });
+    if (!operation) {
+      out.status = "failed";
+      out.error = operation.error();
+      if (failure) *failure = out;
+      return operation.error();
+    }
+    return out;
+  });
+}
 
 namespace {
 struct NewSource {
