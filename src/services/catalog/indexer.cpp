@@ -160,6 +160,10 @@ std::string tag_search_key(std::string_view s) {
 Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std::string_view original,
                                      const Location& location, const repository::VerificationReport& report) {
   return guard<db::IndexRecord>([&]() -> Result<db::IndexRecord> {
+    if (report.v1 != repository::CheckStatus::passed || report.v2 != repository::CheckStatus::passed) {
+      if (report.error) return *report.error;
+      return error(Errc::unsupported, "am.catalog.schema_unverified", "Indexing requires passed V1 and V2");
+    }
     const auto& j = doc.known();
     const auto& asset = member(j, "asset");
     const auto& m = member(asset, "metadata");
@@ -184,18 +188,18 @@ Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std:
     r.description = text(m, "description");
     a.health = "ok";
     if (report.error) r.health_detail = report.error->message_id;
-    if (report.v1 == repository::CheckStatus::failed || report.v2 == repository::CheckStatus::failed ||
-        report.v3 == repository::CheckStatus::failed)
+    const bool corrupt = report.v3 == repository::CheckStatus::failed;
+    if (corrupt)
       a.health = "corrupt";
     else if (report.format_support == repository::FormatSupport::newer_minor ||
              report.v3 != repository::CheckStatus::passed)
       a.health = "warn";
+    if (corrupt && !report.v3_findings.empty()) r.health_detail = report.v3_findings.front().message_id;
     for (const auto& f : report.v3_findings) {
       if (!r.health_detail) r.health_detail = f.message_id;
       if (a.health == "ok") a.health = "warn";
     }
-    if (report.error && report.error->code == Errc::unsupported) a.health = "unsupported";
-    Raw raw{original, take(json::parse_strict(original))};
+    if (!corrupt && report.error && report.error->code == Errc::unsupported) a.health = "unsupported";
     std::set<std::string> formats, names, tags, categories;
     std::uint64_t total = 0;
     bool overflow = false, unknown = false;
@@ -216,6 +220,7 @@ Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std:
         overflow = true;
       else if (!overflow)
         total += n;
+      if (corrupt) continue;
       db::IndexedFile file{string(f, "id"),     string(f, "storage_path"), basename(string(f, "storage_path")), *size,
                            string(f, "sha256"), string(f, "origin_kind"),  text(member(f, "type"), "id")};
       if (file.id.empty() || file.storage_path.empty()) continue;
@@ -228,11 +233,14 @@ Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std:
     }
     r.formats = Json(std::vector<std::string>(formats.begin(), formats.end())).dump();
     const auto& previews = member(j, "previews");
-    for (const auto& p : array(previews, "items"))
-      if (string(p, "id") == string(previews, "primary_id")) r.primary_preview = text(p, "file_id");
+    if (!corrupt) {
+      for (const auto& p : array(previews, "items"))
+        if (string(p, "id") == string(previews, "primary_id")) r.primary_preview = text(p, "file_id");
+    }
     for (const auto& input : array(j, "inputs")) {
       const auto completeness = string(input, "completeness");
       if (completeness == "incomplete" || completeness == "unknown") r.incomplete = true;
+      if (corrupt) continue;
       const auto input_id = string(input, "id");
       for (const auto& e : array(input, "entries")) {
         db::IndexedEntry entry{string(e, "id"),
@@ -267,18 +275,22 @@ Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std:
       }
     }
     for (const auto& s : array(member(j, "origin"), "sources")) {
-      r.sources.push_back({string(s, "id"), string(s, "kind"), text(s, "name"), text(s, "url")});
+      if (!corrupt) r.sources.push_back({string(s, "id"), string(s, "kind"), text(s, "name"), text(s, "url")});
       append(r.sources_text, string(s, "name"));
     }
     for (const auto& author : array(m, "authors")) append(r.authors_text, string(author, "name"));
     for (const auto& tag : array(m, "tags"))
       if (tag.is_string()) tags.insert(tag_search_key(tag.get_ref<const std::string&>()));
+    for (const auto& t : tags) append(r.tags_text, t);
+    // V-2: the violated graph is not projected into keyed child tables. The
+    // original manifest and safe summary/FTS fields remain available.
+    if (corrupt) return r;
     for (const auto& category : array(m, "categories"))
       if (member(category, "path").is_array()) categories.insert(member(category, "path").dump());
     r.tags.assign(tags.begin(), tags.end());
     r.categories.assign(categories.begin(), categories.end());
     r.names.assign(names.begin(), names.end());
-    for (const auto& t : r.tags) append(r.tags_text, t);
+    Raw raw{original, take(json::parse_strict(original))};
     std::map<std::string, std::string> types;
     for (const auto& d : array(j, "field_definitions")) types.emplace(string(d, "id"), string(d, "type"));
     auto fields = [&](const Json& metadata, std::size_t raw_metadata, const std::string& scope,

@@ -196,6 +196,7 @@
 "am.catalog.out_of_memory" = "There is not enough memory for the catalog operation."
 "am.catalog.error" = "The catalog operation failed."
 "am.catalog.manifest_invalid" = "The manifest cannot be indexed."
+"am.catalog.schema_unverified" = "The manifest schema could not be validated for indexing."
 "am.catalog.read_only" = "The library is open read-only."
 "am.catalog.id_mismatch" = "The asset ID does not match its ZIP filename."
 "am.catalog.duplicate_id" = "An asset with this ID is already indexed."

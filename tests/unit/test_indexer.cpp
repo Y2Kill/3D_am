@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <fstream>
 #include <map>
 #include <set>
@@ -248,12 +249,120 @@ TEST(Indexer, VolumesCategorySegmentsUnitsAndHealth) {
   EXPECT_EQ(record.summary.health, "corrupt");
   report.error = am::Error::make(am::Errc::unsupported, "test unsupported").id("am.catalog.error");
   record = value(cat::Indexer::map(doc, raw, {"x.zip", "1", 0, false}, report));
-  EXPECT_EQ(record.summary.health, "unsupported");
+  EXPECT_EQ(record.summary.health, "corrupt");
   report.error.reset();
   report.v3 = repo::CheckStatus::not_performed;
   report.format_support = repo::FormatSupport::newer_minor;
-  record = value(cat::Indexer::map(doc, raw, {"x.zip", "1", 0, false}, report));
-  EXPECT_EQ(record.summary.health, "warn");
+  report.v2 = repo::CheckStatus::not_applicable_newer_minor;
+  auto unverified = cat::Indexer::map(doc, raw, {"x.zip", "1", 0, false}, report);
+  ASSERT_FALSE(unverified);
+  EXPECT_EQ(unverified.error().message_id, "am.catalog.schema_unverified");
+}
+TEST(Indexer, V3CorruptKeepsSummaryAndAssetFtsWithoutChildRows) {
+  RecordProperty("req", "K-3|K-6");
+  const auto root = fresh();
+  const auto raw = fixture("neg-v3-unique_ids");
+  auto doc = value(am::manifest::parse_manifest(raw));
+  const auto id = doc.known()["asset"]["id"].get<std::string>();
+  const auto path = asset_path(root, id);
+  fs::create_directories(path.parent_path());
+  fs::copy_file(fs::path(AM_GOLDEN_FIXTURES) / "pos-full/asset.zip", path);
+  auto library = value(lib::Library::open(root, options()));
+  value(library.assets().create(request("Other healthy asset")));
+  cat::Indexer index(root, library);
+  EXPECT_EQ(value(index.rebuild()).indexed, 2u);
+  EXPECT_EQ(scalar(library, "SELECT count(*) FROM files WHERE asset_id='" + id + "'"), "3");
+  fs::copy_file(fs::path(AM_GOLDEN_FIXTURES) / "neg-v3-unique_ids/asset.zip", path,
+                fs::copy_options::overwrite_existing);
+  const auto before = hash(path);
+  const auto rebuilt = value(index.rebuild());
+  EXPECT_EQ(rebuilt.indexed, 2u);
+  EXPECT_TRUE(rebuilt.skipped.empty());
+  EXPECT_FALSE(value(index.rebuild_required()));
+  const auto condition = " WHERE asset_id='" + id + "'";
+  EXPECT_EQ(scalar(library, "SELECT health FROM assets" + condition), "corrupt");
+  EXPECT_EQ(scalar(library, "SELECT health_detail FROM assets" + condition), "am.manifest.unique_ids");
+  EXPECT_EQ(scalar(library, "SELECT primary_preview IS NULL FROM assets" + condition), "1");
+  EXPECT_EQ(scalar(library, "SELECT file_count FROM assets" + condition), std::to_string(doc.known()["files"].size()));
+  EXPECT_EQ(scalar(library, "SELECT manifest_json FROM assets" + condition), raw);
+  for (const auto* table : {"files", "input_entries", "input_objects", "sources", "asset_tags", "asset_categories",
+                            "asset_fields", "fts_names"}) {
+    EXPECT_EQ(scalar(library, "SELECT count(*) FROM " + std::string(table) + condition), "0") << table;
+  }
+  EXPECT_EQ(scalar(library, "SELECT count(*) FROM fts_assets" + condition + " AND fts_assets MATCH 'Winry'"), "1");
+  value(index.update({library.config().library_id, id}));
+  EXPECT_EQ(scalar(library, "SELECT count(*) FROM files" + condition), "0");
+  EXPECT_EQ(hash(path), before);
+}
+TEST(Indexer, EntireGoldenCorpusRebuildsUsingExpectedValidationLevels) {
+  RecordProperty("req", "K-3|K-6");
+  const auto corpus = fs::path(AM_GOLDEN_FIXTURES);
+  std::vector<fs::path> cases;
+  for (const auto& e : fs::directory_iterator(corpus)) {
+    if (e.is_directory() && fs::exists(e.path() / "expected.json")) cases.push_back(e.path());
+  }
+  std::sort(cases.begin(), cases.end());
+  ASSERT_EQ(cases.size(), 79u);
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.filename().string());
+    const auto expected = repo::Json::parse(bytes(test_case / "expected.json"));
+    const auto check = std::find_if(expected["checks"].begin(), expected["checks"].end(),
+                                    [](const auto& c) { return c["command"] == "validate"; });
+    ASSERT_NE(check, expected["checks"].end());
+    const auto& levels = (*check)["json"];
+    const auto zip = test_case / "asset.zip";
+    const auto original_hash = hash(zip);
+    repo::ContainerContents contents;
+    repo::ContainerVerifyOptions verify;
+    verify.streams = false;
+    auto validation = repo::verify_container(zip, verify, &contents);
+    std::string id = am::Uuid::v4().to_string();
+    if (contents.document) {
+      const auto& known = contents.document->known();
+      if (known.contains("asset") && known["asset"].is_object() && known["asset"].contains("id") &&
+          known["asset"]["id"].is_string()) {
+        const auto candidate = known["asset"]["id"].template get<std::string>();
+        auto parsed = am::Uuid::parse_canonical(candidate);
+        if (parsed && parsed->version() == 4 && (parsed->bytes()[8] & 0xc0) == 0x80) id = candidate;
+      }
+    }
+    // The published cases deliberately reuse AssetIDs. Isolate every case so
+    // duplicate-library-ID handling cannot hide a projection failure.
+    const auto root = fresh();
+    const auto target = asset_path(root, id);
+    fs::create_directories(target.parent_path());
+    fs::copy_file(zip, target);
+    auto library = value(lib::Library::open(root, options()));
+    cat::Indexer index(root, library);
+    const auto rebuilt = value(index.rebuild());
+    const auto rows = value(index.list(true));
+    EXPECT_FALSE(value(index.rebuild_required()));
+    if (levels.value("v1", "") == "passed" && levels.value("v2", "") == "passed") {
+      ASSERT_TRUE(validation);
+      ASSERT_TRUE(contents.document);
+      ASSERT_EQ(rebuilt.indexed, 1u);
+      EXPECT_TRUE(rebuilt.skipped.empty());
+      ASSERT_EQ(rows.size(), 1u);
+      if (levels.value("v3", "") == "failed") {
+        EXPECT_EQ(rows[0].health, "corrupt");
+        for (const auto* table : {"files", "input_entries", "input_objects", "sources", "asset_tags",
+                                  "asset_categories", "asset_fields", "fts_names"})
+          EXPECT_EQ(scalar(library, "SELECT count(*) FROM " + std::string(table)), "0") << table;
+        EXPECT_EQ(scalar(library, "SELECT primary_preview IS NULL FROM assets"), "1");
+      } else {
+        EXPECT_TRUE(rows[0].health == "ok" || rows[0].health == "warn");
+      }
+      EXPECT_EQ(scalar(library, "SELECT count(*) FROM fts_assets"), "1");
+      EXPECT_EQ(scalar(library, "SELECT manifest_json FROM assets"), contents.manifest_text);
+    } else {
+      EXPECT_EQ(rebuilt.indexed, 0u);
+      EXPECT_TRUE(rows.empty());
+      ASSERT_EQ(rebuilt.skipped.size(), 1u);
+      EXPECT_FALSE(rebuilt.skipped[0].message_id.empty());
+    }
+    EXPECT_EQ(hash(zip), original_hash);
+    EXPECT_EQ(hash(target), original_hash);
+  }
 }
 TEST(Indexer, RebuildReportsConflictsAndPreservesUserdataAndZips) {
   RecordProperty("req", "K-7|ADR-0007");

@@ -62,6 +62,12 @@ with other names are ignored. These files are never removed. A successful
 rebuild returns 0 even when files were skipped; lock, read-only, I/O, and
 transaction failures return 4.
 
+Only manifests that pass V1 and V2 are indexed. A newer minor format whose schema
+cannot be validated is reported as skipped. If V3 fails, the index retains the
+asset summary, original manifest, and title-search entry with `health: corrupt`.
+It omits child rows and filename search entries, and leaves `primary_preview`
+null, because references and identifiers may be inconsistent.
+
 `am library list <dir> --json` reads the current index and returns `assets` plus
 `rebuild_required`. Rows contain `asset_id`, `revision`, `title`, `health`,
 `file_count`, `content_bytes`, and `in_trash`. Byte counts are decimal strings;
