@@ -1,5 +1,10 @@
 #pragma once
+#include <cstdint>
+#include <functional>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include "am/storage/db/sqlite.hpp"
 
@@ -47,22 +52,37 @@ struct IndexRecord {
   std::vector<std::string> tags, categories, names;
   std::vector<IndexedField> fields;
 };
+struct IndexState {
+  std::string asset_id, rel_path, zip_size, health;
+  std::int64_t zip_mtime_ns = 0;
+};
+struct IndexStat {
+  std::string zip_size;
+  std::int64_t zip_mtime_ns = 0;
+};
+struct IndexMark {
+  std::string asset_id, health, health_detail;
+  std::optional<IndexStat> stat;
+};
 class IndexStore;
-class IndexRebuild {
+class IndexTransaction {
  public:
-  IndexRebuild(IndexRebuild&&) noexcept = default;
-  IndexRebuild& operator=(IndexRebuild&&) noexcept = default;
-  IndexRebuild(const IndexRebuild&) = delete;
-  IndexRebuild& operator=(const IndexRebuild&) = delete;
+  IndexTransaction(IndexTransaction&&) noexcept = default;
+  IndexTransaction& operator=(IndexTransaction&&) noexcept = default;
+  IndexTransaction(const IndexTransaction&) = delete;
+  IndexTransaction& operator=(const IndexTransaction&) = delete;
   Result<void> insert(const IndexRecord&);
+  Result<void> mark(const IndexMark&);
+  Result<void> commit();
   Result<void> commit(std::string_view rebuilt_at);
 
  private:
   IndexStore* store_;
   Transaction transaction_;
-  IndexRebuild(IndexStore&, Transaction&&);
+  IndexTransaction(IndexStore&, Transaction&&);
   friend class IndexStore;
 };
+using IndexRebuild = IndexTransaction;
 // Borrows Library's index connection. The Library must outlive this store and
 // any rebuild session. SQL and SQLite-specific policy stay at the storage level.
 class IndexStore {
@@ -72,7 +92,10 @@ class IndexStore {
   IndexStore& operator=(const IndexStore&) = delete;
   Result<void> replace(const IndexRecord&);
   Result<void> remove(std::string_view asset_id);
-  Result<IndexRebuild> begin_rebuild();
+  Result<IndexTransaction> begin_rebuild();
+  Result<IndexTransaction> begin_sync();
+  Result<std::vector<IndexState>> sync_state() const;
+  Result<void> mark(const IndexMark&);
   Result<std::vector<IndexSummary>> list(bool include_trash = false) const;
   Result<std::int64_t> count() const;
   Result<bool> rebuild_required() const;
@@ -80,6 +103,6 @@ class IndexStore {
 
  private:
   Connection db_;
-  friend class IndexRebuild;
+  friend class IndexTransaction;
 };
 }  // namespace am::db

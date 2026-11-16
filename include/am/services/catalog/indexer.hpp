@@ -17,10 +17,23 @@ struct RebuildReport {
   std::vector<std::string> ignored;
   std::int64_t duration_ms = 0;
 };
+struct SyncOptions {
+  bool full = false;
+};
+struct SyncReport {
+  std::size_t added = 0, updated = 0, unchanged = 0;
+  std::vector<std::string> missing;
+  std::vector<SkippedAsset> skipped;
+  std::vector<std::string> ignored;
+  std::int64_t duration_ms = 0;
+  bool full = false;
+};
 struct IndexerHooks {
   // Per-instance failure injection. No global state; empty in production.
   std::function<Result<void>(std::string_view)> before_update;
   std::function<Result<void>(std::size_t)> after_rebuild_insert;
+  std::function<Result<void>(const std::filesystem::path&)> before_read;
+  std::function<Result<void>(std::size_t)> after_sync_change;
 };
 std::string tag_search_key(std::string_view);
 class Indexer {
@@ -30,6 +43,7 @@ class Indexer {
   static Result<db::IndexRecord> map(const manifest::ManifestDocument&, std::string_view original, const Location&,
                                      const repository::VerificationReport&);
   Result<RebuildReport> rebuild();
+  Result<SyncReport> sync(const SyncOptions& = {});
   Result<void> update(const repository::AssetRef&);
   Result<void> remove(std::string_view asset_id);
   Result<std::vector<db::IndexSummary>> list(bool include_trash = false) const;
@@ -60,6 +74,7 @@ class Catalog {
   Catalog& operator=(const Catalog&) = delete;
   library::Library& library() noexcept;
   Indexer& indexer() noexcept;
+  Result<SyncReport> sync(const SyncOptions& = {});
   Result<CatalogChange> create(const repository::CreateRequest&);
   Result<CatalogChange> change(const repository::ChangeRequest&);
 

@@ -140,6 +140,15 @@ int main(int argc, char** argv) {
   library_list->add_flag("--trash", library_list_trash, "Include indexed assets from trash");
   presentation(library_list);
   library_list->callback([&] { render("library list", app::list_library(path(library_list_root),library_list_trash)); });
+  std::string library_sync_root;
+  bool library_sync_full = false;
+  auto* library_sync =
+      library->add_subcommand("sync", "Update the index from changed ZIP files and mark absent assets");
+  library_sync->add_option("dir", library_sync_root)->required();
+  library_sync->add_flag("--full", library_sync_full, "Read every candidate, including files with unchanged stat");
+  presentation(library_sync);
+  library_sync->callback(
+      [&] { render("library sync", app::sync_library(path(library_sync_root), library_sync_full)); });
   auto* asset = cli.add_subcommand("asset", "Create, inspect, check, and extract a standalone asset ZIP");
   asset->require_subcommand(1);
   std::vector<std::string> inputs;

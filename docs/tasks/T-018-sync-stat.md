@@ -1,6 +1,6 @@
 # T-018. Сверка библиотеки по `stat` и `am library sync` (M2, P0.5 — часть 3)
 
-**Статус:** ready · **Веха:** M2 · **Основание:** ТЗ v1.8 §4.9 п. 1–3 [СОГЛАСОВАНО] (быстрая сверка по размеру и времени модификации, распознавание добавленных, изменённых и отсутствующих ZIP, полный анализ при каждом старте не требуется); ADR-0007 (индекс перестраиваемый); ADR-0031 п. 5 (недоступный носитель — ассеты не считаются удалёнными); `schemas/sql/index.sql` (`health … missing`); приёмка T-017, замечания 1 и 3
+**Статус:** review · **Веха:** M2 · **Основание:** ТЗ v1.8 §4.9 п. 1–3 [СОГЛАСОВАНО] (быстрая сверка по размеру и времени модификации, распознавание добавленных, изменённых и отсутствующих ZIP, полный анализ при каждом старте не требуется); ADR-0007 (индекс перестраиваемый); ADR-0031 п. 5 (недоступный носитель — ассеты не считаются удалёнными); `schemas/sql/index.sql` (`health … missing`); приёмка T-017, замечания 1 и 3
 
 ## Цель
 
@@ -118,4 +118,112 @@
 
 ## Отчёт исполнителя
 
-_(заполняет исполнитель)_
+### Ветка и коммиты
+
+- Ветка: `codex/T-018`, создана от `main` (`1e7b826`).
+- `ca4a103` — сверка по stat, транзакционные операции индекса, CLI, тесты и пользовательская документация.
+- `Document T-018 execution and validation` — отдельный коммит этого отчёта и перевода в `review`. Слияние, push и переписывание истории не выполнялись.
+
+### Выполнение критериев
+
+1. Обязательные сборки и фактические итоги приведены ниже. SQL, схема формата, golden ZIP, валидаторы, `Library`, `AssetRepository` и протокол фиксации не изменены.
+2. Добавлены 11 тестов `Sync.*` и процессный `cli_library_sync`. Обновлён `Indexer.EntireGoldenCorpusRebuildsUsingExpectedValidationLevels`: newer_minor теперь ожидает индексированную строку `warn`.
+3. Изменения находятся только в разрешённых файлах, реализация закоммичена в ветку задачи. Исходный пользовательский `3D_am_open_questions_e2472e9.zip` не изменён и в коммиты не включён.
+
+Соответствие обязательным сценариям (имена ниже — из набора `Sync`):
+
+| № | Тест и проверенный результат |
+|---|---|
+| 1 | `UnchangedDoesNotOpenZipAndFullRereads`: три неизменённых ZIP, 0 вызовов чтения; полный снимок индекса и meta прежний; `full` читает все три. |
+| 2 | `AddsExternalCopyUpdatesRevisionFtsAndTrashPath`: внешняя копия добавлена, raw Library change обновляет revision и FTS, перемещение в trash обновляет путь и `in_trash`. |
+| 3 | `MissingRetainsAllOtherColumnsChildrenAndRestoresSameStat`: сохранены title, дочерние строки и FTS; повторная пометка отсутствует; возврат с прежним stat перечитывается и восстанавливает исходный снимок. |
+| 4 | `UnreadableRetainsSummaryAndChildrenCachesStatAndRetriesNewFile`: сохранены последние данные, выставлены corrupt/detail и новый размер; повторный sync не читает повреждённый ZIP; новый нечитаемый файл повторно проверяется без создания строки. |
+| 5 | `SharedCandidateRulesDuplicatesIgnoredAndIdMismatch`: sync и rebuild выбирают assets перед trash, одинаково сообщают duplicate_id, id_mismatch и ignored. Перечисление кандидатов общее. |
+| 6 | `FullDetectsEqualSizeAndRestoredMtime`: обычный sync не видит подмену с равным stat, full видит повреждение. На DrvFS — явный SKIP, если точное восстановление mtime невозможно. |
+| 7 | `CompleteSnapshotMatchesRebuildOnCopiedDiskExceptRetainedMarks`: сравниваются все столбцы assets, все дочерние таблицы и логические строки FTS; исключены только сохранённые missing/corrupt ассеты. Включён насыщенный `pos-full`. |
+| 8 | `FaultRollsBackEveryChangeAndReadersSeeOldStateUntilCommit`: отказ после добавления и пометки missing откатывает весь индекс и meta; отдельный читатель до COMMIT видит прежний снимок, после успешного COMMIT — новый. |
+| 9 | `RefusesRebuildFlagReadOnlyAndUnavailableRootsButEmptyIsMissing`: флаг rebuild_required и read-only запрещают sync; недоступность каждого из assets/trash не меняет индекс; существующий пустой assets приводит к missing. |
+| 10 | `NewerMinorSummaryWorksForRebuildUpdateAndSync`: все три пути дают warn/newer_minor, NULL primary_preview, только сводку и fts_assets. `MapExplicitlyHandlesEveryCheckStatusAndRequiredNewerMinorType`: все статусы V1/V2, отсутствие/неверный тип обязательных полей, переполнение суммы размеров без изменения обязательного message_id. |
+| 11 | `cli_library_sync`: init → отказ с кодом 4 → создание ZIP → rebuild → unchanged → full → missing в JSON и текстовом предупреждении → list с сохранённым title → возврат → corrupt/skipped. Хеш userdata.sqlite сохранён. На Linux проверен отказ записи с явной причиной SKIP. |
+
+`Catalog::sync` использует тот же mutex, что наблюдатель фиксаций. Сверка выполняется одной транзакцией; перечисление обоих каталогов завершается до её начала. Пометки обновляют только поля, перечисленные в задаче; sync не изменяет meta/rebuild_required. Явные `<vector>` и `<functional>` добавлены в `index_store.hpp`.
+
+Все значения `repository::CheckStatus` имеют явные ветки:
+
+| Значение | V1 | V2 при прошедшем V1 |
+|---|---|---|
+| `passed` | продолжить проверку V2 | индексировать |
+| `not_applicable_newer_minor` | отказ | индексировать только при `format_support = newer_minor` |
+| `not_performed` | отказ | отказ |
+| `partial` | отказ | отказ |
+| `failed` | отказ | отказ |
+
+Неизвестное значение также приводит к отказу. Для newer_minor обязательные типы проверяются до проекции; неподтверждённые ключи и ссылки не попадают в дочерние таблицы.
+
+### Команды и фактические итоги
+
+Минимальная сборка: `tools\build_min.cmd --ci` — PASS, 86/86:
+
+```text
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) = 18.12 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+```
+
+Целевые прогоны:
+
+- Windows: `tools\build_cli.cmd --offline --ci -R Sync` — `100% tests passed, 0 tests failed out of 11`; `-R Indexer` — 11/11 PASS; `-R cli_library` — 6/6 PASS.
+- WSL: `tools/build_linux.sh cli --ci -R Sync` после исправлений — `100% tests passed, 0 tests failed out of 11`: 10 PASS, 1 SKIP (`Filesystem cannot restore mtime exactly`). `req_report: 45 IDs, 340 tests, 48 without req, 0 invalid IDs`. Пересобранные файлы без предупреждений.
+- Полный `tools\build_cli.cmd --ci` — PASS, 343/343, без SKIP:
+
+```text
+100% tests passed, 0 tests failed out of 343
+Total Test time (real) = 897.13 sec
+req_report: 45 IDs, 343 tests, 49 without req, 0 invalid IDs
+```
+
+Полный `tools\build_cli.cmd --offline --ci` — PASS, 343/343, без SKIP:
+
+```text
+100% tests passed, 0 tests failed out of 343
+Total Test time (real) = 824.55 sec
+req_report: 45 IDs, 343 tests, 49 without req, 0 invalid IDs
+```
+
+Полный `tools/build_linux.sh cli --ci` в WSL — PASS, 340 тестов: 324 PASS, 16 SKIP, 0 FAIL:
+
+```text
+100% tests passed, 0 tests failed out of 340
+Total Test time (real) = 1864.94 sec
+req_report: 45 IDs, 340 tests, 48 without req, 0 invalid IDs
+```
+
+SKIP: 14 прежних ограничений Linux/Windows-only тестов и два новых — точное восстановление mtime на DrvFS и производственная запись `cli_library_sync` (неподтверждённый фиксированный NTFS). Проверка sync в сервисном слое выполнена с синтетическими capabilities; сценарий равного stat выполнен на Windows без SKIP.
+
+`arch_check`, `schema_check`, `sql_check` — PASS во всех четырёх обязательных прогонах. Число тестов не уменьшилось: минимальная сборка 86; Windows 331 → 343; Linux 328 → 340. Во всех прогонах `req_report` — 0 неверных ID.
+
+Логи и машинные отчёты — `.cache/t018-*.log`, `*-junit.xml`, `*-result.json`, `*-req_report.json`.
+
+Фактический вызов на синтетической библиотеке:
+
+```text
+am library sync .cache/t018-cli-example/library --json
+```
+
+```json
+{"added":0,"updated":0,"unchanged":1,"missing":[],"skipped":[],"ignored":[],"duration_ms":0,"full":false,"command":"library sync"}
+```
+
+После удаления ZIP (код завершения 0):
+
+```json
+{"added":0,"updated":0,"unchanged":0,"missing":["1620334a-00a3-4746-8ddd-9ca993946a55"],"skipped":[],"ignored":[],"duration_ms":5,"full":false,"command":"library sync"}
+```
+
+### Отклонения и вопросы
+
+- Отклонений от требований и разрешённого состава файлов нет. Новые зависимости не добавлялись; реальная коллекция не использовалась.
+- В первом целевом WSL-прогоне выявлено округление mtime при копировании тестового ZIP-дерева. Для теста инварианта заданы одинаковые представимые временные метки до индексации и копирования; проверка всех столбцов, включая `zip_mtime_ns`, сохранена. Отдельный тест точного восстановления mtime пропускается только по предусмотренному задачей условию.
+- Проверкой граничного случая подтверждён и исправлен суффикс `content_bytes_overflow` у newer_minor: обязательный `health_detail = am.catalog.newer_minor` теперь сохраняется.
+- Генерацию общих interoperability-fixtures `.cache/zip-tests/written` в Windows и WSL разводил по времени, временно задерживая родительский CTest WSL. Wall-time полного WSL-прогона включает ожидание и не является замером NFR.
+- **Вопросы:** нет.

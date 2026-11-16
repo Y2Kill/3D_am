@@ -118,6 +118,20 @@ void meta(Connection& c, std::string_view key, std::string_view value) {
   take(s.bind(2, value));
   take(s.step());
 }
+void mark_row(Connection& c, const IndexMark& mark) {
+  auto s =
+      take(c.prepare(mark.stat ? "UPDATE assets SET health=?,health_detail=?,zip_size=?,zip_mtime_ns=? WHERE asset_id=?"
+                               : "UPDATE assets SET health=?,health_detail=? WHERE asset_id=?"));
+  take(s.bind(1, mark.health));
+  take(s.bind(2, mark.health_detail));
+  if (mark.stat) {
+    take(s.bind(3, mark.stat->zip_size));
+    take(s.bind(4, mark.stat->zip_mtime_ns));
+    take(s.bind(5, mark.asset_id));
+  } else
+    take(s.bind(3, mark.asset_id));
+  take(s.step());
+}
 }  // namespace
 Result<void> IndexStore::replace(const IndexRecord& r) {
   return guard<void>([&]() -> Result<void> {
@@ -135,21 +149,32 @@ Result<void> IndexStore::remove(std::string_view id) {
     return {};
   });
 }
-Result<IndexRebuild> IndexStore::begin_rebuild() {
-  return guard<IndexRebuild>([&]() -> Result<IndexRebuild> {
+Result<IndexTransaction> IndexStore::begin_rebuild() {
+  return guard<IndexTransaction>([&]() -> Result<IndexTransaction> {
     auto tx = take(Transaction::begin(db_));
     take(db_.exec("DELETE FROM fts_assets; DELETE FROM fts_names; DELETE FROM fts_docs; DELETE FROM assets"));
-    return IndexRebuild(*this, std::move(tx));
+    return IndexTransaction(*this, std::move(tx));
   });
 }
-IndexRebuild::IndexRebuild(IndexStore& s, Transaction&& t) : store_(&s), transaction_(std::move(t)) {}
-Result<void> IndexRebuild::insert(const IndexRecord& r) {
+Result<IndexTransaction> IndexStore::begin_sync() {
+  return guard<IndexTransaction>(
+      [&]() -> Result<IndexTransaction> { return IndexTransaction(*this, take(Transaction::begin(db_))); });
+}
+IndexTransaction::IndexTransaction(IndexStore& s, Transaction&& t) : store_(&s), transaction_(std::move(t)) {}
+Result<void> IndexTransaction::insert(const IndexRecord& r) {
   return guard<void>([&]() -> Result<void> {
     put(store_->db_, r);
     return {};
   });
 }
-Result<void> IndexRebuild::commit(std::string_view time) {
+Result<void> IndexTransaction::mark(const IndexMark& mark) {
+  return guard<void>([&]() -> Result<void> {
+    mark_row(store_->db_, mark);
+    return {};
+  });
+}
+Result<void> IndexTransaction::commit() { return transaction_.commit(); }
+Result<void> IndexTransaction::commit(std::string_view time) {
   return guard<void>([&]() -> Result<void> {
     meta(store_->db_, "rebuild_required", "0");
     meta(store_->db_, "rebuilt_at", time);
@@ -161,6 +186,25 @@ Result<void> IndexStore::mark_rebuild_required() {
   return guard<void>([&]() -> Result<void> {
     meta(db_, "rebuild_required", "1");
     return {};
+  });
+}
+Result<void> IndexStore::mark(const IndexMark& mark) {
+  return guard<void>([&]() -> Result<void> {
+    auto tx = take(Transaction::begin(db_));
+    mark_row(db_, mark);
+    take(tx.commit());
+    return {};
+  });
+}
+Result<std::vector<IndexState>> IndexStore::sync_state() const {
+  return guard<std::vector<IndexState>>([&]() -> Result<std::vector<IndexState>> {
+    auto statement =
+        take(db_.prepare("SELECT asset_id,rel_path,zip_size,health,zip_mtime_ns FROM assets ORDER BY asset_id"));
+    std::vector<IndexState> rows;
+    while (take(statement.step()) == Step::row)
+      rows.push_back({take(statement.text(0)), take(statement.text(1)), take(statement.text(2)),
+                      take(statement.text(3)), statement.integer(4)});
+    return rows;
   });
 }
 Result<bool> IndexStore::rebuild_required() const {

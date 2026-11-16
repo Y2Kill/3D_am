@@ -255,8 +255,11 @@ TEST(Indexer, VolumesCategorySegmentsUnitsAndHealth) {
   report.format_support = repo::FormatSupport::newer_minor;
   report.v2 = repo::CheckStatus::not_applicable_newer_minor;
   auto unverified = cat::Indexer::map(doc, raw, {"x.zip", "1", 0, false}, report);
-  ASSERT_FALSE(unverified);
-  EXPECT_EQ(unverified.error().message_id, "am.catalog.schema_unverified");
+  ASSERT_TRUE(unverified);
+  EXPECT_EQ(unverified->summary.health, "warn");
+  EXPECT_EQ(unverified->health_detail, "am.catalog.newer_minor");
+  EXPECT_TRUE(unverified->files.empty());
+  EXPECT_FALSE(unverified->primary_preview);
 }
 TEST(Indexer, V3CorruptKeepsSummaryAndAssetFtsWithoutChildRows) {
   RecordProperty("req", "K-3|K-6");
@@ -337,14 +340,19 @@ TEST(Indexer, EntireGoldenCorpusRebuildsUsingExpectedValidationLevels) {
     const auto rebuilt = value(index.rebuild());
     const auto rows = value(index.list(true));
     EXPECT_FALSE(value(index.rebuild_required()));
-    if (levels.value("v1", "") == "passed" && levels.value("v2", "") == "passed") {
+    const bool newer =
+        levels.value("v2", "") == "not_applicable_newer_minor" && levels.value("format_support", "") == "newer_minor";
+    if (levels.value("v1", "") == "passed" && (levels.value("v2", "") == "passed" || newer)) {
       ASSERT_TRUE(validation);
       ASSERT_TRUE(contents.document);
       ASSERT_EQ(rebuilt.indexed, 1u);
       EXPECT_TRUE(rebuilt.skipped.empty());
       ASSERT_EQ(rows.size(), 1u);
-      if (levels.value("v3", "") == "failed") {
-        EXPECT_EQ(rows[0].health, "corrupt");
+      if (levels.value("v3", "") == "failed" || newer) {
+        EXPECT_EQ(rows[0].health, newer ? "warn" : "corrupt");
+        if (newer) {
+          EXPECT_EQ(scalar(library, "SELECT health_detail FROM assets"), "am.catalog.newer_minor");
+        }
         for (const auto* table : {"files", "input_entries", "input_objects", "sources", "asset_tags",
                                   "asset_categories", "asset_fields", "fts_names"})
           EXPECT_EQ(scalar(library, "SELECT count(*) FROM " + std::string(table)), "0") << table;
