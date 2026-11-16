@@ -38,6 +38,7 @@ if(AM_WITH_CONTAINER)
     unit/test_manifest_semantics.cpp
     unit/test_asset_service.cpp
     unit/test_library.cpp
+    unit/test_sqlite.cpp unit/test_indexer.cpp
     unit/zip_builder.cpp unit/test_zip_reader.cpp unit/test_zip_stream.cpp unit/test_zip_probe.cpp
     unit/test_zip_writer.cpp unit/test_zip_writer_large.cpp unit/test_zip_writer_interop.cpp
     unit/test_state_journal.cpp unit/test_commit_protocol.cpp unit/test_asset_repository.cpp)
@@ -60,6 +61,7 @@ if(AM_WITH_CONTAINER)
     AM_REPO_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/repo-tests"
     AM_ASSET_SERVICE_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/cli-tests/api"
     AM_LIBRARY_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/library-tests"
+    AM_GOLDEN_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/golden"
     AM_REPO_HELPER="$<TARGET_FILE:am_repository_crash_helper>"
     AM_COMMIT_HELPER="$<TARGET_FILE:am_commit_crash_helper>")
   if(WIN32)
@@ -107,12 +109,13 @@ if(AM_PYTHON_TESTS)
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/tools/message_catalog_check.py --root ${PROJECT_SOURCE_DIR})
       set_tests_properties(message_catalog_check PROPERTIES LABELS "req:ADR-0032;req:ADR-0034")
       if(TARGET am_cli)
-      foreach(_am_library_case init_info refusals missing_databases owner_lock)
+      foreach(_am_library_case init_info refusals missing_databases owner_lock rebuild_list)
         add_test(NAME cli_library_${_am_library_case}
           COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_library_cli.py
             --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/library-cli-tests --case ${_am_library_case})
         set_tests_properties(cli_library_${_am_library_case} PROPERTIES LABELS "req:K-7;req:K-123;req:ADR-0007;req:ADR-0031")
       endforeach()
+      set_tests_properties(cli_library_rebuild_list PROPERTIES SKIP_REGULAR_EXPRESSION "Production writes require a verified fixed NTFS volume")
       add_test(NAME golden_zip
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/golden/run_golden.py
           --am $<TARGET_FILE:am_cli> --corpus ${PROJECT_SOURCE_DIR}/tests/fixtures/golden)

@@ -1,5 +1,6 @@
 #include "am/application/library_service.hpp"
 #include "am/storage/library/library.hpp"
+#include "am/services/catalog/indexer.hpp"
 #include "am/foundation/version.hpp"
 namespace am::application {
 namespace {
@@ -41,6 +42,12 @@ Result<AssetOutcome> inspect_library(const std::filesystem::path& root) {
     j["owner"] = lib.owner().locked ? "locked" : "free";
     if (lib.owner().locked) j["owner_detail"] = lib.owner().detail;
     j["databases"] = Json::object();
+    db::IndexStore store(lib.database(library::DatabaseKind::index));
+    if (lib.database_info(library::DatabaseKind::index).state == library::DatabaseState::ok) {
+      auto count = store.count();
+      if (!count) return count.error();
+      j["indexed_assets"] = *count;
+    } else j["indexed_assets"] = nullptr;
     for (const auto& [kind, name] : {std::pair{library::DatabaseKind::index, "index"}, {library::DatabaseKind::userdata, "userdata"}, {library::DatabaseKind::state, "state"}}) {
       const auto& info = lib.database_info(kind);
       std::string state;
@@ -58,6 +65,30 @@ Result<AssetOutcome> inspect_library(const std::filesystem::path& root) {
       if (info.rebuild_required) db["rebuild_required"] = *info.rebuild_required;
       j["databases"][name] = std::move(db);
     }
+    return out;
+  });
+}
+Result<AssetOutcome> rebuild_library(const std::filesystem::path& root) {
+  return guard([&]() -> Result<AssetOutcome> {
+    library::OpenOptions options; options.application_version = kAppVersion;
+    auto opened = catalog::Catalog::open(root,options); if (!opened) return opened.error();
+    auto report = opened->indexer().rebuild(); if (!report) return report.error();
+    AssetOutcome out;
+    out.value = {{"indexed",report->indexed},{"duration_ms",report->duration_ms},{"skipped",Json::array()},{"ignored",report->ignored}};
+    for (const auto& s : report->skipped) out.value["skipped"].push_back({{"path",s.path},{"reason",s.reason},{"message_id",s.message_id}});
+    return out;
+  });
+}
+Result<AssetOutcome> list_library(const std::filesystem::path& root, bool trash) {
+  return guard([&]() -> Result<AssetOutcome> {
+    library::OpenOptions options; options.mode = library::Mode::read_only;
+    auto opened = catalog::Catalog::open(root,options); if (!opened) return opened.error();
+    auto rows = opened->indexer().list(trash); if (!rows) return rows.error();
+    auto required = opened->indexer().rebuild_required(); if (!required) return required.error();
+    AssetOutcome out; out.value = {{"assets",Json::array()},{"rebuild_required",*required}};
+    for (const auto& r : *rows) out.value["assets"].push_back({{"asset_id",r.asset_id},{"revision",r.revision},{"title",r.title ? Json(*r.title) : Json(nullptr)},
+      {"health",r.health},{"file_count",r.file_count},{"content_bytes",r.content_bytes ? Json(*r.content_bytes) : Json(nullptr)},{"in_trash",r.in_trash}});
+    if (*required) out.diagnostics.push_back(Error::make(Errc::incomplete,"Index rebuild required").id("am.catalog.rebuild_required").with_severity(Severity::warning));
     return out;
   });
 }
