@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #endif
 
@@ -354,6 +355,205 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
   catch (const std::exception& e) { try { cleanup(); } catch (...) { } return io(e.what()); }
   catch (...) { try { cleanup(); } catch (...) { } return io("Unknown commit callback exception"); }
 }
+namespace {
+bool lifecycle_kind(std::string_view kind) { return kind == "trash" || kind == "restore" || kind == "purge"; }
+struct LifecyclePaths {
+  Path source, target, asset;
+};
+LifecyclePaths lifecycle_paths(const Path& library, std::string_view asset, std::string_view kind) {
+  const auto id = Uuid::parse_canonical(asset);
+  if (!id || id->version() != 4 || (id->bytes()[8] & 0xc0) != 0x80 || !lifecycle_kind(kind))
+    fail(Errc::invalid_argument, "am.commit.invalid_path", "Invalid lifecycle operation or AssetID");
+  const auto root = normalized(library);
+  const auto active = root / "assets" / std::string(asset.substr(34)) / (std::string(asset) + ".zip");
+  const auto trash = root / "trash" / (std::string(asset) + ".zip");
+  LifecyclePaths out{kind == "trash" ? active : trash, kind == "restore" ? active : trash, active};
+  for (const auto& p : {out.source, out.target})
+    if (!inside(root, p) || !component_equal(normalized(p.parent_path()), p.parent_path()))
+      fail(Errc::invalid_argument, "am.commit.invalid_path", "Lifecycle parent is outside the library or is a symlink");
+  return out;
+}
+bool location_exists(const Path& p) {
+  return std::filesystem::symlink_status(paths::native(p)).type() != std::filesystem::file_type::not_found;
+}
+db::BaseSnapshot location_stat(const Path& p) {
+  if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(paths::native(p))))
+    fail(Errc::not_found, "am.repo.asset_not_found", "Source is not a regular asset file");
+  db::BaseSnapshot out;
+#ifdef _WIN32
+  WIN32_FILE_ATTRIBUTE_DATA data{};
+  if (!GetFileAttributesExW(paths::native(p).c_str(), GetFileExInfoStandard, &data)) throw io("Lifecycle stat failed");
+  out.size = (U64(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+  const auto ticks = (U64(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+  out.mtime_ns = (static_cast<std::int64_t>(ticks) - 116444736000000000LL) * 100;
+#else
+  struct stat data{};
+  if (::lstat(p.c_str(), &data) || !S_ISREG(data.st_mode)) throw io("Lifecycle stat failed");
+  out.size = static_cast<U64>(data.st_size);
+  out.mtime_ns = static_cast<std::int64_t>(data.st_mtim.tv_sec) * 1000000000LL + data.st_mtim.tv_nsec;
+#endif
+  return out;
+}
+void lifecycle_conflict(std::string_view kind) {
+  fail(Errc::conflict, kind == "trash" ? "am.repo.trash_conflict" : "am.repo.restore_conflict",
+       "Destination already exists");
+}
+void move_no_replace(const LifecyclePaths& p, std::string_view kind, bool& changed) {
+#ifdef _WIN32
+  if (!MoveFileExW(paths::native(p.source).c_str(), paths::native(p.target).c_str(), MOVEFILE_WRITE_THROUGH)) {
+    const auto code = GetLastError();
+    if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) lifecycle_conflict(kind);
+    throw io("MoveFileExW without replacement error=" + std::to_string(code));
+  }
+  changed = true;
+#else
+#ifdef SYS_renameat2
+  if (::syscall(SYS_renameat2, AT_FDCWD, p.source.c_str(), AT_FDCWD, p.target.c_str(), 1U) == 0) {
+    changed = true;
+    return;
+  }
+  if (errno == EEXIST) lifecycle_conflict(kind);
+  if (errno != ENOSYS && errno != EINVAL && errno != EOPNOTSUPP) throw io("renameat2 without replacement failed");
+#endif
+  if (::link(p.source.c_str(), p.target.c_str())) {
+    if (errno == EEXIST) lifecycle_conflict(kind);
+    throw io("link without replacement failed");
+  }
+  changed = true;  // A crash before unlink is the explicit two-files recovery case.
+  if (::unlink(p.source.c_str())) throw io("unlink after link failed");
+#endif
+}
+RecoveryItem recover_lifecycle(const Path& root, db::PendingOperation row, db::CommitJournal& journal,
+                               const RecoveryOptions& options) {
+  RecoveryItem item;
+  item.op_id = row.op_id;
+  item.path = row.target_path;
+  const auto p = lifecycle_paths(root, row.asset_id, row.kind);
+  auto normalized_target = row.target_path.lexically_normal();
+  normalized_target.make_preferred();
+  auto source_path = row.temp_path.lexically_normal();
+  source_path.make_preferred();
+  if (!component_equal(normalized_target, p.target) ||
+      (row.kind == "purge" ? !row.temp_path.empty() : !component_equal(source_path, p.source)))
+    fail(Errc::invalid_argument, "am.commit.invalid_path",
+         "Lifecycle journal paths do not match AssetID and operation");
+  if (row.state == db::CommitState::failed) {
+    item.outcome = RecoveryOutcome::failed;
+    item.detail = "Lifecycle operation requires manual examination";
+    return item;
+  }
+  const bool source = location_exists(p.source);
+  const bool target = location_exists(p.target);
+  if ((row.kind == "purge" && target) || (row.kind != "purge" && source && !target)) {
+    take(journal.remove(row.op_id));
+    item.outcome = RecoveryOutcome::rolled_back;
+    return item;
+  }
+  if (row.kind != "purge" && source == target) {
+    take(journal.advance(row.op_id, row.state, db::CommitState::failed));
+    item.outcome = RecoveryOutcome::failed;
+    item.error = base_changed();
+    item.detail = source ? "Both lifecycle paths exist; files left untouched"
+                         : "Neither lifecycle path exists; files left untouched";
+    return item;
+  }
+  if (row.state == db::CommitState::prepared) {
+    take(journal.advance(row.op_id, row.state, db::CommitState::committed));
+    row.state = db::CommitState::committed;
+  }
+  // Notifications may repeat after a crash. Index updates/removals are idempotent.
+  if (options.on_committed) take(options.on_committed(row));
+  if (row.state == db::CommitState::committed)
+    take(journal.advance(row.op_id, row.state, db::CommitState::indexed));
+  else if (row.state != db::CommitState::indexed)
+    throw io("Unexpected lifecycle journal state");
+  take(journal.remove(row.op_id));
+  item.outcome = RecoveryOutcome::completed;
+  return item;
+}
+}  // namespace
+Result<std::string> commit_lifecycle(const LifecycleRequest& r) {
+  auto journal = r.journal;
+  db::PendingOperation row;
+  bool inserted = false, changed = false;
+  std::optional<AssetLock> lock;
+  auto cleanup = [&] {
+    if (inserted && !changed) take(journal->remove(row.op_id));
+  };
+  try {
+    lock.emplace(take(AssetLock::acquire(r.library_root, r.asset_id, r.lock_timeout)));
+    hit(r.hooks, FaultPoint::after_lock);
+    const auto p = lifecycle_paths(r.library_root, r.asset_id, r.kind);
+    if (!location_exists(p.source)) {
+      if (r.kind == "purge" && location_exists(p.asset))
+        fail(Errc::not_found, "am.repo.not_in_trash", "Asset is outside trash");
+      fail(Errc::not_found, "am.repo.asset_not_found", "Source asset does not exist");
+    }
+    if (r.kind != "purge" && location_exists(p.target)) lifecycle_conflict(r.kind);
+    row.op_id = Uuid::v4().to_string();
+    row.asset_id = r.asset_id;
+    row.kind = r.kind;
+    row.target_path = p.target;
+    if (r.kind != "purge") row.temp_path = p.source;
+    row.base = location_stat(p.source);
+    if (r.kind == "restore") std::filesystem::create_directories(paths::native(p.target.parent_path()));
+    journal = journal_for(normalized(r.library_root), journal);
+    take(journal->insert(row));
+    inserted = true;
+    hit(r.hooks, FaultPoint::after_prepared);
+    hit(r.hooks, FaultPoint::before_replace);
+    db::BaseSnapshot actual;
+    try {
+      actual = location_stat(p.source);
+    } catch (const Error& e) {
+      if (e.code == Errc::not_found) throw base_changed();
+      throw;
+    }
+    if (actual.size != row.base->size || actual.mtime_ns != row.base->mtime_ns) throw base_changed();
+    if (r.kind == "purge") {
+#ifdef _WIN32
+      if (!DeleteFileW(paths::native(p.source).c_str())) throw io("DeleteFileW from trash failed");
+#else
+      if (::unlink(p.source.c_str())) throw io("unlink from trash failed");
+#endif
+      changed = true;
+    } else
+      move_no_replace(p, r.kind, changed);
+    hit(r.hooks, FaultPoint::after_replace);
+    take(journal->advance(row.op_id, db::CommitState::prepared, db::CommitState::committed));
+    row.state = db::CommitState::committed;
+    hit(r.hooks, FaultPoint::after_committed_journal);
+    if (r.on_committed) take(r.on_committed(row));
+    take(journal->advance(row.op_id, db::CommitState::committed, db::CommitState::indexed));
+    hit(r.hooks, FaultPoint::after_indexed_journal);
+    take(journal->remove(row.op_id));
+    return row.op_id;
+  } catch (const Error& e) {
+    try {
+      cleanup();
+    } catch (...) {
+    }
+    return e;
+  } catch (const std::bad_alloc&) {
+    try {
+      cleanup();
+    } catch (...) {
+    }
+    return oom();
+  } catch (const std::exception& e) {
+    try {
+      cleanup();
+    } catch (...) {
+    }
+    return io(e.what());
+  } catch (...) {
+    try {
+      cleanup();
+    } catch (...) {
+    }
+    return io("Unknown lifecycle callback exception");
+  }
+}
 Result<std::vector<RecoveryItem>> recover(const Path& root, const RecoveryOptions& options) {
   try {
     auto journal = journal_for(normalized(root), options.journal); auto rows = take(journal->list()); std::vector<RecoveryItem> report;
@@ -363,6 +563,10 @@ Result<std::vector<RecoveryItem>> recover(const Path& root, const RecoveryOption
         auto locked = AssetLock::acquire(root, row.asset_id, options.lock_timeout);
         if (!locked) { if (locked.error().code == Errc::locked) { item.outcome = RecoveryOutcome::skipped_locked; report.push_back(std::move(item)); continue; } throw locked.error(); }
         auto lock = std::move(locked).value();
+        if (lifecycle_kind(row.kind)) {
+          report.push_back(recover_lifecycle(root, row, *journal, options));
+          continue;
+        }
         const auto paths = layout(root, row.target_path, row.asset_id, row.op_id);
         if (!component_equal(normalized(row.temp_path), paths.temp)) fail(Errc::invalid_argument, "am.commit.invalid_path", "Journal temporary path does not match operation");
         auto rollback = [&] { if (file_exists(paths.temp)) remove_file(paths.temp); take(journal->remove(row.op_id)); item.outcome = RecoveryOutcome::rolled_back; };

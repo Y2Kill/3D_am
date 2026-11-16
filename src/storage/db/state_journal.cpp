@@ -50,7 +50,9 @@ std::string column(sqlite3_stmt* p, int i) {
   return bytes ? std::string(reinterpret_cast<const char*>(bytes), static_cast<std::size_t>(size)) : std::string{};
 }
 CommitState decode_state(std::string_view s) {
-  for (const auto v : {CommitState::prepared, CommitState::verified, CommitState::committed, CommitState::indexed}) if (state_name(v) == s) return v;
+  for (const auto v : {CommitState::prepared, CommitState::verified, CommitState::committed, CommitState::indexed,
+                       CommitState::failed})
+    if (state_name(v) == s) return v;
   throw error("Unsupported pending operation state", Errc::unsupported);
 }
 constexpr const char* select_rows = "SELECT p.op_id,p.asset_id,p.kind,p.target_path,p.temp_path,p.base_rev,p.base_size,p.base_mtime_ns,p.base_manifest_sha256,p.state,p.expected_rev,p.started_at,p.updated_at,p.job_id,n.new_size,n.new_file_sha256,n.new_manifest_sha256 FROM pending_ops p LEFT JOIN pending_ops_new n ON p.op_id=n.op_id";
@@ -71,7 +73,19 @@ PendingOperation decode(sqlite3_stmt* p) {
 }
 }
 std::string_view state_name(CommitState s) noexcept {
-  switch (s) { case CommitState::prepared: return "prepared"; case CommitState::verified: return "verified"; case CommitState::committed: return "committed"; case CommitState::indexed: return "indexed"; } return "";
+  switch (s) {
+    case CommitState::prepared:
+      return "prepared";
+    case CommitState::verified:
+      return "verified";
+    case CommitState::committed:
+      return "committed";
+    case CommitState::indexed:
+      return "indexed";
+    case CommitState::failed:
+      return "failed";
+  }
+  return "";
 }
 struct StateJournal::Impl {
   sqlite3* db = nullptr;
@@ -108,7 +122,11 @@ Result<void> StateJournal::insert(const PendingOperation& r) {
     if (r.state != CommitState::prepared || r.verified) return error("Insert must be prepared without evidence", Errc::conflict);
     Transaction tx(impl_->db);
     Statement s(impl_->db, "INSERT INTO pending_ops(op_id,asset_id,kind,target_path,temp_path,backup_path,base_rev,base_size,base_mtime_ns,base_manifest_sha256,state,expected_rev,started_at,updated_at,job_id) VALUES(?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?)");
-    s.text(1, r.op_id); s.text(2, r.asset_id); s.text(3, r.kind); s.text(4, utf8(r.target_path)); s.text(5, utf8(r.temp_path));
+    s.text(1, r.op_id);
+    s.text(2, r.asset_id);
+    s.text(3, r.kind);
+    s.text(4, utf8(r.target_path));
+    if (r.kind != "purge") s.text(5, utf8(r.temp_path));
     if (r.base) { if (r.base->revision) s.number(6, *r.base->revision); s.number(7, r.base->size); s.number(8, r.base->mtime_ns); s.text(9, r.base->manifest_sha256); }
     s.text(10, "prepared"); if (r.expected_rev) s.number(11, *r.expected_rev); const auto now = utc_now();
     s.text(12, r.started_at.empty() ? now : r.started_at); s.text(13, r.updated_at.empty() ? now : r.updated_at); if (r.job_id) s.text(14, *r.job_id);
@@ -117,16 +135,39 @@ Result<void> StateJournal::insert(const PendingOperation& r) {
 }
 Result<void> StateJournal::advance(std::string_view id, CommitState from, CommitState to, const std::optional<NewFileEvidence>& evidence) {
   return impl_->run<void>([&]() -> Result<void> {
-    if (!((from == CommitState::prepared && to == CommitState::verified) || (from == CommitState::verified && to == CommitState::committed) || (from == CommitState::committed && to == CommitState::indexed)) ||
-        ((to == CommitState::verified) != evidence.has_value())) return error("Invalid journal transition/evidence", Errc::conflict);
-    Transaction tx(impl_->db); Statement s(impl_->db, "UPDATE pending_ops SET state=?,updated_at=? WHERE op_id=? AND state=?");
-    s.text(1, state_name(to)); s.text(2, utc_now()); s.text(3, id); s.text(4, state_name(from)); s.done();
+    Transaction tx(impl_->db);
+    bool location_transition = false;
+    if ((from == CommitState::prepared && to == CommitState::committed) || to == CommitState::failed) {
+      Statement kind(impl_->db, "SELECT kind FROM pending_ops WHERE op_id=? AND state=?");
+      kind.text(1, id);
+      kind.text(2, state_name(from));
+      if (sqlite3_step(kind.value) == SQLITE_ROW) {
+        const auto name = column(kind.value, 0);
+        location_transition = (name == "trash" || name == "restore" || name == "purge") && from != CommitState::failed;
+      }
+    }
+    if (!((from == CommitState::prepared && to == CommitState::verified) ||
+          (from == CommitState::verified && to == CommitState::committed) ||
+          (from == CommitState::committed && to == CommitState::indexed) || location_transition) ||
+        ((to == CommitState::verified) != evidence.has_value()))
+      return error("Invalid journal transition/evidence", Errc::conflict);
+    Statement s(impl_->db, "UPDATE pending_ops SET state=?,updated_at=? WHERE op_id=? AND state=?");
+    s.text(1, state_name(to));
+    s.text(2, utc_now());
+    s.text(3, id);
+    s.text(4, state_name(from));
+    s.done();
     if (sqlite3_changes(impl_->db) != 1) return error("Journal compare-and-advance conflict", Errc::conflict);
     if (evidence) {
       Statement n(impl_->db, "INSERT INTO pending_ops_new(op_id,new_size,new_file_sha256,new_manifest_sha256) VALUES(?,?,?,?)");
-      n.text(1, id); n.number(2, evidence->size); n.text(3, evidence->file_sha256); n.text(4, evidence->manifest_sha256); n.done();
+      n.text(1, id);
+      n.number(2, evidence->size);
+      n.text(3, evidence->file_sha256);
+      n.text(4, evidence->manifest_sha256);
+      n.done();
     }
-    tx.finish(); return {};
+    tx.finish();
+    return {};
   });
 }
 Result<void> StateJournal::remove(std::string_view id) {

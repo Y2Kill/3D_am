@@ -1,6 +1,7 @@
 #include "am/storage/db/index_store.hpp"
 
 #include <exception>
+#include <charconv>
 #include <variant>
 
 namespace am::db {
@@ -205,6 +206,33 @@ Result<std::vector<IndexState>> IndexStore::sync_state() const {
       rows.push_back({take(statement.text(0)), take(statement.text(1)), take(statement.text(2)),
                       take(statement.text(3)), statement.integer(4)});
     return rows;
+  });
+}
+Result<TrashSummary> summarize_trash(const std::vector<std::string>& sizes) {
+  return guard<TrashSummary>([&]() -> Result<TrashSummary> {
+    std::uint64_t total = 0;
+    bool overflow = false;
+    for (const auto& s : sizes) {
+      std::uint64_t n = 0;
+      const auto parsed = std::from_chars(s.data(), s.data() + s.size(), n);
+      if (s.empty() || (s.size() > 1 && s.front() == '0') || parsed.ec != std::errc{} ||
+          parsed.ptr != s.data() + s.size())
+        return Error::make(Errc::corrupt_data, "Invalid indexed ZIP size").id("am.db.index");
+      if (n > UINT64_MAX - total)
+        overflow = true;
+      else if (!overflow)
+        total += n;
+    }
+    return TrashSummary{static_cast<std::uint64_t>(sizes.size()),
+                        overflow ? std::nullopt : std::optional(std::to_string(total))};
+  });
+}
+Result<TrashSummary> IndexStore::trash_summary() const {
+  return guard<TrashSummary>([&]() -> Result<TrashSummary> {
+    auto s = take(db_.prepare("SELECT zip_size FROM assets WHERE in_trash=1 ORDER BY asset_id"));
+    std::vector<std::string> sizes;
+    while (take(s.step()) == Step::row) sizes.push_back(take(s.text(0)));
+    return summarize_trash(sizes);
   });
 }
 Result<bool> IndexStore::rebuild_required() const {

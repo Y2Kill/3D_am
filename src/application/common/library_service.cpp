@@ -2,6 +2,9 @@
 #include "am/storage/library/library.hpp"
 #include "am/services/catalog/indexer.hpp"
 #include "am/foundation/version.hpp"
+#include "am/foundation/paths.hpp"
+#include "am/foundation/uuid.hpp"
+#include <algorithm>
 namespace am::application {
 namespace {
 template<class F> Result<AssetOutcome> guard(F&& f) {
@@ -47,7 +50,26 @@ Result<AssetOutcome> inspect_library(const std::filesystem::path& root) {
       auto count = store.count();
       if (!count) return count.error();
       j["indexed_assets"] = *count;
-    } else j["indexed_assets"] = nullptr;
+      auto required = store.rebuild_required();
+      if (!required) return required.error();
+      if (*required) {
+        j["trash"] = nullptr;
+        out.diagnostics.push_back(Error::make(Errc::incomplete, "Index rebuild required")
+                                      .id("am.catalog.rebuild_required")
+                                      .with_severity(Severity::warning));
+      } else {
+        auto summary = store.trash_summary();
+        if (!summary) return summary.error();
+        j["trash"] = {{"assets", summary->assets}, {"bytes", summary->bytes ? Json(*summary->bytes) : Json(nullptr)}};
+        if (!summary->bytes)
+          out.diagnostics.push_back(Error::make(Errc::resource_exhausted, "Trash size exceeds uint64")
+                                        .id("am.catalog.trash_size_overflow")
+                                        .with_severity(Severity::warning));
+      }
+    } else {
+      j["indexed_assets"] = nullptr;
+      j["trash"] = nullptr;
+    }
     for (const auto& [kind, name] : {std::pair{library::DatabaseKind::index, "index"}, {library::DatabaseKind::userdata, "userdata"}, {library::DatabaseKind::state, "state"}}) {
       const auto& info = lib.database_info(kind);
       std::string state;
@@ -121,5 +143,68 @@ Result<AssetOutcome> sync_library(const std::filesystem::path& root, bool full) 
                                     .with_severity(Severity::warning));
     return out;
   });
+}
+namespace {
+Result<AssetOutcome> lifecycle_library(const std::filesystem::path& root, const std::vector<std::string>& requested,
+                                       std::string_view kind, bool all, bool confirmed) {
+  return guard([&]() -> Result<AssetOutcome> {
+    if ((kind == "purge" && !confirmed) || (all && !requested.empty()) || (!all && requested.empty())) {
+      auto error =
+          Error::make(Errc::invalid_argument, "Lifecycle arguments are incomplete or inconsistent")
+              .id(kind == "purge" && !confirmed ? "am.cli.purge_confirmation_required" : "am.repo.invalid_operation");
+      AssetOutcome out;
+      out.status = ExitCode::usage;
+      out.diagnostics.push_back(error);
+      auto json = error_json(error);
+      if (!json) return json.error();
+      out.value["error"] = *json;
+      return out;
+    }
+    library::OpenOptions options;
+    options.application_version = kAppVersion;
+    auto opened = catalog::Catalog::open(root, options);
+    if (!opened) return opened.error();
+    auto ids = requested;
+    if (all) {
+      for (const auto& entry : std::filesystem::directory_iterator(paths::native(root / "trash"))) {
+        if (entry.is_symlink() || !entry.is_regular_file() || entry.path().extension() != ".zip") continue;
+        const auto raw = entry.path().stem().u8string();
+        const std::string id(raw.begin(), raw.end());
+        const auto uuid = Uuid::parse_canonical(id);
+        if (uuid && uuid->version() == 4 && (uuid->bytes()[8] & 0xc0) == 0x80) ids.push_back(id);
+      }
+      std::sort(ids.begin(), ids.end());
+    }
+    AssetOutcome out;
+    out.value["results"] = Json::array();
+    for (const auto& id : ids) {
+      repository::AssetRef ref{opened->library().config().library_id, id};
+      auto result = kind == "trash"     ? opened->trash(ref)
+                    : kind == "restore" ? opened->restore(ref)
+                                        : opened->purge(ref);
+      Json row{{"asset_id", id}, {"status", result ? "done" : "failed"}, {"error", nullptr}};
+      if (!result) {
+        auto encoded = error_json(result.error());
+        if (!encoded) return encoded.error();
+        row["error"] = *encoded;
+        out.diagnostics.push_back(result.error());
+        out.status = ExitCode::operation_failed;
+      } else
+        for (auto& warning : result->warnings) out.diagnostics.push_back(std::move(warning));
+      out.value["results"].push_back(std::move(row));
+    }
+    return out;
+  });
+}
+}  // namespace
+Result<AssetOutcome> trash_library(const std::filesystem::path& root, const std::vector<std::string>& ids) {
+  return lifecycle_library(root, ids, "trash", false, true);
+}
+Result<AssetOutcome> restore_library(const std::filesystem::path& root, const std::vector<std::string>& ids) {
+  return lifecycle_library(root, ids, "restore", false, true);
+}
+Result<AssetOutcome> purge_library(const std::filesystem::path& root, const std::vector<std::string>& ids, bool all,
+                                   bool confirmed) {
+  return lifecycle_library(root, ids, "purge", all, confirmed);
 }
 }  // namespace am::application

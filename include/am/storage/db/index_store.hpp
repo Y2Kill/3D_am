@@ -64,6 +64,11 @@ struct IndexMark {
   std::string asset_id, health, health_detail;
   std::optional<IndexStat> stat;
 };
+struct TrashSummary {
+  std::uint64_t assets = 0;
+  std::optional<std::string> bytes;
+};
+Result<TrashSummary> summarize_trash(const std::vector<std::string>& zip_sizes);
 class IndexStore;
 class IndexTransaction {
  public:
@@ -98,6 +103,7 @@ class IndexStore {
   Result<void> mark(const IndexMark&);
   Result<std::vector<IndexSummary>> list(bool include_trash = false) const;
   Result<std::int64_t> count() const;
+  Result<TrashSummary> trash_summary() const;
   Result<bool> rebuild_required() const;
   Result<void> mark_rebuild_required();
 

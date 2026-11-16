@@ -147,6 +147,10 @@ struct ChangeResult {
   std::vector<manifest::OpaqueKey> removed_opaque_owners;
   std::optional<commit::CommitResult> commit;
 };
+struct LifecycleResult {
+  AssetRef ref;
+  std::string op_id;
+};
 class AssetRepository {
  public:
   static Result<AssetRepository> open(const std::filesystem::path&, RepositoryOptions);
@@ -157,6 +161,9 @@ class AssetRepository {
   // Optional output receives the actual verification report even on failure.
   Result<ChangeResult> create(const CreateRequest&, VerificationReport* failure_report = nullptr);
   Result<ChangeResult> change(const ChangeRequest&, VerificationReport* failure_report = nullptr);
+  Result<LifecycleResult> trash(const AssetRef&);
+  Result<LifecycleResult> restore(const AssetRef&);
+  Result<LifecycleResult> purge(const AssetRef&);
   Result<VerificationReport> verify(const AssetRef&, VerifyLevel = VerifyLevel::full, const std::vector<std::string>& file_ids = {}) const;
   Result<std::vector<commit::RecoveryItem>> recover();
  private:
@@ -164,5 +171,6 @@ class AssetRepository {
   std::shared_ptr<Impl> impl_;
   explicit AssetRepository(std::shared_ptr<Impl>);
   Result<AssetSnapshot> load(const AssetRef&, bool require_v2) const;
+  Result<LifecycleResult> lifecycle(const AssetRef&, std::string_view kind);
 };
 }  // namespace am::repository

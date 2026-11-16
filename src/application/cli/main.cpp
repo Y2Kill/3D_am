@@ -149,6 +149,27 @@ int main(int argc, char** argv) {
   presentation(library_sync);
   library_sync->callback(
       [&] { render("library sync", app::sync_library(path(library_sync_root), library_sync_full)); });
+  std::string trash_root, restore_root, purge_root;
+  std::vector<std::string> trash_ids, restore_ids, purge_ids;
+  bool purge_all = false, purge_yes = false;
+  auto* trash = library->add_subcommand("trash", "Move assets to the library trash without changing ZIP bytes");
+  trash->add_option("dir", trash_root)->required();
+  trash->add_option("asset-id", trash_ids)->required()->expected(-1);
+  presentation(trash);
+  trash->callback([&] { render("library trash", app::trash_library(path(trash_root), trash_ids)); });
+  auto* restore = library->add_subcommand("restore", "Restore assets from the library trash");
+  restore->add_option("dir", restore_root)->required();
+  restore->add_option("asset-id", restore_ids)->required()->expected(-1);
+  presentation(restore);
+  restore->callback([&] { render("library restore", app::restore_library(path(restore_root), restore_ids)); });
+  auto* purge = library->add_subcommand("purge", "Permanently delete assets from trash; requires --yes");
+  purge->add_option("dir", purge_root)->required();
+  auto* purge_selection = purge->add_option("asset-id", purge_ids)->expected(-1);
+  purge->add_flag("--all", purge_all, "Select every correctly named regular ZIP in trash")->excludes(purge_selection);
+  purge->add_flag("--yes", purge_yes, "Confirm permanent deletion");
+  presentation(purge);
+  purge->callback(
+      [&] { render("library purge", app::purge_library(path(purge_root), purge_ids, purge_all, purge_yes)); });
   auto* asset = cli.add_subcommand("asset", "Create, inspect, check, and extract a standalone asset ZIP");
   asset->require_subcommand(1);
   std::vector<std::string> inputs;

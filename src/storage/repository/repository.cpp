@@ -401,8 +401,52 @@ Result<VerificationReport> AssetRepository::verify(const AssetRef& ref, VerifyLe
   });
 }
 Result<std::vector<commit::RecoveryItem>> AssetRepository::recover() {
-  return guard<std::vector<commit::RecoveryItem>>([&]() -> Result<std::vector<commit::RecoveryItem>> { impl_->require_write(); commit::RecoveryOptions options; options.journal = impl_->journal; options.lock_timeout = impl_->options.lock_timeout; options.zip_limits = impl_->options.zip_limits; return commit::recover(impl_->root,options); });
+  return guard<std::vector<commit::RecoveryItem>>([&]() -> Result<std::vector<commit::RecoveryItem>> {
+    impl_->require_write();
+    commit::RecoveryOptions options;
+    options.journal = impl_->journal;
+    options.lock_timeout = impl_->options.lock_timeout;
+    options.zip_limits = impl_->options.zip_limits;
+    options.on_committed = [&](const db::PendingOperation& row) -> Result<void> {
+      if ((row.kind == "trash" || row.kind == "restore" || row.kind == "purge") && impl_->options.on_indexed) {
+        try {
+          impl_->options.on_indexed({{impl_->options.library_id, row.asset_id}, 0, row.op_id, row.kind});
+        } catch (...) {
+        }
+      }
+      return {};
+    };
+    return commit::recover(impl_->root, options);
+  });
 }
+Result<LifecycleResult> AssetRepository::lifecycle(const AssetRef& ref, std::string_view kind) {
+  return guard<LifecycleResult>([&]() -> Result<LifecycleResult> {
+    impl_->require_write();
+    (void)impl_->path(ref);
+    Impl::Lease lease(*impl_, ref);
+    commit::LifecycleRequest request;
+    request.library_root = impl_->root;
+    request.asset_id = ref.asset_id;
+    request.kind = kind;
+    request.journal = impl_->journal;
+    request.lock_timeout = impl_->options.lock_timeout;
+    request.hooks = impl_->options.test_hooks.commit;
+    request.on_committed = [&](const db::PendingOperation& row) -> Result<void> {
+      // Location events carry no manifest revision: even unreadable ZIPs can move.
+      if (impl_->options.on_indexed) {
+        try {
+          impl_->options.on_indexed({ref, 0, row.op_id, row.kind});
+        } catch (...) {
+        }
+      }
+      return {};
+    };
+    return LifecycleResult{ref, take(commit::commit_lifecycle(request))};
+  });
+}
+Result<LifecycleResult> AssetRepository::trash(const AssetRef& ref) { return lifecycle(ref, "trash"); }
+Result<LifecycleResult> AssetRepository::restore(const AssetRef& ref) { return lifecycle(ref, "restore"); }
+Result<LifecycleResult> AssetRepository::purge(const AssetRef& ref) { return lifecycle(ref, "purge"); }
 
 namespace {
 struct NewSource {

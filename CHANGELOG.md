@@ -6,6 +6,8 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Library `trash`, `restore`, and confirmed `purge` commands, with recovery
+  journaling, per-asset results, preserved ZIP bytes on moves, and indexed trash size.
 - Incremental `am library sync` with stat-based change detection, retained missing
   and unreadable asset summaries, atomic updates, and `--full` rereading.
 - Transactional library index rebuilds with `am library rebuild`, read-only

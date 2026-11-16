@@ -44,7 +44,7 @@ class Indexer {
                                      const repository::VerificationReport&);
   Result<RebuildReport> rebuild();
   Result<SyncReport> sync(const SyncOptions& = {});
-  Result<void> update(const repository::AssetRef&);
+  Result<void> update(const repository::AssetRef&, bool in_trash = false);
   Result<void> remove(std::string_view asset_id);
   Result<std::vector<db::IndexSummary>> list(bool include_trash = false) const;
   Result<bool> rebuild_required() const;
@@ -62,6 +62,10 @@ struct CatalogChange {
   repository::ChangeResult change;
   std::vector<Error> warnings;
 };
+struct CatalogLifecycle {
+  repository::LifecycleResult change;
+  std::vector<Error> warnings;
+};
 // Owns the write owner and its observer. The stable Impl also keeps callbacks
 // valid when Catalog is moved. Index failures never undo a committed ZIP.
 class Catalog {
@@ -77,6 +81,9 @@ class Catalog {
   Result<SyncReport> sync(const SyncOptions& = {});
   Result<CatalogChange> create(const repository::CreateRequest&);
   Result<CatalogChange> change(const repository::ChangeRequest&);
+  Result<CatalogLifecycle> trash(const repository::AssetRef&);
+  Result<CatalogLifecycle> restore(const repository::AssetRef&);
+  Result<CatalogLifecycle> purge(const repository::AssetRef&);
 
  private:
   struct Impl;

@@ -1,6 +1,6 @@
 # T-019. Корзина библиотеки: `trash`, `restore`, `purge` (M2, P0.5 — часть 4)
 
-**Статус:** ready · **Веха:** M2 · **Основание:** ТЗ v1.8 §10.8 п. 1–6 [СОГЛАСОВАНО]; ADR-0007 (раскладка `trash/<uuid>.zip`); ADR-0025 п. 1, 4, 6, 7 (единственный писатель, блокировки ассета, жизненный цикл, события после `indexed`); ADR-0006 (журнал `pending_ops`); `schemas/sql/state.sql` (`kind`: `trash | restore | purge`); T-017/T-018 (индекс, `in_trash`, `sync`)
+**Статус:** review · **Веха:** M2 · **Основание:** ТЗ v1.8 §10.8 п. 1–6 [СОГЛАСОВАНО]; ADR-0007 (раскладка `trash/<uuid>.zip`); ADR-0025 п. 1, 4, 6, 7 (единственный писатель, блокировки ассета, жизненный цикл, события после `indexed`); ADR-0006 (журнал `pending_ops`); `schemas/sql/state.sql` (`kind`: `trash | restore | purge`); T-017/T-018 (индекс, `in_trash`, `sync`)
 
 ## Цель
 
@@ -104,4 +104,119 @@
 
 ## Отчёт исполнителя
 
-_(заполняет исполнитель)_
+### Ветка и коммиты
+
+- Ветка `codex/T-019`, создана от `main` (`eea91e5`).
+- `b54bf83` — операции корзины, журнал и восстановление, наблюдатель индекса, размер корзины, CLI, тесты и пользовательская документация.
+- `Document T-019 execution and validation` — отдельный коммит этого отчёта и перевода в `review`. Слияние, push и переписывание истории не выполнялись.
+
+### Выполнение критериев
+
+1. Все четыре обязательные сборки и прогона — PASS: min 86/86, Windows 357/357 в каждой конфигурации, WSL 337 PASS + 17 SKIP из 354, 0 FAIL. `arch_check`, `schema_check`, `sql_check` — PASS во всех четырёх прогонах; `req_report` — 0 неверных ID. Фактические итоги ниже.
+2. Добавлены 13 тестов `Trash.*`, процессный `cli_library_trash`, реальные JSON-примеры ниже. Сценарии задачи покрыты так:
+
+| № | Тесты и результат |
+|---|---|
+| 1 | `Trash.MoveRestorePreserveBytesRevisionAndOpenSnapshotAndUpdateIndex`: SHA-256 ZIP прежний, revision/history прежние, открытый снимок продолжает читать и проверять потоки, index/list отражают новое место. |
+| 2 | `Trash.PurgeRequiresTrashRemovesIndexAndMissingIsPerAsset`: purge из assets запрещён, удаление из trash убирает файл и все строки индекса; повторный вызов сообщает not_found. |
+| 3 | `Trash.ConflictsNeverReplaceEitherFile`: занятое назначение не меняется вместе с источником; проверена и гонка появления назначения непосредственно перед системным переименованием. |
+| 4 | `Trash.ExternalStatChangeAbortsEachOperationAndRemovesPreparedRow`: для всех трёх операций изменение размера/mtime и внешнее удаление источника дают conflict; подготовленная строка убирается. |
+| 5 | `Trash.CorruptManifestDoesNotPreventLifecycleAndUsesRebuildPolicy`: корректный ZIP с неразбираемым manifest.json проходит trash/restore/trash/purge без изменения байтов. Наблюдатель сообщает ошибку чтения и rebuild_required; rebuild сообщает unreadable по новому пути без выдумывания обязательных полей индекса. |
+| 6 | `Trash.FaultsBeforeAndAfterActionRecoverEveryOperation`: три операции × пять точек отказа (after_prepared, before_replace, after_replace, after_committed_journal, after_indexed_journal). `Trash.RecoveryExplicitPresenceMatrixAndFailedRowsRemain`: trash/restore × четыре сочетания наличия файлов × prepared/committed/indexed. `Trash.PurgeRecoveryRollsBackExistingFileAndCompletesAbsentFile`: оба исхода purge × три состояния; temp_path действительно SQL NULL. Неоднозначные строки получают failed и сохраняются, файлы не меняются. |
+| 7 | `Trash.ObserverFailureKeepsMoveAndRebuildRepairsIndex`: перенос остаётся совершённым, предупреждение и rebuild_required сохранены; rebuild исправляет in_trash, последующий sync видит unchanged. В тестах восстановления события также исправляют индекс по новому месту и удаляют строку после purge. |
+| 8 | `Trash.UserdataMainFileSha256RemainsIdentical`: в userdata добавлена пользовательская строка; SHA-256 основного файла до открытия и после закрытия Catalog одинаков. Проверка CLI также сравнивает SHA-256. |
+| 9 | `Trash.ChangeInTrashFailsWithoutTouchingBytes`: change возвращает not_found, ZIP в корзине побайтно прежний. |
+| 10 | `Trash.SummaryAndInfoUseExactUint64AndReportOverflowOrRequiredRebuild`: точный размер двух ZIP; UINT64_MAX и переполнение на функции суммы без реальных больших файлов; bytes=null и предупреждение при переполнении, trash=null при rebuild_required. SQL SUM не используется. |
+| 11 | `cli_library_trash`: два ассета → trash → info → restore → отказ purge без --yes → purge --all --yes; посторонний ZIP и каталог сохранены; смешанный список даёт failed/done и код 4; текстовый restore проверен. Linux проверяет отсутствие подтверждения и запрет производственной записи, затем явный SKIP по прежней политике NTFS. |
+
+Дополнительно `Trash.AssetLockReadOnlyAndInvalidReferencesRefuseBeforeMutation` проверяет блокировку ассета, read-only и чужой LibraryID. Все новые юнит-тесты имеют `RecordProperty("req", ...)`; CLI помечен `req:K-3`.
+
+3. Изменены только разрешённые файлы. Схемы, формат, golden ZIP, кодек, валидаторы, Library и существующие тесты create/change не менялись. Исходный пользовательский `3D_am_open_questions_e2472e9.zip` не тронут и не включён в коммиты.
+
+### Реализация и выбранный способ переименования
+
+- **Windows:** `MoveFileExW` с `MOVEFILE_WRITE_THROUGH`, без `MOVEFILE_REPLACE_EXISTING`. Гонка назначения также возвращает conflict, без замены.
+- **Linux:** `renameat2(RENAME_NOREPLACE)` через syscall. При ENOSYS/EINVAL/EOPNOTSUPP — `link` без замены, затем `unlink` источника. Если сбой оставил обе ссылки, восстановление помечает операцию failed и сохраняет оба файла для разбора.
+- Общий `AssetLock` удерживается через действие, переходы журнала и очистку. В pending_ops сохраняются исходные размер и mtime; непосредственно перед действием они проверяются ещё раз. Смена/исчезновение источника после подготовки — conflict.
+- Новые операции проходят prepared → committed → indexed; verified и доказательство нового ZIP остаются обязательными для прежних create/update. Failed-переход разрешён только новым видам. `state.sql` не менялся: текстовый state уже допускает нужное значение.
+- `AssetRepository` посылает события trash/restore/purge без разбора манифеста. `LifecycleResult` содержит ref/op_id; ревизия файла не изменяется и не выдумывается из повреждённого манифеста. В location-событиях существующее поле revision равно 0 (неизвестно); Indexer использует ref и новое местоположение, а не это поле. После сбоя уведомление может повторяться; обновление/удаление индекса идемпотентно.
+- `Catalog::trash/restore/purge` используют тот же mutex, что create/change и наблюдатель. Ошибка индекса не отменяет файловое действие и даёт прежнее предупреждение/rebuild_required.
+- Операции не обращаются к соединению userdata. Существующий `Library::open(read_write)` не менялся: служебное R/W-соединение владельца библиотеки остаётся, как принято в В-1 T-017, на метод проверки которого ссылается T-019. Сохранность данных подтверждена побайтовым SHA-256 основного файла после корректного закрытия базы; логическая замена сравнения не понадобилась.
+- `info.trash` вычисляется по zip_size из индекса в C++ uint64; переполнение даёт null и `am.catalog.trash_size_overflow`. При rebuild_required новое поле trash целиком null с предупреждением. Автоочистки и удаления связей userdata нет.
+
+### Команды и фактические результаты
+
+`tools\build_min.cmd --ci` — PASS:
+
+```text
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) = 23.00 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+```
+
+Целевые прогоны:
+
+- `tools\build_cli.cmd --offline --ci -R StateJournal`: 3/3 PASS (прежние проверки переходов и evidence).
+- `tools\build_cli.cmd --offline --ci -R Trash`: `100% tests passed, 0 tests failed out of 14`, 62.13 sec. Помимо 13 новых тестов regex включает прежний Sync-тест с TrashPath в имени.
+- `tools\build_cli.cmd --offline --ci -R cli_library`: 7/7 PASS, 25.08 sec.
+- WSL `tools/build_linux.sh cli --ci -R Trash`: `100% tests passed, 0 tests failed out of 14`, 70.33 sec, без SKIP; `req_report: 45 IDs, 354 tests, 48 without req, 0 invalid IDs`.
+
+Полный `tools\build_cli.cmd --ci` — PASS, 357/357, без SKIP:
+
+```text
+100% tests passed, 0 tests failed out of 357
+Total Test time (real) = 922.19 sec
+req_report: 45 IDs, 357 tests, 49 without req, 0 invalid IDs
+```
+
+В том числе PASS: `CommitProtocol.KillEveryCheckpointThreeTimesAndRecover`, `AssetRepository.KillEveryRepositoryCheckpointThreeTimesWithOpenSnapshot`, все `Trash.*`, `cli_library_trash`, `arch_check`, `schema_check`, `sql_check`.
+
+Полный `tools/build_linux.sh cli --ci` в WSL — PASS: 354 теста, 337 PASS, 17 SKIP, 0 FAIL:
+
+```text
+100% tests passed, 0 tests failed out of 354
+Total Test time (real) = 1051.88 sec
+req_report: 45 IDs, 354 tests, 48 without req, 0 invalid IDs
+```
+
+Все 13 новых `Trash.*` прошли без SKIP. Пропуски: 16 прежних ограничений платформы/производственной записи/точности mtime и новый `cli_library_trash` по той же политике записи только на проверенном фиксированном NTFS. Отказ без --yes и производственный read-only в этом CLI-сценарии проверяются до явного SKIP. `arch_check`, `schema_check`, `sql_check` — PASS.
+
+Полный `tools\build_cli.cmd --offline --ci` — PASS, 357/357, без SKIP:
+
+```text
+100% tests passed, 0 tests failed out of 357
+Total Test time (real) = 894.31 sec
+req_report: 45 IDs, 357 tests, 49 without req, 0 invalid IDs
+```
+
+Число тестов не уменьшилось относительно принятой T-018: min 86 → 86, Windows 343 → 357, Linux 340 → 354. Все обязательные проверки завершены; прежние kill-тесты на Windows прошли в обеих конфигурациях без правок.
+
+Логи, JUnit, req_report и машинные итоги сохранены в `.cache/t019-*`. Предупреждения GCC в прежних строках за пределами изменений не исправлялись, чтобы не менять create/change и посторонний код; новые участки без предупреждений.
+
+### Примеры реального JSON
+
+Синтетическая библиотека `.cache/t019-cli-example/library`, два ZIP. `am library trash <dir> <id-1> <id-2> --json`:
+
+```json
+{"results":[{"asset_id":"cb35846c-3c6d-4c29-9419-058fb325e583","status":"done","error":null},{"asset_id":"030a0768-ea8b-4258-81f6-80c07c409e75","status":"done","error":null}],"command":"library trash"}
+```
+
+`am library info <dir> --json` — фрагмент фактического результата:
+
+```json
+{"trash":{"assets":2,"bytes":"1749"},"indexed_assets":2}
+```
+
+`am library purge <dir> --all --yes --json`:
+
+```json
+{"results":[{"asset_id":"030a0768-ea8b-4258-81f6-80c07c409e75","status":"done","error":null},{"asset_id":"cb35846c-3c6d-4c29-9419-058fb325e583","status":"done","error":null}],"command":"library purge"}
+```
+
+Полные JSON сохранены в `.cache/t019-cli-example/{trash,info,purge}.json`.
+
+### Отклонения и вопросы
+
+- Архитектурных отклонений нет. Зависимости не добавлялись, материалы владельца и реальная коллекция не использовались.
+- Промежуточные тесты обнаружили сравнение эквивалентных путей Windows с разными разделителями в журнале. Сравнение исправлено лексической нормализацией; матрица повторно прошла на обеих платформах. Проверкой внешнего исчезновения источника закреплён conflict после подготовки.
+- **Вопросы:** нет.

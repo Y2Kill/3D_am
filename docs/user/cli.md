@@ -18,6 +18,9 @@ am library info <dir> [--json] [--verbose]
 am library rebuild <dir> [--json] [--verbose]
 am library sync <dir> [--full] [--json] [--verbose]
 am library list <dir> [--json] [--trash] [--verbose]
+am library trash <dir> <asset-id>... [--json] [--verbose]
+am library restore <dir> <asset-id>... [--json] [--verbose]
+am library purge <dir> (<asset-id>... | --all) --yes [--json] [--verbose]
 ```
 
 ### Library initialization and status
@@ -100,6 +103,31 @@ an unknown or overflowing total is null. `--trash` includes trash rows. A stale
 index produces a warning and still returns 0. Use `sync` for disk changes or
 `rebuild` when required. Automatic filesystem watching is planned separately. `info` also reports
 `indexed_assets` (null if the index is unavailable).
+
+### Library trash
+
+`trash` moves an asset from `assets/` to `trash/<asset-id>.zip`; `restore` moves it
+back. These operations keep ZIP bytes, revision, and asset history unchanged.
+They also work on damaged ZIPs. An occupied destination is a conflict: neither
+file is replaced. An asset in trash must be restored before its contents can be
+edited. `list` hides trash by default; `list --trash` includes it.
+
+`purge` permanently deletes files from trash. It requires `--yes`; omission
+returns exit code 2 with `am.cli.purge_confirmation_required`. `--all` selects
+regular, correctly named UUIDv4 ZIPs in trash. Other files, directories, and
+symbolic links are left in place. There is no automatic cleanup.
+
+Each requested ID is processed separately. JSON contains `results`, with
+`asset_id`, `status` (`done` or `failed`), and `error` (null on success). Exit code
+0 means all selected operations completed; 4 means at least one failed. A failed
+ID does not stop processing the remaining IDs. Index-update warnings leave the
+file operation committed and set `rebuild_required`; run `rebuild` to repair the
+index. The operations use the per-asset lock and recovery journal.
+
+`info` includes `trash: {assets, bytes}` from the current index. `bytes` is an
+exact decimal string, or null with a warning if the sum exceeds uint64. `trash`
+is null when the index requires rebuilding or is unavailable. User data and
+collection membership are retained by all three operations, including purge.
 
 ### Create
 

@@ -70,6 +70,17 @@ struct CommitResult {
   double file_hash_seconds = 0;
 };
 Result<CommitResult> commit_zip(const CommitRequest& request);
+// Location operations never parse or rewrite ZIP bytes. They use stat identity
+// and the same asset lock and journal as ZIP commits.
+struct LifecycleRequest {
+  std::filesystem::path library_root;
+  std::string asset_id, kind;
+  std::shared_ptr<db::CommitJournal> journal;
+  std::chrono::milliseconds lock_timeout{};
+  std::function<Result<void>(const db::PendingOperation&)> on_committed;
+  FaultHooks hooks;
+};
+Result<std::string> commit_lifecycle(const LifecycleRequest&);
 Result<db::BaseSnapshot> inspect_zip(const std::filesystem::path& path, asset_zip::ReadBudget& budget,
                                    const asset_zip::ZipLimits& limits = {});
 enum class RecoveryOutcome { rolled_back, completed, already_committed, cleaned, skipped_locked, skipped, failed };
