@@ -16,6 +16,7 @@ am asset extract <zip> -d <dir> [--file <FileID>]... [--manifest] [--json] [--ve
 am library init <dir> [--name <text>] [--json] [--verbose]
 am library info <dir> [--json] [--verbose]
 am library rebuild <dir> [--json] [--verbose]
+am library sync <dir> [--full] [--json] [--verbose]
 am library list <dir> [--json] [--trash] [--verbose]
 ```
 
@@ -62,18 +63,42 @@ with other names are ignored. These files are never removed. A successful
 rebuild returns 0 even when files were skipped; lock, read-only, I/O, and
 transaction failures return 4.
 
-Only manifests that pass V1 and V2 are indexed. A newer minor format whose schema
-cannot be validated is reported as skipped. If V3 fails, the index retains the
+Manifests that pass V1 and V2 are indexed. A newer minor format that passes V1
+and reports V2 as `not_applicable_newer_minor` is indexed with `health: warn`
+and detail `am.catalog.newer_minor`, provided its required summary fields have
+the expected types. If V3 fails, the index retains the
 asset summary, original manifest, and title-search entry with `health: corrupt`.
 It omits child rows and filename search entries, and leaves `primary_preview`
-null, because references and identifiers may be inconsistent.
+null, because references and identifiers may be inconsistent. Newer minor
+summaries use the same restrictions.
+
+`am library sync <dir> --json` checks the same candidate paths in one transaction.
+It reads added ZIPs and ZIPs whose relative path, size, or modification time has
+changed. Unchanged ZIPs are not opened. Moving a ZIP between assets and trash
+updates its indexed path. Duplicate IDs use the first relative path in sorted
+order (`assets/` before `trash/`); other copies are reported as skipped.
+
+Missing ZIPs retain their summary, child rows, and search entries with
+`health: missing`. A ZIP that becomes unreadable retains its last indexed data
+with `health: corrupt` or `unsupported` and the new size and modification time.
+Restored missing ZIPs are always read again. If either `assets/` or `trash/`
+cannot be enumerated, sync fails without marking any asset missing.
+
+Use `--full` to read every candidate. This detects changes that preserve both
+size and modification time. Sync refuses with exit code 4 when
+`rebuild_required` is set; run `rebuild` first. Sync never clears that flag.
+The result contains numeric `added`, `updated`, `unchanged`, newly marked
+`missing` asset IDs, `skipped` (path, reason, message ID), `ignored`,
+`duration_ms`, and boolean `full`. A committed sync returns 0 even with skipped
+or missing files; text output warns about them. Lock, read-only, I/O, and
+transaction failures return 4.
 
 `am library list <dir> --json` reads the current index and returns `assets` plus
 `rebuild_required`. Rows contain `asset_id`, `revision`, `title`, `health`,
 `file_count`, `content_bytes`, and `in_trash`. Byte counts are decimal strings;
 an unknown or overflowing total is null. `--trash` includes trash rows. A stale
-index produces a warning and still returns 0. Use `rebuild` to refresh it;
-filesystem change detection is planned separately. `info` also reports
+index produces a warning and still returns 0. Use `sync` for disk changes or
+`rebuild` when required. Automatic filesystem watching is planned separately. `info` also reports
 `indexed_assets` (null if the index is unavailable).
 
 ### Create

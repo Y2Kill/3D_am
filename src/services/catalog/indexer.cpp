@@ -152,6 +152,91 @@ struct Raw {
 void writable(const library::Library& l) {
   if (l.mode() != library::Mode::read_write) throw error(Errc::read_only, "am.catalog.read_only");
 }
+struct Candidate {
+  fs::path path;
+  std::string relative, id;
+  bool trash = false;
+};
+struct Candidates {
+  std::vector<Candidate> winners;
+  std::vector<std::string> ignored;
+  std::vector<SkippedAsset> duplicates;
+};
+Candidates list_candidates(const fs::path& root) {
+  Candidates out;
+  std::vector<Candidate> all;
+  auto consider = [&](const fs::directory_entry& entry, const std::string& relative, bool trash) {
+    const auto filename = utf8(entry.path().filename());
+    const auto stem = filename.ends_with(".zip") ? filename.substr(0, filename.size() - 4) : std::string{};
+    const auto id = Uuid::parse_canonical(stem);
+    if (!entry.is_regular_file() || entry.is_symlink() || !id || id->version() != 4 ||
+        (id->bytes()[8] & 0xc0) != 0x80) {
+      out.ignored.push_back(relative);
+      return;
+    }
+    all.push_back({entry.path(), relative, stem, trash});
+  };
+  // Enumerate both complete roots before a write transaction. Failure is not
+  // an empty library and must never cause missing marks.
+  for (const auto& shard : fs::directory_iterator(paths::native(root / "assets"))) {
+    const auto relative = "assets/" + utf8(shard.path().filename());
+    if (!shard.is_directory() || shard.is_symlink()) {
+      out.ignored.push_back(relative);
+      continue;
+    }
+    for (const auto& entry : fs::directory_iterator(shard.path()))
+      consider(entry, relative + "/" + utf8(entry.path().filename()), false);
+  }
+  for (const auto& entry : fs::directory_iterator(paths::native(root / "trash")))
+    consider(entry, "trash/" + utf8(entry.path().filename()), true);
+  std::sort(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.relative < b.relative; });
+  std::set<std::string> seen;
+  for (auto& candidate : all) {
+    if (seen.insert(candidate.id).second)
+      out.winners.push_back(std::move(candidate));
+    else
+      out.duplicates.push_back({candidate.relative, "duplicate_id", "am.catalog.duplicate_id"});
+  }
+  std::sort(out.ignored.begin(), out.ignored.end());
+  return out;
+}
+Location stat_location(const Candidate& c) {
+  return {c.relative, std::to_string(fs::file_size(paths::native(c.path))), modified_time(c.path), c.trash};
+}
+SkippedAsset skipped(const std::string& path, const Error& e) {
+  const auto reason = e.message_id == "am.catalog.id_mismatch" ? "id_mismatch"
+                      : e.code == Errc::unsupported            ? "unsupported"
+                                                               : "unreadable";
+  return {path, reason, e.message_id};
+}
+void sort_skipped(std::vector<SkippedAsset>& skipped) {
+  std::sort(skipped.begin(), skipped.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+}
+bool validated(const repository::VerificationReport& report) {
+  switch (report.v1) {
+    case repository::CheckStatus::passed:
+      break;
+    case repository::CheckStatus::not_performed:
+    case repository::CheckStatus::partial:
+    case repository::CheckStatus::failed:
+    case repository::CheckStatus::not_applicable_newer_minor:
+      return false;
+    default:
+      return false;
+  }
+  switch (report.v2) {
+    case repository::CheckStatus::passed:
+      return true;
+    case repository::CheckStatus::not_applicable_newer_minor:
+      return report.format_support == repository::FormatSupport::newer_minor;
+    case repository::CheckStatus::not_performed:
+    case repository::CheckStatus::partial:
+    case repository::CheckStatus::failed:
+      return false;
+    default:
+      return false;
+  }
+}
 }  // namespace
 std::string tag_search_key(std::string_view s) {
   // O-08, identity until decided.
@@ -160,13 +245,20 @@ std::string tag_search_key(std::string_view s) {
 Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std::string_view original,
                                      const Location& location, const repository::VerificationReport& report) {
   return guard<db::IndexRecord>([&]() -> Result<db::IndexRecord> {
-    if (report.v1 != repository::CheckStatus::passed || report.v2 != repository::CheckStatus::passed) {
+    if (!validated(report)) {
       if (report.error) return *report.error;
       return error(Errc::unsupported, "am.catalog.schema_unverified", "Indexing requires passed V1 and V2");
     }
+    const bool newer = report.format_support == repository::FormatSupport::newer_minor;
     const auto& j = doc.known();
     const auto& asset = member(j, "asset");
     const auto& m = member(asset, "metadata");
+    const auto& version = member(member(j, "format"), "version");
+    if (newer && (!member(asset, "revision").is_number_integer() || !member(version, "major").is_number_integer() ||
+                  !member(version, "minor").is_number_integer() || !member(j, "files").is_array() ||
+                  integer(version, "major", -1) < 0 || integer(version, "minor", -1) < 0))
+      return error(Errc::corrupt_data, "am.catalog.manifest_invalid",
+                   "Invalid required field type in newer minor manifest");
     db::IndexRecord r;
     auto& a = r.summary;
     a.asset_id = string(asset, "id");
@@ -181,14 +273,14 @@ Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std:
     r.zip_mtime_ns = location.zip_mtime_ns;
     r.manifest_json = original;
     r.manifest_sha256 = sha256(original);
-    const auto& version = member(member(j, "format"), "version");
     r.format_major = integer(version, "major");
     r.format_minor = integer(version, "minor");
     a.title = text(m, "title");
     r.description = text(m, "description");
     a.health = "ok";
     if (report.error) r.health_detail = report.error->message_id;
-    const bool corrupt = report.v3 == repository::CheckStatus::failed;
+    const bool corrupt = !newer && report.v3 == repository::CheckStatus::failed;
+    const bool no_children = corrupt || newer;
     if (corrupt)
       a.health = "corrupt";
     else if (report.format_support == repository::FormatSupport::newer_minor ||
@@ -199,7 +291,11 @@ Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std:
       if (!r.health_detail) r.health_detail = f.message_id;
       if (a.health == "ok") a.health = "warn";
     }
-    if (!corrupt && report.error && report.error->code == Errc::unsupported) a.health = "unsupported";
+    if (!no_children && report.error && report.error->code == Errc::unsupported) a.health = "unsupported";
+    if (newer) {
+      a.health = "warn";
+      r.health_detail = "am.catalog.newer_minor";
+    }
     std::set<std::string> formats, names, tags, categories;
     std::uint64_t total = 0;
     bool overflow = false, unknown = false;
@@ -220,7 +316,7 @@ Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std:
         overflow = true;
       else if (!overflow)
         total += n;
-      if (corrupt) continue;
+      if (no_children) continue;
       db::IndexedFile file{string(f, "id"),     string(f, "storage_path"), basename(string(f, "storage_path")), *size,
                            string(f, "sha256"), string(f, "origin_kind"),  text(member(f, "type"), "id")};
       if (file.id.empty() || file.storage_path.empty()) continue;
@@ -229,18 +325,19 @@ Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std:
     if (!overflow && !unknown) a.content_bytes = std::to_string(total);
     if (overflow) {
       if (a.health == "ok") a.health = "warn";
-      r.health_detail = r.health_detail ? *r.health_detail + ";content_bytes_overflow" : "content_bytes_overflow";
+      if (!newer)
+        r.health_detail = r.health_detail ? *r.health_detail + ";content_bytes_overflow" : "content_bytes_overflow";
     }
     r.formats = Json(std::vector<std::string>(formats.begin(), formats.end())).dump();
     const auto& previews = member(j, "previews");
-    if (!corrupt) {
+    if (!no_children) {
       for (const auto& p : array(previews, "items"))
         if (string(p, "id") == string(previews, "primary_id")) r.primary_preview = text(p, "file_id");
     }
     for (const auto& input : array(j, "inputs")) {
       const auto completeness = string(input, "completeness");
       if (completeness == "incomplete" || completeness == "unknown") r.incomplete = true;
-      if (corrupt) continue;
+      if (no_children) continue;
       const auto input_id = string(input, "id");
       for (const auto& e : array(input, "entries")) {
         db::IndexedEntry entry{string(e, "id"),
@@ -275,16 +372,16 @@ Result<db::IndexRecord> Indexer::map(const manifest::ManifestDocument& doc, std:
       }
     }
     for (const auto& s : array(member(j, "origin"), "sources")) {
-      if (!corrupt) r.sources.push_back({string(s, "id"), string(s, "kind"), text(s, "name"), text(s, "url")});
+      if (!no_children) r.sources.push_back({string(s, "id"), string(s, "kind"), text(s, "name"), text(s, "url")});
       append(r.sources_text, string(s, "name"));
     }
     for (const auto& author : array(m, "authors")) append(r.authors_text, string(author, "name"));
     for (const auto& tag : array(m, "tags"))
       if (tag.is_string()) tags.insert(tag_search_key(tag.get_ref<const std::string&>()));
     for (const auto& t : tags) append(r.tags_text, t);
-    // V-2: the violated graph is not projected into keyed child tables. The
-    // original manifest and safe summary/FTS fields remain available.
-    if (corrupt) return r;
+    // Violated or unverified graphs are not projected into keyed children.
+    // The original manifest and safe summary/FTS fields remain available.
+    if (no_children) return r;
     for (const auto& category : array(m, "categories"))
       if (member(category, "path").is_array()) categories.insert(member(category, "path").dump());
     r.tags.assign(tags.begin(), tags.end());
@@ -335,13 +432,17 @@ Indexer::Indexer(fs::path root, library::Library& library, IndexerHooks hooks) n
       hooks_(std::move(hooks)) {}
 Result<db::IndexRecord> Indexer::read(const fs::path& path, const std::string& relative, bool trash) const {
   return guard<db::IndexRecord>([&]() -> Result<db::IndexRecord> {
+    if (hooks_.before_read) take(hooks_.before_read(path));
     repository::ContainerVerifyOptions options;
     options.streams = false;
     repository::ContainerContents contents;
     const auto report = take(repository::verify_container(path, options, &contents));
     if (!contents.document) return report.error.value_or(error(Errc::corrupt_data, "am.catalog.manifest_invalid"));
     Location location{relative, std::to_string(fs::file_size(paths::native(path))), modified_time(path), trash};
-    return map(*contents.document, contents.manifest_text, location, report);
+    auto record = take(map(*contents.document, contents.manifest_text, location, report));
+    if (record.summary.asset_id != utf8(path.stem()))
+      return error(Errc::corrupt_data, "am.catalog.id_mismatch", relative);
+    return record;
   });
 }
 Result<RebuildReport> Indexer::rebuild() {
@@ -349,53 +450,16 @@ Result<RebuildReport> Indexer::rebuild() {
     writable(library_);
     const auto start = std::chrono::steady_clock::now();
     RebuildReport out;
-    struct Candidate {
-      fs::path path;
-      std::string relative, id;
-      bool trash;
-    };
-    std::vector<Candidate> candidates;
-    auto consider = [&](const fs::directory_entry& e, const std::string& relative, bool trash) {
-      const auto filename = utf8(e.path().filename());
-      const auto stem = filename.ends_with(".zip") ? filename.substr(0, filename.size() - 4) : std::string{};
-      const auto id = Uuid::parse_canonical(stem);
-      if (!e.is_regular_file() || e.is_symlink() || !id || id->version() != 4 || (id->bytes()[8] & 0xc0) != 0x80) {
-        out.ignored.push_back(relative);
-        return;
-      }
-      candidates.push_back({e.path(), relative, stem, trash});
-    };
-    const auto assets = paths::native(root_ / "assets"), trash = paths::native(root_ / "trash");
-    for (const auto& shard : fs::directory_iterator(assets)) {
-      const auto relative = "assets/" + utf8(shard.path().filename());
-      if (!shard.is_directory() || shard.is_symlink()) {
-        out.ignored.push_back(relative);
-        continue;
-      }
-      for (const auto& e : fs::directory_iterator(shard.path()))
-        consider(e, relative + "/" + utf8(e.path().filename()), false);
-    }
-    for (const auto& e : fs::directory_iterator(trash)) consider(e, "trash/" + utf8(e.path().filename()), true);
-    std::sort(candidates.begin(), candidates.end(),
-              [](const auto& a, const auto& b) { return a.relative < b.relative; });
-    std::sort(out.ignored.begin(), out.ignored.end());
+    auto candidates = list_candidates(root_);
+    out.ignored = std::move(candidates.ignored);
+    out.skipped = std::move(candidates.duplicates);
     auto transaction = take(store_.begin_rebuild());
-    std::set<std::string> seen;
-    for (const auto& c : candidates) {
+    for (const auto& c : candidates.winners) {
       auto record = read(c.path, c.relative, c.trash);
       if (!record) {
         if (record.error().code == Errc::resource_exhausted || record.error().code == Errc::internal)
           throw record.error();
-        out.skipped.push_back({c.relative, record.error().code == Errc::unsupported ? "unsupported" : "unreadable",
-                               record.error().message_id});
-        continue;
-      }
-      if (record->summary.asset_id != c.id) {
-        out.skipped.push_back({c.relative, "id_mismatch", "am.catalog.id_mismatch"});
-        continue;
-      }
-      if (!seen.insert(c.id).second) {
-        out.skipped.push_back({c.relative, "duplicate_id", "am.catalog.duplicate_id"});
+        out.skipped.push_back(skipped(c.relative, record.error()));
         continue;
       }
       take(transaction.insert(*record));
@@ -403,6 +467,69 @@ Result<RebuildReport> Indexer::rebuild() {
       if (hooks_.after_rebuild_insert) take(hooks_.after_rebuild_insert(out.indexed));
     }
     take(transaction.commit(utc()));
+    sort_skipped(out.skipped);
+    out.duration_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+    return out;
+  });
+}
+Result<SyncReport> Indexer::sync(const SyncOptions& options) {
+  return guard<SyncReport>([&]() -> Result<SyncReport> {
+    writable(library_);
+    if (take(store_.rebuild_required())) return error(Errc::incomplete, "am.catalog.rebuild_required");
+    const auto start = std::chrono::steady_clock::now();
+    auto candidates = list_candidates(root_);
+    SyncReport out;
+    out.full = options.full;
+    out.ignored = std::move(candidates.ignored);
+    out.skipped = std::move(candidates.duplicates);
+    auto transaction = take(store_.begin_sync());
+    std::map<std::string, db::IndexState> previous;
+    for (auto& row : take(store_.sync_state())) previous.emplace(row.asset_id, std::move(row));
+    std::set<std::string> present;
+    std::size_t changes = 0;
+    auto changed = [&]() {
+      ++changes;
+      if (hooks_.after_sync_change) take(hooks_.after_sync_change(changes));
+    };
+    for (const auto& c : candidates.winners) {
+      present.insert(c.id);
+      const auto observed = stat_location(c);
+      const auto old = previous.find(c.id);
+      if (!options.full && old != previous.end() && old->second.health != "missing" &&
+          old->second.rel_path == observed.rel_path && old->second.zip_size == observed.zip_size &&
+          old->second.zip_mtime_ns == observed.zip_mtime_ns) {
+        ++out.unchanged;
+        continue;
+      }
+      auto record = read(c.path, c.relative, c.trash);
+      if (!record) {
+        if (record.error().code == Errc::resource_exhausted || record.error().code == Errc::internal)
+          throw record.error();
+        out.skipped.push_back(skipped(c.relative, record.error()));
+        if (old != previous.end()) {
+          take(transaction.mark({c.id, record.error().code == Errc::unsupported ? "unsupported" : "corrupt",
+                                 record.error().message_id, db::IndexStat{observed.zip_size, observed.zip_mtime_ns}}));
+          ++out.updated;
+          changed();
+        }
+        continue;
+      }
+      take(transaction.insert(*record));
+      if (old == previous.end())
+        ++out.added;
+      else
+        ++out.updated;
+      changed();
+    }
+    for (const auto& [id, row] : previous)
+      if (!present.contains(id) && row.health != "missing") {
+        take(transaction.mark({id, "missing", "am.catalog.asset_missing", std::nullopt}));
+        out.missing.push_back(id);
+        changed();
+      }
+    take(transaction.commit());
+    sort_skipped(out.skipped);
     out.duration_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
     return out;
@@ -483,6 +610,12 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
 }
 library::Library& Catalog::library() noexcept { return *impl_->library; }
 Indexer& Catalog::indexer() noexcept { return *impl_->indexer; }
+Result<SyncReport> Catalog::sync(const SyncOptions& options) {
+  return guard<SyncReport>([&]() -> Result<SyncReport> {
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->indexer->sync(options);
+  });
+}
 Result<CatalogChange> Catalog::create(const repository::CreateRequest& request) {
   return guard<CatalogChange>([&]() -> Result<CatalogChange> {
     const std::lock_guard lock(impl_->mutex);

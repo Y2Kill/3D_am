@@ -6,6 +6,8 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Incremental `am library sync` with stat-based change detection, retained missing
+  and unreadable asset summaries, atomic updates, and `--full` rereading.
 - Transactional library index rebuilds with `am library rebuild`, read-only
   `am library list`, indexed-asset counts in `info`, and post-commit indexing.
 - Exact byte-size totals and preserved custom-field JSON in the disposable index.
@@ -31,6 +33,8 @@ All notable user-visible changes are recorded here.
 
 ### Changed
 
+- Newer minor asset formats are indexed as warning summaries without projecting
+  unverified child records or filename search entries.
 - Duplicate manifest IDs no longer fail V2 schema validation; V3 reports them,
   while rewriting documents with ambiguous opaque owners remains blocked.
 - Asset checks reject ZIP entries marked as symbolic links or other non-regular files.

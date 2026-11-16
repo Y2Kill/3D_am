@@ -92,4 +92,34 @@ Result<AssetOutcome> list_library(const std::filesystem::path& root, bool trash)
     return out;
   });
 }
+Result<AssetOutcome> sync_library(const std::filesystem::path& root, bool full) {
+  return guard([&]() -> Result<AssetOutcome> {
+    library::OpenOptions options;
+    options.application_version = kAppVersion;
+    auto opened = catalog::Catalog::open(root, options);
+    if (!opened) return opened.error();
+    auto report = opened->sync({full});
+    if (!report) return report.error();
+    AssetOutcome out;
+    out.value = {{"added", report->added},
+                 {"updated", report->updated},
+                 {"unchanged", report->unchanged},
+                 {"missing", report->missing},
+                 {"skipped", Json::array()},
+                 {"ignored", report->ignored},
+                 {"duration_ms", report->duration_ms},
+                 {"full", report->full}};
+    for (const auto& s : report->skipped) {
+      out.value["skipped"].push_back({{"path", s.path}, {"reason", s.reason}, {"message_id", s.message_id}});
+      out.diagnostics.push_back(Error::make(Errc::corrupt_data, "Asset could not be indexed", s.path)
+                                    .id(s.message_id)
+                                    .with_severity(Severity::warning));
+    }
+    for (const auto& id : report->missing)
+      out.diagnostics.push_back(Error::make(Errc::not_found, "Indexed asset is missing", id)
+                                    .id("am.catalog.asset_missing")
+                                    .with_severity(Severity::warning));
+    return out;
+  });
+}
 }  // namespace am::application
