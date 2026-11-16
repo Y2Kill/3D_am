@@ -151,6 +151,25 @@ struct LifecycleResult {
   AssetRef ref;
   std::string op_id;
 };
+struct ImportReadyRequest {
+  std::filesystem::path source;
+  std::optional<std::string> replace_expected;
+};
+struct ImportAssetInfo {
+  std::string zip_size;
+  std::optional<std::uint64_t> revision, format_minor;
+  std::optional<std::string> manifest_sha256;
+};
+struct ImportReadyResult {
+  std::string classification = "unknown", status = "failed";
+  AssetRef ref;
+  std::optional<std::string> op_id;
+  std::optional<ImportAssetInfo> incoming, current;
+  std::optional<bool> zip_bytes_identical;
+  std::optional<VerificationReport> verification;
+  std::optional<Error> error;
+  std::vector<Error> warnings;
+};
 class AssetRepository {
  public:
   static Result<AssetRepository> open(const std::filesystem::path&, RepositoryOptions);
@@ -164,6 +183,8 @@ class AssetRepository {
   Result<LifecycleResult> trash(const AssetRef&);
   Result<LifecycleResult> restore(const AssetRef&);
   Result<LifecycleResult> purge(const AssetRef&);
+  // Like create/change, optional failure details retain the verification report.
+  Result<ImportReadyResult> import_ready(const ImportReadyRequest&, ImportReadyResult* failure_details = nullptr);
   Result<VerificationReport> verify(const AssetRef&, VerifyLevel = VerifyLevel::full, const std::vector<std::string>& file_ids = {}) const;
   Result<std::vector<commit::RecoveryItem>> recover();
  private:

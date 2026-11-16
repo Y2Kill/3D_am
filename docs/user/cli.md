@@ -21,6 +21,8 @@ am library list <dir> [--json] [--trash] [--verbose]
 am library trash <dir> <asset-id>... [--json] [--verbose]
 am library restore <dir> <asset-id>... [--json] [--verbose]
 am library purge <dir> (<asset-id>... | --all) --yes [--json] [--verbose]
+am library add-ready <dir> <zip>... [--json] [--verbose]
+am library add-ready <dir> <zip> --replace <current-manifest-sha256> [--json] [--verbose]
 ```
 
 ### Library initialization and status
@@ -128,6 +130,40 @@ index. The operations use the per-asset lock and recovery journal.
 exact decimal string, or null with a warning if the sum exceeds uint64. `trash`
 is null when the index requires rebuilding or is unavailable. User data and
 collection membership are retained by all three operations, including purge.
+
+### Import a ready asset
+
+`add-ready` imports complete asset ZIPs into a library without changing their
+bytes, ID, revision, history, or metadata. Only explicit file paths are accepted;
+directories, recursive scans, and wildcard expansion are not supported. Sources
+must be outside the destination library. Use `sync` for files already placed there.
+
+The temporary copy receives full V1-V4 verification before publication. Every
+registered stream must pass SHA-256 verification. A newer minor version can be
+stored unchanged with a warning; unsupported major versions and damaged assets
+are refused. Ordinary ZIPs and non-ZIP files are reported as `not_own`; use
+`asset create` to create an asset from source material.
+
+Sources are processed in order. A repeated manifest is skipped as `identical`,
+with `zip_bytes_identical` showing whether the complete ZIP bytes also match.
+Different revisions and different manifests at the same revision are conflicts;
+a higher revision never replaces an asset automatically. A matching ID in trash
+requires restore or purge first. An unreadable current asset also requires an
+explicit trash/purge operation before it can be replaced.
+
+To replace a readable conflict, pass its returned `current.manifest_sha256` to
+`--replace` with exactly one source. The current manifest must still match that
+hash. An explicitly selected older revision produces a warning. User data is
+retained. Independent copies with new IDs are planned separately.
+
+JSON contains `results` with `source`, `asset_id`, `classification`, `status`,
+`incoming`, `current`, `zip_bytes_identical`, and `error`. Status is `imported`,
+`identical`, `replaced`, `conflict`, or `failed`. Metadata includes revision,
+manifest SHA-256, ZIP size as a decimal string, and minor version; an unreadable
+current asset reports only ZIP size. Verification details appear with `--verbose`
+and on verification failure. Exit code 0 means all sources were imported,
+replaced, or identical; 4 means at least one conflict/failure; 2 means invalid
+command arguments. Index warnings leave the ZIP registered and require a rebuild.
 
 ### Create
 

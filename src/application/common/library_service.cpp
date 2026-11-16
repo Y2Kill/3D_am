@@ -207,4 +207,69 @@ Result<AssetOutcome> purge_library(const std::filesystem::path& root, const std:
                                    bool confirmed) {
   return lifecycle_library(root, ids, "purge", all, confirmed);
 }
+Result<AssetOutcome> add_ready_library(const std::filesystem::path& root,
+                                       const std::vector<std::filesystem::path>& sources,
+                                       const std::optional<std::string>& replace, bool verbose) {
+  return guard([&]() -> Result<AssetOutcome> {
+    if (sources.empty() || (replace && sources.size() != 1)) {
+      auto error = Error::make(Errc::invalid_argument, "Replacement requires exactly one explicit source")
+                       .id("am.repo.invalid_operation");
+      AssetOutcome out;
+      out.status = ExitCode::usage;
+      out.diagnostics.push_back(error);
+      auto encoded = error_json(error);
+      if (!encoded) return encoded.error();
+      out.value["error"] = *encoded;
+      return out;
+    }
+    library::OpenOptions options;
+    options.application_version = kAppVersion;
+    auto opened = catalog::Catalog::open(root, options);
+    if (!opened) return opened.error();
+    auto info_json = [](const std::optional<repository::ImportAssetInfo>& info) -> Json {
+      if (!info) return nullptr;
+      Json out{{"zip_size", info->zip_size}};
+      if (info->revision) out["revision"] = *info->revision;
+      if (info->manifest_sha256) out["manifest_sha256"] = *info->manifest_sha256;
+      if (info->format_minor) out["format_minor"] = *info->format_minor;
+      return out;
+    };
+    AssetOutcome out;
+    out.value["results"] = Json::array();
+    for (const auto& source : sources) {
+      repository::ImportReadyResult detail;
+      auto imported = opened->import_ready({source, replace}, &detail);
+      if (imported)
+        detail = std::move(*imported);
+      else {
+        detail.status = "failed";
+        detail.error = imported.error();
+      }
+      const auto raw = source.generic_u8string();
+      Json row{{"source", std::string(raw.begin(), raw.end())},
+               {"asset_id", detail.ref.asset_id.empty() ? Json(nullptr) : Json(detail.ref.asset_id)},
+               {"classification", detail.classification},
+               {"status", detail.status},
+               {"incoming", info_json(detail.incoming)},
+               {"current", info_json(detail.current)},
+               {"zip_bytes_identical", detail.zip_bytes_identical ? Json(*detail.zip_bytes_identical) : Json(nullptr)},
+               {"error", nullptr}};
+      if (detail.error) {
+        auto encoded = error_json(*detail.error);
+        if (!encoded) return encoded.error();
+        row["error"] = *encoded;
+        out.diagnostics.push_back(*detail.error);
+      }
+      if (detail.verification && (verbose || detail.status == "failed")) {
+        auto report = repository::verification_json(*detail.verification);
+        if (!report) return report.error();
+        row["verification"] = *report;
+      }
+      for (auto& warning : detail.warnings) out.diagnostics.push_back(std::move(warning));
+      if (detail.status == "failed" || detail.status == "conflict") out.status = ExitCode::operation_failed;
+      out.value["results"].push_back(std::move(row));
+    }
+    return out;
+  });
+}
 }  // namespace am::application

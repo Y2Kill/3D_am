@@ -42,6 +42,14 @@ class AssetLock {
   std::unique_ptr<Impl> impl_;
   explicit AssetLock(std::unique_ptr<Impl> impl);
 };
+struct CopyFileSource {
+  std::filesystem::path path;
+  std::optional<db::BaseSnapshot> expected;
+  // Called under the asset lock, before preparing the journal row.
+  std::function<Result<std::optional<db::BaseSnapshot>>()> prepare;
+  // A verified duplicate/conflict can finish without publishing the temporary copy.
+  std::function<Result<bool>(const db::NewFileEvidence&)> publish;
+};
 struct CommitRequest {
   explicit CommitRequest(asset_zip::ReadBudget& b) : budget(b) {}
   asset_zip::ReadBudget& budget;
@@ -56,6 +64,7 @@ struct CommitRequest {
   std::shared_ptr<db::CommitJournal> journal;
   std::chrono::milliseconds lock_timeout{};
   std::function<Result<void>(asset_zip::ZipWriter&)> producer;
+  std::optional<CopyFileSource> copy_source;
   std::function<Result<void>(const asset_zip::ZipArchive&)> verifier;
   std::function<Result<void>(const db::PendingOperation&)> on_committed;
   FaultHooks hooks;
@@ -68,6 +77,7 @@ struct CommitResult {
   Replacement replacement = Replacement::posix_rename;
   asset_zip::WriteSummary summary;
   double file_hash_seconds = 0;
+  bool no_op = false;
 };
 Result<CommitResult> commit_zip(const CommitRequest& request);
 // Location operations never parse or rewrite ZIP bytes. They use stat identity
@@ -83,6 +93,7 @@ struct LifecycleRequest {
 Result<std::string> commit_lifecycle(const LifecycleRequest&);
 Result<db::BaseSnapshot> inspect_zip(const std::filesystem::path& path, asset_zip::ReadBudget& budget,
                                    const asset_zip::ZipLimits& limits = {});
+Result<db::BaseSnapshot> inspect_copy_source(const std::filesystem::path& path);
 enum class RecoveryOutcome { rolled_back, completed, already_committed, cleaned, skipped_locked, skipped, failed };
 std::string_view outcome_name(RecoveryOutcome outcome) noexcept;
 struct RecoveryItem {

@@ -170,6 +170,21 @@ int main(int argc, char** argv) {
   presentation(purge);
   purge->callback(
       [&] { render("library purge", app::purge_library(path(purge_root), purge_ids, purge_all, purge_yes)); });
+  std::string add_ready_root, add_ready_replace;
+  std::vector<std::string> add_ready_sources;
+  auto* add_ready = library->add_subcommand("add-ready", "Import complete asset ZIPs without changing their bytes");
+  add_ready->add_option("dir", add_ready_root)->required();
+  add_ready->add_option("zip", add_ready_sources)->required()->expected(-1);
+  auto* replace_ready =
+      add_ready->add_option("--replace", add_ready_replace, "Expected current manifest SHA-256; exactly one source");
+  presentation(add_ready);
+  add_ready->callback([&] {
+    std::vector<std::filesystem::path> sources;
+    for (const auto& s : add_ready_sources) sources.push_back(path(s));
+    render("library add-ready",
+           app::add_ready_library(path(add_ready_root), sources,
+                                  replace_ready->count() ? std::optional(add_ready_replace) : std::nullopt, verbose));
+  });
   auto* asset = cli.add_subcommand("asset", "Create, inspect, check, and extract a standalone asset ZIP");
   asset->require_subcommand(1);
   std::vector<std::string> inputs;
