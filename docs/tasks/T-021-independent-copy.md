@@ -1,6 +1,6 @@
 # T-021. Независимая копия ассета: `am library copy` (M2, P0.5 — часть 6)
 
-**Статус:** ready · **Веха:** M2 · **Основание:** ТЗ v1.8 §4.4 п. 2 [СОГЛАСОВАНО], §19.4.2.2 (новый AssetID у независимой копии); R-07.1–R-07.9 (`docs/tz/R01-R09_approved_handoff.md`, проверки D-05…D-07); ADR-0036 п. 4 (заменяет ADR-0035 п. 11); ADR-0039 п. 11 (O-05…O-07: в P0 — безопасный отказ); SPEC `container_manifest_v1.md` §1 (раскладка `content/<InputID>/`), §10 (словарь `asset_created{creation_kind, source_asset}`), §11.1; ADR-0025 п. 1, 4, 7; T-020 (замечание 3 приёмки)
+**Статус:** review · **Веха:** M2 · **Основание:** ТЗ v1.8 §4.4 п. 2 [СОГЛАСОВАНО], §19.4.2.2 (новый AssetID у независимой копии); R-07.1–R-07.9 (`docs/tz/R01-R09_approved_handoff.md`, проверки D-05…D-07); ADR-0036 п. 4 (заменяет ADR-0035 п. 11); ADR-0039 п. 11 (O-05…O-07: в P0 — безопасный отказ); SPEC `container_manifest_v1.md` §1 (раскладка `content/<InputID>/`), §10 (словарь `asset_created{creation_kind, source_asset}`), §11.1; ADR-0025 п. 1, 4, 7; T-020 (замечание 3 приёмки)
 
 ## Цель
 
@@ -265,3 +265,146 @@ ninja: build stopped: subcommand failed.
 - Тест 4: источник с `dependencies` в расширении и в plugin-значении (по одному на каждый вид ссылки `file`/`group`/`field_value`) → соответствующий отказ п. 6 до построения отображения; источник и библиотека без изменений.
 - Строки `dependencyRef` в таблице п. 3 остаются нормой для будущего клонирования расширений (O-07). Код их переназначения в P0 не обязателен; если он уже написан — оставить, а в отчёте указать, что в P0 он недостижим.
 
+## Отчёт исполнителя — итог реализации после ca98e04
+
+### Ветка и изменения
+
+Ветка `codex/T-021`. **Реализация завершена, задача передана на `review`.** Решения В-1, В-2 и В-3 выполнены; прежние отчёты выше описывают промежуточные остановки, а не текущее состояние реализации. Критерии 1–3 выполнены с явно указанными ниже разрешёнными платформенными SKIP Linux и дополнительными целевыми проверками завершающих правок.
+
+- `67b418b` — первоначальная реализация с незавершёнными тестами.
+- `162c21f` — промежуточный отчёт по В-3.
+- `ca98e04` — решение управляющего по В-3.
+- `af3e3f3` — завершение тестов, ZIP-переименования, CLI и документации.
+- `f14e437` — разграничение кодов аргументов (2) и проверки источника (4), CLI-регрессия.
+- `76bc69e` — обязательный `file_refs: []` у новой группы без членства (SPEC §7, ADR-0036), регрессия в тесте повторных копий.
+- Коммит настоящего итогового отчёта и статуса — `Report completed T-021 validation and hand off for review`.
+
+Реализованы `AssetRepository::copy_independent`, `Catalog::copy_independent` под общим mutex, фасад `copy_library` и CLI `am library copy`. Источник удерживается снимком; блокировка записи берётся только для нового ассета. Новый ZIP фиксируется общим `commit_update`/`commit_zip` как `create` без базы, проходит V1–V4, уведомляет индекс через `on_committed` до состояния `indexed`. Восстановление узнаёт независимую копию по её истории и восстанавливает индекс. Старые ветви create/change и их точки отказа не изменены.
+
+В `RawCopyOptions` добавлено `target_name`: имена в обоих заголовках меняются, сжатые байты, метод, CRC, размеры и флаги данных сохраняются. Проверки имени общие с новой записью; UTF-8 выставляется, data descriptor не выводится, как и прежде. При переименовании `0x7075` не переносится; попытка явно включить его в `carry_extra_ids` отклоняется. Добавлены английские сообщения отказов, руководство CLI и CHANGELOG. В `import_ready` исправлена только классификация нечитаемой идентичности/ревизии/minor на `invalid`.
+
+### Критерий 2: покрытие тестов 1–11
+
+| Пункт | Тест и проверка |
+|---|---|
+| 1, D-05 | `IndependentCopy.D05RevisionTwelveSourceUnchangedIndexAndUserdata`: ревизия источника 12, копия с новым ID и одной записью `asset_created` ревизии 1, точная ссылка `source_asset`, одинаковые новые timestamps, SHA-256 источника прежний, индекс содержит оба ассета |
+| 2, D-06 | `IndependentCopy.D06EveryReferenceAndRawCompressedPayloadIsPreserved`: все достижимые в P0 ID/ссылки таблицы, метаданные трёх уровней, типизированные значения/default и альтернативы claims, origin/inputs, объекты/записи, parent-ссылки, превью и группы. Независимый обход исходного и нового JSON проверяет согласованность ссылок, UUIDv4 и непересечение множеств; V1–V4 выполнен |
+| 3 | `IndependentCopy.D07RefusalsLeaveSourceJournalTemporaryAndIndexUntouched`: FileID в описании, параметрах генерации и ключе JSON → `copy_remap_incomplete`, JSON Pointer, отсутствуют новый ZIP, временный файл, журнал и новая строка индекса. `OpaqueNumericLexemesSurviveAndEscapedOldIdsAreRefused` дополнительно проверяет экранированный UUID и точный путь `/files/1/generation/params/ref` |
+| 4, D-07 | `D07RefusalsLeaveSourceJournalTemporaryAndIndexUntouched`: отдельные отказы для extensions с AttachmentID, plugin-значения, historical_files, derived_from на удалённый файл и непрозрачной ZIP-записи. `D07AllDependencyKindsAndOwnerScopesAreRefusedInP0`: схема и V3 источника проверены; каждый из `file`, `group`, `field_value` (asset/file/group) проверен отдельно и в расширении, и в plugin-значении; SHA-256 источника и основных index/state прежние, записи/временные файлы отсутствуют |
+| 5 | D-06 сравнивает сжатые потоки побайтно, CRC, размеры, метод и SHA-256 потоков по манифесту. `ZipWriter.RawRenamePreservesCompressedBytesHeadersAndDataFlags` отдельно проверяет Stored/Deflate, UTF-8-имя, чтение новым `ZipArchive` и `verify_entry`; ещё два `RawRename*` проверяют коллизии, небезопасные/невалидные имена, лимиты и `0x7075` |
+| 6 | `IndependentCopy.RepeatedCopiesCopyOfCopyAndSourceRestrictions`: две разные копии и копия копии, источник родословной — первая копия; у читаемой группы без file_refs новая копия явно выводит пустой массив по SPEC §7/ADR-0036 |
+| 7 | Тот же тест: источник в trash → `not_found`, newer_minor → `write_unsupported_version`, занятый ID → `asset_exists` |
+| 8 | `IndependentCopy.CommitFaultsRecoverWithIndexAndUnchangedSource`: все десять `FaultPoint`, включая mid-write; после `recover` копии нет либо она полностью проверена и проиндексирована; источник неизменен. `IndexFailureWarnsAfterCommittedCopy` проверяет предупреждение индекса и флаг rebuild без отмены ZIP |
+| 9 | D-05: у источника есть membership в пользовательской коллекции; checkpoint основной userdata, SHA-256 до/после одинаковый, у нового ID membership отсутствует |
+| 10 | `ImportReady.UnreadableIdentityRevisionOrMinorIsClassifiedInvalid` (`K-31`): отсутствие id, revision и minor, классификация `invalid`, без публикации и индекса |
+| 11 | `cli_library_copy`: init → asset create → add-ready → copy → list → полная verify, новый ID, прежние байты источника и userdata; источник с extensions → код 4 и правильный message_id; некорректный AssetID → код 2; небезопасный путь в исходном манифесте → код 4. В Linux production-запись проверяется отказом `storage_read_only`, затем явный SKIP по существующей политике fixed NTFS |
+
+Дополнительно `IndependentCopy.RetainsStartingSnapshotWhileSourceCanAdvance` изменяет источник в preflight другой операцией: копия остаётся снимком исходной ревизии 1, источник становится ревизией 2, его запись не заблокирована копированием. `OpaqueNumericLexemesSurviveAndEscapedOldIdsAreRefused` сохраняет в параметрах генерации точные лексемы `[1e9999,-0,1.000,9007199254740993]`.
+
+### Отображение ID и соответствие таблице п. 3
+
+Отображение — внутренний `CopyRemap` в `src/storage/repository/repository.cpp:929`: подготовка записи остаётся в `storage`, без нового модуля, публичного контракта domain или новых зависимостей. Нормативные строковые токены редактируются через foundation `json::parse_strict`; непрозрачные числа не проходят через floating-point DOM. После добавления новой истории `check_copy_remap` заново разбирает сериализованный текст и ищет старые UUID в декодированных строках и ключах. Единственное исключение — точное значение в `/history/entries/0/details/source_asset/asset_id`. Ошибка содержит JSON Pointer в `ctx.detail`.
+
+| Объект / ID | Место переназначения |
+|---|---|
+| Ассет | `collect`: `identity(asset)`; `render` назначает новый AssetID |
+| Файл | `collect`: files.id, group.file_refs, preview.file_id, derived_from.file_id, inputEntry.file_id; `metadata`: license.file_ref и custom_values типа file_ref; `collect`: default такого поля; `claims`: evidence.file_id, file_ref-альтернативы custom и license |
+| Группа | `collect`: groups.id, parent_id, preview.group_refs |
+| Превью | `collect`: previews.items.id и primary_id |
+| Источник | `collect`: origin.sources.id, input.source_refs; `claims`: evidence.source_id |
+| Входной набор | `collect`: inputs.id; `render`: только префикс `content/<InputID>/`; generated-пути прежние |
+| Объект входа | `collect`: objects.id, parent_object_id, entry.object_id; `claims`: evidence.input_object_id |
+| Запись входа | `collect`: entries.id, object.parent_entry_id; `claims`: evidence.source_entry_id |
+| Автор | `authors`, вызываемая из `metadata` и альтернатив authors в claims; `claims`: target.item_id |
+| Claim | `claims`: id, в том числе у origin.sources |
+| Операция | `copy_independent`: новый op_id; `append_history`: единственная новая запись. Старые OperationID собираются для остаточной проверки, старая история удалена |
+| dependencyRef | `dependencies` содержит переназначение file_id/group_id/owner_id, но для нормативного источника в P0 недостижима: расширения и plugin-значения отклоняются раньше. Проверено отказами по В-3 |
+| AttachmentID | По В-2 охвачен ранним отказом для extensions до построения отображения. Если бы такой ID был допущен в отображение без переназначения, остаточная проверка также обнаружила бы его; в P0 этот путь закрыт |
+
+FieldID, ExtensionID, TypeID и `file.type.id` не переназначаются. SHA-256 не пересчитываются, поскольку байты потоков прежние. Старый ZIP не переписывается. Политика extra fields та же, что при существующей записи: чужие непереносимые поля и комментарии отбрасываются, поток сохраняется.
+
+### Реальные JSON-примеры CLI
+
+Получены тестом `cli_library_copy` полного Windows-прогона (0 — успех):
+
+```json
+{"source":{"asset_id":"49d2ffcf-43d9-4ef2-93ad-44e4f1cfe417","revision":1},"asset_id":"a65a7fe5-da11-4029-8ee5-4348054513e8","revision":1,"files":[{"id":"979214ac-9390-4e67-8262-18598a54d0a0","path":"content/92cff3fb-5721-4a5c-83be-cb8b50fa1aad/copy-source.bin"}],"error":null,"command":"library copy"}
+```
+
+Отказ (код 4; английская подсказка о сохранении ID при обычном ZIP-копировании выводится каталогом сообщений в stderr):
+
+```json
+{"source":{"asset_id":"49d2ffcf-43d9-4ef2-93ad-44e4f1cfe417","revision":null},"asset_id":null,"revision":null,"files":[],"error":{"code":"am.unsupported","message_id":"am.repo.copy_extensions_unsupported","detail":"Extension clone contracts are unavailable"},"command":"library copy"}
+```
+
+Недоступные поля результата при отказе равны null. `--verbose` на успехе добавляет отчёт проверки. Исходные примеры сохранены в `.cache/library-cli-tests/t021-copy-{success,refusal}.json`; следующие прогоны обновляют их новыми случайными UUID.
+
+### Критерий 1: фактические проверки
+
+```text
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) =  16.77 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+
+tools\build_cli.cmd --ci
+100% tests passed, 0 tests failed out of 385
+Total Test time (real) = 1066.87 sec
+req_report: 47 IDs, 385 tests, 49 without req, 0 invalid IDs
+```
+
+Оба кода возврата 0; `arch_check`, `schema_check`, `sql_check` PASS. Полный Windows-прогон включает `golden_zip`, `golden_regen_check`, `message_catalog_check`, прежние kill-тесты и все CLI-сценарии. Количество тестов увеличилось с 371 до 385 (+14); минимальная сборка сохранила 86.
+
+```text
+tools\build_cli.cmd --offline --ci
+100% tests passed, 0 tests failed out of 385
+Total Test time (real) = 899.93 sec
+req_report: 47 IDs, 385 tests, 49 without req, 0 invalid IDs
+```
+
+Код возврата 0; x-block-origin включён. После этих полных прогонов исправлено только разделение кодов выхода в фасаде copy: AssetID проверяется до открытия библиотеки и возвращает 2 при ошибке аргумента, ошибки проверки содержимого источника возвращают 4. Изменённый CLI-сценарий дополнительно реально выполнен на итоговом коде в обоих режимах:
+
+```text
+tools\build_cli.cmd --ci -R cli_library_copy
+100% tests passed, 0 tests failed out of 1
+Total Test time (real) =   5.11 sec
+
+tools\build_cli.cmd --offline --ci -R cli_library_copy
+100% tests passed, 0 tests failed out of 1
+Total Test time (real) =   4.60 sec
+```
+
+Оба кода возврата 0; req_report в обоих случаях — 47 IDs, 385 tests, 49 without req, 0 invalid IDs. Завершающие правки ограничены фасадом (коды выхода) и независимой копией (явный пустой group.file_refs). Неизменённые стресс-тесты ядра после этих правок не повторялись; девять затронутых тестов копирования дополнительно выполнены на итоговом Windows-коде:
+
+```text
+tools\build_cli.cmd --offline --ci -R IndependentCopy
+100% tests passed, 0 tests failed out of 9
+Total Test time (real) =  42.51 sec
+req_report: 47 IDs, 385 tests, 49 without req, 0 invalid IDs
+
+WSL Ubuntu: tools/build_linux.sh cli --ci
+100% tests passed, 0 tests failed out of 382
+Total Test time (real) = 1247.79 sec
+req_report: 47 IDs, 382 tests, 48 without req, 0 invalid IDs
+```
+
+Оба кода возврата 0. В полном Linux-прогоне реально **362 PASS и 20 SKIP**, а не 382 выполненных теста. Относительно T-020 число зарегистрированных увеличилось с 368 до 382 (+14), пропусков с 19 до 20: добавлен только `cli_library_copy`. Причины пропусков прежние — Windows process/kill/sharing/NTFS evidence, сценарии production-записи при неподтверждённой Linux FS, платформенная точность stat. Новый CLI-сценарий сначала проверяет нормативный отказ `am.library.storage_read_only`, затем явно сообщает причину SKIP. Сервисное копирование со всеми отказами и FaultPoint реально проверено под Linux с внедрёнными capabilities. `arch_check`, `schema_check`, `sql_check`, golden-корпус и совместимость ZIP — PASS.
+
+Отдельный Linux-прогон `tools/build_linux.sh cli --offline --ci -R IndependentCopy` до дополнения пустой группы выполнен: 9/9 PASS, 41.80 sec. После дополнения он повторён на итоговом коде:
+
+```text
+WSL Ubuntu: tools/build_linux.sh cli --offline --ci -R IndependentCopy
+100% tests passed, 0 tests failed out of 9
+Total Test time (real) =  42.25 sec
+req_report: 47 IDs, 382 tests, 48 without req, 0 invalid IDs
+```
+
+Код возврата 0, все девять тестов реально выполнены без SKIP. Новый тестовый файл после исправления пересобран Linux-компилятором без предупреждений; ранее обнаруженные предупреждения в чужих строках/файлах не исправлялись. Последняя пересборка repository.cpp повторяет только прежние предупреждения в строках 79, 172, 763 и 1152; в добавленном коде предупреждений нет. MSVC — без новых предупреждений.
+
+Артефакты полных прогонов: `.cache/t021-final-{min,cli,offline,linux}.log` и сохранённые рядом `*-junit.xml`/`*-req_report.json`; целевые — `.cache/t021-final-{cli-exitcodes,offline-exitcodes,copy-defaults,linux-defaults}.log`. JUnit и req_report также создаются в соответствующем `build/`; отдельные копии в `.cache/` сохраняют полный отчёт перед последующими целевыми прогонами. Для чтения `.cache/pylib` и запуска WSL потребовался выход из песочницы, без изменения файлов вне проекта. Все зависимости уже были в кэше, загрузки новых компонентов не выполнялись.
+
+### Критерий 3, отклонения и вопросы
+
+Изменены только разрешённые файлы. Схемы, спецификация, ADR, codec, V1–V4, протокол фиксации/журнал, Library, зависимости и материалы владельца не менялись. Исследование существующих библиотек сверено; новый выбор библиотек не требовался. Функция переназначения осталась в storage по разрешённому выбору п. 9. Тесты писателя добавлены только в конец `test_zip_writer.cpp` по В-1. Невозможные в P0 успешные dependencyRef заменены нормативными отказами по В-3.
+
+Нерешённых вопросов по реализации нет. Слияние, push и переписывание истории не выполнялись. Пользовательский ZIP вне индекса не изменялся. Все рабочие изменения исполнителя зафиксированы; единственный прежний untracked-файл — пользовательский `3D_am_open_questions_e2472e9.zip`. Статус задачи и строки реестра — `review`.
