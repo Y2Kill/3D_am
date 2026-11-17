@@ -1,6 +1,6 @@
 # T-021. Независимая копия ассета: `am library copy` (M2, P0.5 — часть 6)
 
-**Статус:** ready · **Веха:** M2 · **Основание:** ТЗ v1.8 §4.4 п. 2 [СОГЛАСОВАНО], §19.4.2.2 (новый AssetID у независимой копии); R-07.1–R-07.9 (`docs/tz/R01-R09_approved_handoff.md`, проверки D-05…D-07); ADR-0036 п. 4 (заменяет ADR-0035 п. 11); ADR-0039 п. 11 (O-05…O-07: в P0 — безопасный отказ); SPEC `container_manifest_v1.md` §1 (раскладка `content/<InputID>/`), §10 (словарь `asset_created{creation_kind, source_asset}`), §11.1; ADR-0025 п. 1, 4, 7; T-020 (замечание 3 приёмки)
+**Статус:** review · **Веха:** M2 · **Основание:** ТЗ v1.8 §4.4 п. 2 [СОГЛАСОВАНО], §19.4.2.2 (новый AssetID у независимой копии); R-07.1–R-07.9 (`docs/tz/R01-R09_approved_handoff.md`, проверки D-05…D-07); ADR-0036 п. 4 (заменяет ADR-0035 п. 11); ADR-0039 п. 11 (O-05…O-07: в P0 — безопасный отказ); SPEC `container_manifest_v1.md` §1 (раскладка `content/<InputID>/`), §10 (словарь `asset_created{creation_kind, source_asset}`), §11.1; ADR-0025 п. 1, 4, 7; T-020 (замечание 3 приёмки)
 
 ## Цель
 
@@ -174,4 +174,86 @@ req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
 **В-2 — принять предложение.** AttachmentID в P0 не переназначается: любой непустой `extensions` отклоняется по п. 6 (`am.repo.copy_extensions_unsupported`) до построения отображения, поэтому вложений в копии не бывает. Переназначение AttachmentID появится вместе с клонированием расширений (O-07). Условие остановки п. 3 снято для этого поля; для любых других UUID-полей вне таблицы оно действует. В отчёте указать, что AttachmentID охвачен отказом п. 6, а проверка п. 4 его тоже поймала бы.
 
 Задача снова `ready`: продолжать с реализации.
+
+## Отчёт исполнителя — продолжение после 06fb4de (2026-11-17)
+
+### Состояние и ветка
+
+**T-021 не завершена.** Решения В-1 и В-2 прочитаны, реализация продолжена в существующей ветке `codex/T-021`. При подготовке полного D-06 обнаружено новое противоречие между требованием успешного теста зависимостей и действующим V3; работа остановлена по п. 3 `AGENTS.md`, вопрос В-3 ниже. Статус `review` означает передачу этого вопроса, а не готовность реализации.
+
+- `67b418b` — `WIP T-021 independent copy pending dependency test clarification`: незавершённая реализация и начатые тесты.
+- Следующий коммит — настоящий отчёт и статус `review`.
+- Слияние, push и переписывание истории не выполнялись. Пользовательский незарегистрированный `3D_am_open_questions_e2472e9.zip` не затронут.
+
+### Что сделано и что осталось по критериям приёмки
+
+1. Минимальная проверка реально выполнена: **86/86 PASS**, включая `arch_check`, `schema_check`, `sql_check`; `req_report` — 0 неверных ID. CLI-сборка реально запускалась в offline-режиме, но остановилась на компиляции нового `test_independent_copy.cpp`: незакрытая фигурная скобка в инициализаторе строки 82 и обращение к отсутствующему `Statement::int64` в строке 165 (существующий метод — `integer`). Библиотеки продукта и `am.exe` скомпилированы. Полные тесты CLI не запускались из-за ошибки сборки; обычный CLI-прогон и WSL ещё не выполнены. **Критерий не выполнен.**
+2. Добавлены `CopyRequest`/`CopyResult`, `AssetRepository::copy_independent`, обёртка `Catalog::copy_independent` под общим mutex, фасад и команда `am library copy`, сообщения отказов. В общем пути `commit_update` добавлен отдельный режим независимой копии: журнал `create`, raw-перенос по отображению имён, проверка V1–V4 и уведомление через `on_committed` до `indexed`. Для восстановления копии добавлено распознавание её истории; прежние вызовы create/change используют прежние ветки кода. В `RawCopyOptions` добавлено `target_name`, проверяемое общим `validate_name`; перенос `0x7075` при переименовании запрещён. Исправлена классификация ошибки `import_info` на `invalid`. **Это промежуточный код без завершённой проверки.**
+
+   Начаты тесты `IndependentCopy.D05RevisionTwelveSourceUnchangedIndexAndUserdata`, `D06EveryReferenceAndRawCompressedPayloadIsPreserved`, `D07RefusalsLeaveSourceJournalTemporaryAndIndexUntouched`, `RepeatedCopiesCopyOfCopyAndSourceRestrictions`, `CommitFaultsRecoverWithIndexAndUnchangedSource`, `IndexFailureWarnsAfterCommittedCopy`. Они ещё не запускались. Фикстура D-06 пока содержит запрещённые V3 зависимости у core-поля (предмет В-3). Другие фикстуры также ещё не проверены. Отдельные тесты писателя, регрессия `import_ready`, CLI-сценарий, документация CLI и CHANGELOG ещё не дописаны. Регистрация `cli_library_copy` подготовлена, сам Python-метод ещё отсутствует. JSON-примеры не получены. **Критерий не выполнен.**
+3. Изменения только в разрешённых файлах, отдельная ветка сохранена. ADR, спецификация, схемы, golden ZIP, кодек, V1–V4 и протокол фиксации не менялись. Новых библиотек не требуется: сверены существующие `docs/research/libraries.md`, API кодека, foundation JSON и ZIP; документ исследования не изменялся, поскольку он вне списка разрешённых файлов и выбор зависимостей прежний. Загрузки зависимостей не выполнялись; сборки запускались с `--offline`. **Передача — промежуточная, для решения вопроса, не для приёмки функциональности.**
+
+### Где находится отображение ID
+
+Внутренний `CopyRemap` находится в `src/storage/repository/repository.cpp`. Это подготовка операции репозитория без нового модуля и новых зависимостей. Он редактирует только нормативные строковые токены в исходном JSON через `json::parse_strict`, поэтому непрозрачные числовые лексемы не преобразуются в floating-point DOM. После добавления новой истории `check_copy_remap` проверяет строковые значения и ключи, включая декодированные JSON-экранирования; ошибка содержит JSON Pointer в `ctx.detail`.
+
+| Строка таблицы п. 3 | Место в промежуточном коде |
+|---|---|
+| AssetID | `CopyRemap::collect`, `identity(asset)`; `render` назначает ID из запроса |
+| FileID и его ссылки | `collect` для файлов, групп, превью, derived_from и inputEntry; `metadata` для license/custom_values; `claims` для evidence и типизированных альтернатив |
+| GroupID | `collect` для групп, parent_id и group_refs |
+| PreviewID | `collect` для previews.items и primary_id |
+| SourceID | `collect` для origin.sources/source_refs; `claims` для evidence |
+| InputID | `collect`, затем замена префикса storage_path в `render` |
+| InputObjectID | `collect` для objects, parent_object_id, object_id; `claims` для evidence |
+| InputEntryID | `collect` для entries и parent_entry_id; `claims` для evidence |
+| AuthorID | `authors`, вызванная из `metadata` и типизированных альтернатив claims; `claims` для item_id |
+| ClaimID | `claims`, в том числе origin.sources[].claims |
+| OperationID | Старые ID собираются для проверки отсутствия; новая операция создаётся `identifier` и `append_history` |
+| dependencyRef | Черновая функция `dependencies`; достижимый успешный тест невозможен без решения В-3 |
+
+AttachmentID охвачен ранним отказом для непустых extensions по В-2, до построения отображения. Остаточная проверка старых UUID в `check_copy_remap` также обнаружила бы непереназначенный AttachmentID, если включить его в отображение; штатный P0 до этой стадии вложения не допускает.
+
+### Команды и фактический вывод
+
+Первый запуск в песочнице:
+
+```text
+tools\build_min.cmd --offline --ci
+AttributeError: module 'jsonschema' has no attribute 'Draft202012Validator'
+99% tests passed, 1 tests failed out of 86
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+```
+
+Это описанное в `AGENTS.md` ограничение чтения `.cache/pylib`. Повтор той же команды с расширенным доступом к существующим файлам:
+
+```text
+tools\build_min.cmd --offline --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) =  13.55 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+```
+
+Код возврата 0. Лог `.cache/t021-min-resume-full.log`. Минимальная сборка не включает новый контейнерный код.
+
+```text
+tools\build_cli.cmd --offline --ci
+test_independent_copy.cpp(82): error C3329
+test_independent_copy.cpp(165): error C2039: "int64"
+ninja: build stopped: subcommand failed.
+```
+
+Код возврата 1; лог `.cache/t021-cli-work.log`. Число успешно запущенных новых тестов — **0**.
+
+### Вопросы
+
+**В-3. Убрать dependencyRef из успешного D-06 и проверить их отказами P0?**
+
+Тест 2 требует синтетический манифест с зависимостями `file`/`group`/`field_value` для трёх `owner_scope`, успешное переназначение каждой ссылки и полный V1–V4 копии. Но допустимые владельцы `dependencies` — расширения и plugin-typed custom_values (описание `metadata.custom_values` в схеме 1.0, SPEC O-12). В `src/domain/manifest/semantics.cpp:588` правило `value_dependencies_scope` явно отклоняет `dependencies` у core-типа: `plugin || !v.row.j().contains("dependencies")`. При этом п. 6 T-021 требует ранний отказ как для любых непустых `extensions`, так и для plugin-значений. Следовательно, нормативно корректного источника P0, у которого такие зависимости дошли бы до успешного переназначения и полного V1–V4, нет.
+
+Предлагаемое конкретное решение: в успешном D-06 проверить все остальные строки таблицы, а `dependencyRef` всех видов и трёх owner_scope разместить в расширении/plugin-значении и подтвердить предусмотренные отказы P0 без изменений библиотеки. Поддержку успешного переназначения dependencyRef проверять вместе с будущим клонированием расширений/plugin-значений. Для продолжения нужна явная корректировка критерия управляющим либо решение владельца; V3, схему и политику отказов самостоятельно не менял.
+
+### Отклонения
+
+После обнаружения В-3 дальнейшая реализация остановлена по прямому требованию п. 3 `AGENTS.md`; выполнены обязательная минимальная проверка и сохранение промежуточной работы в коммит. Код не готов к приёмке, полная сборка пока FAIL. Незавершённые тесты и оставшаяся работа перечислены выше.
 
