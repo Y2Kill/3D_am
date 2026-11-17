@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
     code = static_cast<int>(result->status);
     if (json) {
       auto j = result->value;
-      if(command!="validate"&&command!="verify"&&!result->diagnostics.empty()&&
+      if(command!="validate"&&command!="verify"&&command!="library verify"&&!result->diagnostics.empty()&&
          (result->status==app::ExitCode::check_failed||result->status==app::ExitCode::operation_failed))
         j["error"]=error_value(result->diagnostics.front());
       j["command"] = command;
@@ -186,6 +186,13 @@ int main(int argc, char** argv) {
                                   replace_ready->count() ? std::optional(add_ready_replace) : std::nullopt, verbose));
   });
   std::string copy_root, copy_id;
+  std::string library_verify_root; bool library_verify_full = false, library_verify_no_trash = false;
+  auto* library_verify = library->add_subcommand("verify", "Check library ZIPs and record detected corruption in the index");
+  library_verify->add_option("dir",library_verify_root)->required();
+  library_verify->add_flag("--full",library_verify_full,"Read and verify every payload stream");
+  library_verify->add_flag("--no-trash",library_verify_no_trash,"Exclude assets in trash");
+  presentation(library_verify);
+  library_verify->callback([&] { render("library verify",app::verify_library(path(library_verify_root),library_verify_full,!library_verify_no_trash,verbose)); });
   auto* copy = library->add_subcommand("copy", "Create an independent asset with new instance IDs");
   copy->add_option("dir", copy_root)->required();
   copy->add_option("asset-id", copy_id)->required();

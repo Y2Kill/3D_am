@@ -6,6 +6,10 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- `am library verify` with quick and full checks, optional trash exclusion,
+  per-asset reports, read-only fallback, and atomic corruption updates in the index.
+- Automatic recovery when opening a library for writing, affected-asset indexing,
+  and stat-based sync after an unclosed writer session.
 - `am library copy` for independent assets with new instance IDs, remapped
   references, revision-one source history, and unchanged compressed payloads.
   Unsupported extension, plugin-value, historical, or opaque references are refused.
@@ -40,6 +44,8 @@ All notable user-visible changes are recorded here.
 
 ### Changed
 
+- `am library purge --all --yes` succeeds with an empty selection when the trash
+  directory is absent.
 - Newer minor asset formats are indexed as warning summaries without projecting
   unverified child records or filename search entries.
 - Duplicate manifest IDs no longer fail V2 schema validation; V3 reports them,

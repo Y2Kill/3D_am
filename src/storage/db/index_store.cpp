@@ -189,6 +189,17 @@ Result<void> IndexStore::mark_rebuild_required() {
     return {};
   });
 }
+Result<std::optional<std::string>> IndexStore::get_meta(std::string_view key) const {
+  return guard<std::optional<std::string>>([&]() -> Result<std::optional<std::string>> {
+    auto s = take(db_.prepare("SELECT value FROM meta WHERE key=?"));
+    take(s.bind(1,key));
+    if (take(s.step()) != Step::row) return std::optional<std::string>{};
+    return std::optional(take(s.text(0)));
+  });
+}
+Result<void> IndexStore::set_meta(std::string_view key, std::string_view value) {
+  return guard<void>([&]() -> Result<void> { meta(db_,key,value); return {}; });
+}
 Result<void> IndexStore::mark(const IndexMark& mark) {
   return guard<void>([&]() -> Result<void> {
     auto tx = take(Transaction::begin(db_));

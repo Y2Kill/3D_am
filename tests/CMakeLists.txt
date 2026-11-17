@@ -38,7 +38,7 @@ if(AM_WITH_CONTAINER)
     unit/test_manifest_semantics.cpp
     unit/test_asset_service.cpp
     unit/test_library.cpp
-    unit/test_sqlite.cpp unit/test_indexer.cpp unit/test_sync.cpp unit/test_trash.cpp unit/test_import_ready.cpp unit/test_independent_copy.cpp
+    unit/test_sqlite.cpp unit/test_indexer.cpp unit/test_sync.cpp unit/test_trash.cpp unit/test_import_ready.cpp unit/test_independent_copy.cpp unit/test_open_recovery.cpp
     unit/zip_builder.cpp unit/test_zip_reader.cpp unit/test_zip_stream.cpp unit/test_zip_probe.cpp
     unit/test_zip_writer.cpp unit/test_zip_writer_large.cpp unit/test_zip_writer_interop.cpp
     unit/test_state_journal.cpp unit/test_commit_protocol.cpp unit/test_asset_repository.cpp)
@@ -56,6 +56,12 @@ if(AM_WITH_CONTAINER)
   am_apply_defaults(am_import_crash_helper)
   add_dependencies(am_unit_tests am_import_crash_helper)
   target_compile_definitions(am_unit_tests PRIVATE AM_IMPORT_HELPER_PATH="$<TARGET_FILE:am_import_crash_helper>")
+  add_executable(am_open_recovery_helper unit/test_open_recovery.cpp)
+  target_compile_definitions(am_open_recovery_helper PRIVATE AM_OPEN_RECOVERY_HELPER=1)
+  target_link_libraries(am_open_recovery_helper PRIVATE am::application)
+  am_apply_defaults(am_open_recovery_helper)
+  add_dependencies(am_unit_tests am_open_recovery_helper)
+  target_compile_definitions(am_unit_tests PRIVATE AM_OPEN_HELPER_PATH="$<TARGET_FILE:am_open_recovery_helper>")
   target_link_libraries(am_unit_tests PRIVATE unofficial::sqlite3::sqlite3)
   target_link_libraries(am_unit_tests PRIVATE ZLIB::ZLIB)
   target_compile_definitions(am_unit_tests PRIVATE
@@ -115,7 +121,7 @@ if(AM_PYTHON_TESTS)
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/tools/message_catalog_check.py --root ${PROJECT_SOURCE_DIR})
       set_tests_properties(message_catalog_check PROPERTIES LABELS "req:ADR-0032;req:ADR-0034")
       if(TARGET am_cli)
-      foreach(_am_library_case init_info refusals missing_databases owner_lock rebuild_list sync trash add_ready copy)
+      foreach(_am_library_case init_info refusals missing_databases owner_lock rebuild_list sync trash add_ready copy verify)
         add_test(NAME cli_library_${_am_library_case}
           COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_library_cli.py
             --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/library-cli-tests --case ${_am_library_case})
@@ -125,6 +131,7 @@ if(AM_PYTHON_TESTS)
       set_property(TEST cli_library_trash APPEND PROPERTY LABELS "req:K-3")
       set_property(TEST cli_library_add_ready APPEND PROPERTY LABELS "req:K-31" "req:SC-14")
       set_property(TEST cli_library_copy APPEND PROPERTY LABELS "req:K-3")
+      set_property(TEST cli_library_verify APPEND PROPERTY LABELS "req:K-22")
       set_tests_properties(cli_library_rebuild_list cli_library_sync cli_library_trash cli_library_add_ready cli_library_copy PROPERTIES SKIP_REGULAR_EXPRESSION "Production writes require a verified fixed NTFS volume")
       add_test(NAME golden_zip
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/golden/run_golden.py

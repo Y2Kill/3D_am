@@ -7,6 +7,7 @@ Result<AssetOutcome> rebuild_library(const std::filesystem::path&);
 Result<AssetOutcome> list_library(const std::filesystem::path&, bool include_trash = false);
 Result<AssetOutcome> sync_library(const std::filesystem::path&, bool full = false);
 Result<AssetOutcome> copy_library(const std::filesystem::path&, const std::string& asset_id, bool verbose = false);
+Result<AssetOutcome> verify_library(const std::filesystem::path&, bool full = false, bool include_trash = true, bool verbose = false);
 Result<AssetOutcome> trash_library(const std::filesystem::path&, const std::vector<std::string>& asset_ids);
 Result<AssetOutcome> restore_library(const std::filesystem::path&, const std::vector<std::string>& asset_ids);
 Result<AssetOutcome> purge_library(const std::filesystem::path&, const std::vector<std::string>& asset_ids, bool all, bool confirmed);
