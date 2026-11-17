@@ -176,7 +176,13 @@
 
 ## Отчёт исполнителя
 
-### Состояние работы
+> История промежуточной сдачи до решения В-1. Вопрос закрыт владельцем; итоговый отчёт о завершении находится в конце файла.
+
+### Решение владельца по В-1
+
+В чате принято исключение для `after_lock`: проверяются неизменность ZIP/индекса и отсутствие журнала/временных файлов; наличие `op_id` в отчёте требуется начиная с `after_prepared`. Порядок точек отказа и протокол фиксации не меняются. Реализация продолжена в `codex/T-022`.
+
+### Промежуточное состояние до решения В-1 (история)
 
 **T-022 не завершена.** При подготовке crash-тестов найдено противоречие теста 1 с существующим порядком `FaultPoint::after_lock`. Реализация остановлена по п. 3 `AGENTS.md`; вопрос В-1 ниже. Статус `review` означает передачу вопроса управляющему, а не готовность к приёмке.
 
@@ -240,3 +246,111 @@ req_report: 47 IDs, 385 tests, 49 without req, 0 invalid IDs
 ### Отклонения
 
 Реализация остановлена по прямому правилу п. 3 `AGENTS.md`. Предварительный код сохранён отдельным WIP-коммитом для продолжения; готовность к приёмке не заявляется. После решения В-1 предстоит завершить реализацию, написать и реально выполнить тесты 1–13, документацию и матрицу приёмки, выполнить все четыре полных прогона и дополнить этот отчёт.
+
+## Отчёт исполнителя — завершение
+
+**Итог:** T-022 завершена и передана на `review`. Исключение В-1 принято владельцем и реализовано.
+
+### Ветка и коммиты
+
+- Ветка `codex/T-022` от `main` (`6436e84`). Начальный код — `af6e5d7`; промежуточный отчёт с вопросом В-1 — `cdccc83`; завершение реализации, тестов и пользовательской документации — `2b13665`. Итоговый отчёт/статус — отдельный завершающий коммит.
+- Слияние в `main`, push и переписывание истории не выполнялись. Прежний пользовательский `3D_am_open_questions_e2472e9.zip` не изменён.
+
+### Выполнение критериев приёмки
+
+1. Полная матрица сборок и проверок — фактические итоги приведены ниже. Новых тестов 15: 14 GoogleTest и `cli_library_verify`. Все новые проверки ZIP и аварийного восстановления переносимы на Linux; Linux-пропуск нового теста относится только к production-записи через `purge_library`, а не к verify.
+2. Выполнены восстановление при открытии, `refresh`, отметка сессии, API проверки, транзакционные изменения индекса, CLI, передача предупреждений открытия в фасаде, тест самодостаточности и пустой `purge --all`. Обновлены CLI guide, CHANGELOG и только разрешённые новые строки K-22/K-24/K-122 матрицы приёмки.
+3. Изменены только разрешённые файлы. `Library`, `AssetRepository`, протокол фиксации и журнал, V1–V4, кодек, схемы, golden ZIP, ADR, спецификация, roadmap, coverage matrix, зависимости и материалы владельца не менялись. Новые зависимости и их загрузка не требовались; использованы существующие проектные кеши.
+
+Порядок открытия в `src/services/catalog/indexer.cpp`:
+
+1. `Catalog::open` (строка 732): `Library::open` получает владельца записи и открывает базы; затем создаётся индексатор.
+2. Строки 756–761: `StateJournal::open/list` сохраняет исходные строки, затем `assets().recover()`. Ошибка чтения/восстановления возвращается как `am.library.recovery_failed` с причиной.
+3. Строки 763–779: отдельные failed/skipped/skipped_locked превращаются в предупреждения с op_id/путём; `refresh` каждого исходного asset_id. Наблюдатель во время recover откладывает индексирование до этого прохода.
+4. Строки 780–788: чтение `writer_session`; при отсутствующей/незакрытой отметке выполняется stat-sync. Для недоступного или требующего перестройки индекса refresh/sync пропускаются с предупреждением, восстановление ZIP сохраняется.
+5. Строки 790–794: отметка `open`; `Impl::~Impl` (строка 696) безопасно записывает `closed` до уничтожения Library. В read_only (строки 745–754) — только подсчёт pending_ops и предупреждение без восстановления/индексирования.
+
+`Indexer::verify` (строка 573) перечисляет файловые кандидаты, на каждом вызывает общий `verify_container` с новым бюджетом; `Catalog::verify` (строка 803) удерживает mutex. Повреждения и восстановленные строки применяются одной транзакцией после обхода/отмены. При mark сохраняется наблюдённый stat, поэтому следующий stat-sync не снимает corrupt. Неиндексированные ZIP проверяются без добавления; строки отсутствующих ZIP не меняются. При сбое транзакции её изменения откатываются, индекс требует перестройки, ZIP остаются на месте.
+
+Для отметки сессии добавлены только `IndexStore::get_meta/set_meta`, с привязкой параметров SQL. Схемы не менялись. Существующий `begin_rebuild` очищает FTS и assets, а commit меняет только rebuild_required/rebuilt_at (`src/storage/db/index_store.cpp:153–181`); `writer_session` сохраняется.
+
+### Тесты 1–13
+
+Все имена ниже относятся к `tests/unit/test_open_recovery.cpp`, кроме процессного CLI-теста.
+
+| Пункт | Тесты и результат проверки |
+|---|---|
+| 1 | `OpenRecovery.CrashedChangeAtEveryFaultPointOpensWithoutExplicitRecovery` — все 10 FaultPoint, фактический дочерний процесс завершается без деструкторов, затем только Catalog::open; пустые журнал/temp, полный verify ZIP, ревизия/manifest_sha256/manifest_json/in_trash согласованы. `OpenRecovery.CrashedCreateTrashAndImportAreReindexed` — три операции × три точки. |
+| 2–3 | `OpenRecovery.UnclosedSessionSyncsLostNotificationClosedSessionDoesNotSync` — пустой журнал и потерянное индексное уведомление, open → sync; closed → без sync; отсутствующий ключ → один sync. |
+| 4 | `OpenRecovery.ReadOnlyReportsPendingWithoutChangingFiles` — verified-журнал, warning и SHA-256 ZIP/temp/state/index без изменений. |
+| 5 | `OpenRecovery.BrokenJournalFailsBeforeRecoveryAndReadOnlyRemainsAvailable` — реальная ошибка list после изменения имени столбца тестовой БД; recovery_failed с cause, хеши прежние, read_only доступен. |
+| 6 | `OpenRecovery.LockedItemWarnsAndNextOpenFinishesIt` — блокировку держит отдельный процесс; skipped_locked и warning, журнал сохранён; после освобождения следующее открытие завершает операцию. |
+| 7 | `OpenRecovery.RefreshHandlesActiveTrashAndMissingAndIndexFailureWarns` — active/trash/отсутствие, а также отказ индексного обновления после успешного восстановления ZIP. |
+| 8 | `LibraryVerify.QuickFullTrashDamageAndStickyIndexHealth` — quick/full, V4 stream, повреждённый манифест, newer_minor, trash/no-trash, неизменность ZIP. |
+| 9 | Тот же тест — corrupt сохраняется при sync, корректная замена снимает отметку, новый ZIP не добавляется. `LibraryVerify.ReadOnlyAndMissingIndexDoNotWrite` — неизменность БД и проверка без индекса. `LibraryVerify.RepairTransactionRollsBackTogether` — отказ второго ремонта откатывает оба изменения. |
+| 10 | `LibraryVerify.ProgressCancellationAppliesOnlyCheckedAssets` — прогресс 0/1/2, отмена перед третьим, изменения только двух проверенных строк. ID третьего ассета фиксирован, порядок не зависит от случайного UUID. |
+| 11 | `SelfSufficiency.ReadyImportAndDiskRebuildNeedOnlyTheZip` — rich-ассет ревизии 3; отдельные новые библиотеки через import_ready и ZIP+rebuild. Исходный ZIP и сырые входные файлы A удалены после создания транспортного ZIP. Совпадают ZIP SHA-256, байты манифеста, история и проекции assets/files/sources/tags/categories/fields/input_entries/input_objects; full verify — только ok. |
+| 12 | `LibraryVerify.PurgeAllWithMissingTrashIsEmptySuccess` — отсутствующий trash, пустой results и код 0 на Windows. На Linux production-запись недоступна по существующей политике fixed NTFS; этот тест явно пропущен. |
+| 13 | `cli_library_verify` (`LibraryCli.test_verify`) — Windows init → create → add-ready → quick 0; повреждение payload → quick 0/full 1 с message_id/stream; no-trash; major 2 → 3; отсутствующая библиотека и неверная конфигурация → 4. Linux выполняет сам verify без SKIP на независимо сформированном ZIP, index_updated=false. |
+
+Дополнительно `LibraryVerify.UnsupportedUnreadableAndSemanticPointerAreReported` проверяет unsupported, ошибку открытия ZIP после перечисления кандидатов и указатель первой семантической находки V3.
+
+Для теста 8 независимый `zip_builder` создаёт Stored-поток: `payload` заменён на `PAYLOAD` той же длины 7 байт. CRC записи пересчитан при сборке ZIP; манифест и его старый SHA-256 содержимого сохранены. Поэтому V1–V3 проходят, а полный V4 обнаруживает `am.manifest.stream_mismatch`. Сам валидатор и golden ZIP не менялись.
+
+### Команды и фактический вывод
+
+```text
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) = 17.19 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+
+tools\build_cli.cmd --ci
+100% tests passed, 0 tests failed out of 400
+Total Test time (real) = 1092.37 sec
+req_report: 51 IDs, 400 tests, 49 without req, 0 invalid IDs
+```
+
+Оба кода возврата — 0. Логи `.cache/t022-final-min.log`, `.cache/t022-final-win.log`; снимки JUnit `.cache/t022-final-min-junit.xml`, `.cache/t022-final-win-junit.xml`, трассировка `.cache/t022-final-win-req.json`. `arch_check`, `schema_check`, `sql_check` реально выполнены и PASS. В Windows 400 выполненных тестов, 0 SKIP (до задачи — 385).
+
+```text
+tools/build_linux.sh cli --ci  (WSL, Ubuntu)
+100% tests passed, 0 tests failed out of 397
+Total Test time (real) = 1253.00 sec
+req_report: 51 IDs, 397 tests, 48 without req, 0 invalid IDs
+```
+
+Код возврата 0. JUnit: **376 PASS + 21 SKIP, 0 FAIL**, не «397 выполненных PASS». До задачи — 382 теста, прирост 15. Из пропусков 20 прежних, один новый — `LibraryVerify.PurgeAllWithMissingTrashIsEmptySuccess`: production-запись Linux ограничена существующей политикой fixed NTFS. Все новые проверки verify, самодостаточности и crash/open recovery реально выполнены; `cli_library_verify`, `arch_check`, `schema_check`, `sql_check` — PASS. Лог `.cache/t022-final-linux.log`, JUnit `.cache/t022-final-linux-junit.xml`, трассировка `.cache/t022-final-linux-req.json`.
+
+```text
+tools\build_cli.cmd --offline --ci
+100% tests passed, 0 tests failed out of 400
+Total Test time (real) = 1028.32 sec
+req_report: 51 IDs, 400 tests, 49 without req, 0 invalid IDs
+```
+
+Код возврата 0, **400/400 PASS, 0 SKIP**. Лог `.cache/t022-final-offline.log`, JUnit `.cache/t022-final-offline-junit.xml`, трассировка `.cache/t022-final-offline-req.json`. В логе подтверждён `x-block-origin`; использованы существующие кеши. Пересобраны обновлённые helper и юнит-тесты без новых предупреждений MSVC. Все четыре обязательных команды завершились успешно; дополнительных тестовых прогонов после этого не потребовалось.
+
+### JSON из реального CLI-запуска
+
+Успешный quick (код 0), полный объект из `.cache/t022-win-verify-success.json`:
+
+```json
+{"level":"quick","total":1,"checked":1,"ok":1,"warn":0,"corrupt":0,"unsupported":0,"unreadable":0,"cancelled":false,"index_updated":true,"items":[],"skipped":[],"ignored":[],"duration_ms":215,"recovery":{"recovered":[],"reindexed":[],"previous_session_unclosed":false,"sync":null},"command":"library verify"}
+```
+
+Full с повреждением (код 1), полный объект из `.cache/t022-win-verify-corrupt.json`:
+
+```json
+{"level": "full", "total": 1, "checked": 1, "ok": 0, "warn": 0, "corrupt": 1, "unsupported": 0, "unreadable": 0, "cancelled": false, "index_updated": true, "items": [{"asset_id": "0aa37f2d-862e-4327-9843-65e733ae4954", "path": "assets/54/0aa37f2d-862e-4327-9843-65e733ae4954.zip", "in_trash": false, "indexed": true, "status": "corrupt", "message_id": "am.manifest.stream_mismatch", "pointer": null, "stream": {"id": "c40883d3-2923-49a8-a162-380a42f321e2", "path": "content/a963a75e-ae09-447d-b651-aab80a42aab6/verify-source.bin"}}], "skipped": [], "ignored": [], "duration_ms": 221, "recovery": {"recovered": [], "reindexed": [], "previous_session_unclosed": false, "sync": null}, "command": "library verify"}
+```
+
+### Отклонения и решения владельца
+
+- **В-1 закрыт владельцем в чате:** «Да, принять исключение для after_lock». В этой точке pending_ops ещё не существует. Тест проверяет прежние ZIP и индекс, отсутствие журнала/temp и пустой recovery; op_id требуется начиная с after_prepared. Протокол и FaultPoint не менялись.
+- Три новых юнит-набора объединены в один разрешённый файл; тот же файл собирается отдельно как переносимый crash/lock helper.
+- `Library::OpenOptions` не содержит настройки ReadBudget. Используется существующее значение по умолчанию `ContainerVerifyOptions`, как в репозитории, с новым бюджетом на каждый ZIP. Нового числового норматива не вводилось; запрещённый Library API не расширялся.
+
+### Вопросы
+
+Открытых вопросов нет. В-1 разрешён явным ответом владельца.
