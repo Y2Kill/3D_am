@@ -23,6 +23,7 @@ namespace am::repository {
 namespace {
 using U64 = std::uint64_t;
 using Path = std::filesystem::path;
+bool is_independent_copy(const AssetSnapshot&, const manifest::CodecLimits&);
 constexpr std::string_view format_id = "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128";
 Error error(Errc code, std::string id, std::string detail) {
   return Error::make(code, "Asset repository operation failed", std::move(detail)).in("storage.repository").op("asset.repository").id(std::move(id));
@@ -409,6 +410,12 @@ Result<std::vector<commit::RecoveryItem>> AssetRepository::recover() {
     options.lock_timeout = impl_->options.lock_timeout;
     options.zip_limits = impl_->options.zip_limits;
     options.on_committed = [&](const db::PendingOperation& row) -> Result<void> {
+      if (row.kind == "create" && impl_->options.on_indexed) {
+        auto snap = take(load({impl_->options.library_id,row.asset_id},false));
+        if (is_independent_copy(snap,impl_->options.codec_limits)) {
+          try { impl_->options.on_indexed({snap.ref(),snap.revision(),row.op_id,"create"}); } catch (...) {}
+        }
+      }
       if (row.kind == "import_ready" && impl_->options.on_indexed) {
         auto snap = take(load({impl_->options.library_id, row.asset_id}, false));
         try {
@@ -560,7 +567,9 @@ Result<ImportReadyResult> AssetRepository::import_ready(const ImportReadyRequest
         auto archive = take(asset_zip::ZipArchive::open(source, impl_->options.zip_limits));
         asset_zip::ReadBudget budget(impl_->options.read_budget);
         const auto manifest = read_manifest(archive, impl_->options.codec_limits, budget);
-        out.incoming = import_info(manifest, source_base.size);
+        auto info = guard<ImportAssetInfo>([&] { return import_info(manifest, source_base.size); });
+        if (!info) { out.classification = "invalid"; throw info.error(); }
+        out.incoming = std::move(*info);
         out.ref.asset_id = string(manifest.document.known()["asset"], "id");
       }
       (void)impl_->path(out.ref);
@@ -915,9 +924,173 @@ void write_source(asset_zip::ZipWriter& writer, const std::string& name, const N
   auto actual = take(entry.finish());
   if (actual.uncompressed_size != fresh.size || !actual.sha256 || hex(*actual.sha256) != fresh.sha) fail(Errc::conflict,"am.repo.source_changed","Source SHA-256 changed between passes");
 }
+// Edit only schema-defined string tokens. Opaque numeric lexemes never enter a
+// floating-point DOM, including core-typed values stored behind codec handles.
+struct CopyRemap {
+  std::string text;
+  json::Tree tree;
+  std::map<std::string,std::string> ids, field_types;
+  std::vector<std::size_t> references, identities, storage_paths;
+  explicit CopyRemap(std::string source, const manifest::CodecLimits& limits)
+      : text(std::move(source)), tree(take(json::parse_strict(text,{limits.max_depth,limits.max_bytes}))) {}
+  std::size_t member(std::size_t node, std::string_view key) const {
+    if (node == json::no_node || tree.nodes[node].kind != json::Kind::object) return json::no_node;
+    for (auto i : tree.nodes[node].children) if (tree.nodes[i].edge == key) return i;
+    return json::no_node;
+  }
+  std::string value(std::size_t node) const { return node == json::no_node ? std::string{} : tree.nodes[node].decoded; }
+  template<class F> void each(std::size_t node, F f) {
+    if (node != json::no_node && tree.nodes[node].kind == json::Kind::array)
+      for (auto i : tree.nodes[node].children) f(i);
+  }
+  void ref(std::size_t node) { if (node != json::no_node) references.push_back(node); }
+  void ref(std::size_t node, std::string_view key) { ref(member(node,key)); }
+  void identity(std::size_t node) {
+    const auto id = member(node,"id");
+    if (id != json::no_node) { identities.push_back(id); ids.emplace(value(id),std::string{}); }
+  }
+  void dependencies(std::size_t node) {
+    each(member(node,"refs"),[&](auto r) { ref(r,"file_id"); ref(r,"group_id"); ref(r,"owner_id"); });
+  }
+  void authors(std::size_t node) { each(node,[&](auto a) { identity(a); }); }
+  void claims(std::size_t node) {
+    each(node,[&](auto c) {
+      identity(c);
+      const auto target = member(c,"target"); ref(target,"item_id");
+      each(member(c,"evidence"),[&](auto e) {
+        for (auto key : {"file_id","source_id","input_object_id","source_entry_id"}) ref(e,key);
+      });
+      const auto v = member(c,"value");
+      const auto kind = value(member(target,"kind")), field = value(member(target,"field"));
+      if (kind == "standard" && field == "authors") authors(v);
+      if (kind == "standard" && field == "license") ref(v,"file_ref");
+      if (kind == "custom" && field_types[value(member(target,"field_id"))] == "file_ref") ref(v);
+    });
+  }
+  void metadata(std::size_t owner) {
+    const auto m = member(owner,"metadata");
+    authors(member(m,"authors")); ref(member(m,"license"),"file_ref");
+    each(member(m,"custom_values"),[&](auto v) {
+      const auto type = field_types[value(member(v,"field_id"))];
+      if (type.starts_with("plugin:")) fail(Errc::unsupported,"am.repo.copy_plugin_values_unsupported","Plugin field value cannot be remapped");
+      if (type == "file_ref") ref(v,"value");
+      dependencies(member(v,"dependencies"));
+    });
+    // A plugin claim is also a value of that field.
+    each(member(m,"claims"),[&](auto c) {
+      const auto target = member(c,"target");
+      if (value(member(target,"kind")) == "custom" && member(c,"value") != json::no_node &&
+          field_types[value(member(target,"field_id"))].starts_with("plugin:"))
+        fail(Errc::unsupported,"am.repo.copy_plugin_values_unsupported","Plugin claim value cannot be remapped");
+    });
+    claims(member(m,"claims"));
+  }
+  void collect() {
+    each(member(0,"field_definitions"),[&](auto d) {
+      const auto type = value(member(d,"type")); field_types[value(member(d,"id"))] = type;
+      if (type == "file_ref") ref(d,"default");
+      if (type.starts_with("plugin:") && member(d,"default") != json::no_node)
+        fail(Errc::unsupported,"am.repo.copy_plugin_values_unsupported","Plugin default value cannot be remapped");
+    });
+    const auto asset = member(0,"asset"); identity(asset); metadata(asset);
+    each(member(0,"files"),[&](auto f) {
+      identity(f); metadata(f); storage_paths.push_back(member(f,"storage_path"));
+      each(member(f,"derived_from"),[&](auto r) { ref(r,"file_id"); });
+    });
+    each(member(0,"groups"),[&](auto g) {
+      identity(g); metadata(g); ref(g,"parent_id"); each(member(g,"file_refs"),[&](auto r) { ref(r); });
+    });
+    const auto previews = member(0,"previews"); ref(previews,"primary_id");
+    each(member(previews,"items"),[&](auto p) {
+      identity(p); ref(p,"file_id"); each(member(p,"group_refs"),[&](auto r) { ref(r); });
+    });
+    each(member(member(0,"origin"),"sources"),[&](auto s) { identity(s); claims(member(s,"claims")); });
+    each(member(0,"inputs"),[&](auto input) {
+      identity(input); each(member(input,"source_refs"),[&](auto r) { ref(r); });
+      each(member(input,"objects"),[&](auto o) { identity(o); ref(o,"parent_object_id"); ref(o,"parent_entry_id"); });
+      each(member(input,"entries"),[&](auto e) { identity(e); ref(e,"object_id"); ref(e,"file_id"); });
+    });
+  }
+  std::string render(const std::string& source_id, const std::string& new_id) {
+    std::set<std::string> used;
+    for (const auto& [old,next] : ids) { (void)next; used.insert(old); }
+    if (used.contains(new_id)) fail(Errc::invalid_argument,"am.repo.invalid_operation","New AssetID must differ from source instance IDs");
+    used.insert(new_id);
+    for (auto& [old,next] : ids) {
+      if (old == source_id) next = new_id;
+      else { do { next = Uuid::v4().to_string(); } while (!used.insert(next).second); }
+    }
+    std::map<std::size_t,std::string> edits;
+    auto replace = [&](std::size_t node) {
+      const auto found = ids.find(value(node));
+      if (found == ids.end()) fail(Errc::unsupported,"am.repo.copy_remap_incomplete","Reference has no current instance");
+      edits[node] = Json(found->second).dump();
+    };
+    for (auto node : identities) replace(node);
+    for (auto node : references) replace(node);
+    // Only InputID prefixes are rewritten; generated/ paths are retained.
+    each(member(0,"inputs"),[&](auto input) {
+      const auto old = value(member(input,"id"));
+      const auto prefix = "content/" + old + "/";
+      for (auto node : storage_paths) {
+        const auto path = value(node);
+        if (path.starts_with(prefix)) edits[node] = Json("content/"+ids.at(old)+"/"+path.substr(prefix.size())).dump();
+      }
+    });
+    std::string out; std::size_t position = 0;
+    // Token indices are in source order; edited nodes are scalar and disjoint.
+    for (const auto& [node,replacement] : edits) {
+      const auto& n = tree.nodes[node]; out.append(text,position,n.begin-position); out += replacement; position = n.end;
+    }
+    out.append(text,position,std::string::npos); return out;
+  }
+};
+std::string copy_pointer(const json::Tree& tree, std::size_t node) {
+  std::vector<std::string> parts;
+  while (tree.nodes[node].parent != json::no_node) {
+    const auto& n = tree.nodes[node]; const auto& parent = tree.nodes[n.parent];
+    std::string part = parent.kind == json::Kind::array ? std::to_string(n.index) : n.edge;
+    std::string escaped; for (char c : part) { if (c == '~') escaped += "~0"; else if (c == '/') escaped += "~1"; else escaped += c; }
+    parts.push_back(std::move(escaped)); node = n.parent;
+  }
+  std::string out; for (auto i = parts.rbegin(); i != parts.rend(); ++i) out += "/"+*i; return out;
+}
+void check_copy_remap(const std::string& output, const std::map<std::string,std::string>& ids,
+                      const std::string& source_id, const manifest::CodecLimits& limits) {
+  const auto tree = take(json::parse_strict(output,{limits.max_depth,limits.max_bytes}));
+  for (std::size_t i = 0; i < tree.nodes.size(); ++i) {
+    const auto& n = tree.nodes[i];
+    for (const auto& [old,next] : ids) {
+      (void)next;
+      const bool in_key = n.edge.find(old) != std::string::npos;
+      const bool in_value = n.kind == json::Kind::string && n.decoded.find(old) != std::string::npos;
+      if (!in_key && !in_value) continue;
+      const auto pointer = copy_pointer(tree,i);
+      if (!in_key && old == source_id && n.decoded == old && pointer == "/history/entries/0/details/source_asset/asset_id") continue;
+      throw error(Errc::unsupported,"am.repo.copy_remap_incomplete",pointer);
+    }
+  }
+}
+struct IndependentCopy {
+  const AssetSnapshot& source;
+  std::map<std::string,std::string> ids;
+  std::map<std::string,std::size_t> entries;
+};
+bool is_independent_copy(const AssetSnapshot& snapshot, const manifest::CodecLimits& limits) {
+  CopyRemap text(snapshot.manifest_text(),limits);
+  const auto entries = text.member(text.member(0,"history"),"entries");
+  bool found = false;
+  text.each(entries,[&](auto entry) {
+    const auto details = text.member(entry,"details");
+    found = found || (text.value(text.member(entry,"operation")) == "asset_created" &&
+                     text.value(text.member(details,"creation_kind")) == "independent_copy");
+  });
+  return found;
+}
 template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref, manifest::ManifestDocument doc, Plan plan,
                                                const AssetSnapshot* old, const std::string& op, const std::string& kind,
-                                               const Json& details, VerificationReport* failure_report) {
+                                               const Json& details, VerificationReport* failure_report,
+                                               const IndependentCopy* copy = nullptr) {
   ChangeResult result; result.ref = ref; result.op_id = op; result.revision = repository::revision(doc.known());
   const auto allowed = old ? opaque_paths(old->manifest().known(),old->archive()) : std::set<std::string>{};
   const auto old_keys = old ? old->manifest().opaque_keys() : std::vector<manifest::OpaqueKey>{};
@@ -925,7 +1098,8 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
   if (repo.options.test_hooks.mutate_manifest) repo.options.test_hooks.mutate_manifest(doc);
   // Render first so invalid handles produce the codec's structured error.
   const auto output = take(manifest::write_manifest(doc));
-  auto intended = intended_changes(old_keys,doc,op,plan.removed_ids,result.removed_opaque_owners);
+  auto intended = copy ? manifest::IntendedChanges{} : intended_changes(old_keys,doc,op,plan.removed_ids,result.removed_opaque_owners);
+  if (copy) check_copy_remap(output,copy->ids,copy->source.ref().asset_id,repo.options.codec_limits);
   if (old) take(manifest::verify_preserved(old->manifest_text(),output,intended,repo.options.codec_limits));
   else {
     // Creation has no old document; its only opaque owners are the new history.
@@ -934,7 +1108,8 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
   try { repo.validate(doc); }
   catch (const Error& e) { if (failure_report) { failure_report->v1 = CheckStatus::passed; failure_report->v2 = CheckStatus::failed; failure_report->error = e; } throw; }
   collision_check(doc.known(),allowed);
-  const auto estimated = estimate(doc.known(),output,plan,old ? &old->archive() : nullptr,allowed);
+  const auto estimated = copy ? estimate(copy->source.manifest().known(),output,plan,&copy->source.archive(),allowed)
+                              : estimate(doc.known(),output,plan,old ? &old->archive() : nullptr,allowed);
   if (estimated > repo.capabilities.max_file_size) fail(Errc::insufficient_space,"am.repo.file_too_large","Estimate exceeds storage maximum file size");
   if (repo.options.test_hooks.after_preflight) repo.options.test_hooks.after_preflight();
   asset_zip::ReadBudget budget(repo.options.read_budget); commit::CommitRequest request(budget);
@@ -946,6 +1121,10 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
     return guard<void>([&]() -> Result<void> {
       write_text(writer,output);
       auto emit = [&](const std::string& name) {
+        if (copy) {
+          asset_zip::RawCopyOptions options; options.drop_unlisted = true; options.target_name = name;
+          take(writer.copy_raw(copy->source.archive(),copy->entries.at(name),budget,options)); return;
+        }
         auto fresh = plan.sources.find(name); if (fresh != plan.sources.end()) { write_source(writer,name,fresh->second); return; }
         if (!old) fail(Errc::corrupt_data,"am.manifest.missing_stream",name);
         auto index = original_indices.find(name); if (index == original_indices.end()) fail(Errc::corrupt_data,"am.manifest.missing_stream",name);
@@ -957,6 +1136,10 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
       if (old) for (const auto& e : old->archive().entries()) if (allowed.contains(e.raw_name)) emit(e.raw_name);
       return {};
     });
+  };
+  if (copy) request.on_committed = [&](const db::PendingOperation&) -> Result<void> {
+    if (repo.options.on_indexed) { try { repo.options.on_indexed({ref,result.revision,op,"create"}); } catch (...) {} }
+    return {};
   };
   request.verifier = [&](const asset_zip::ZipArchive& zip) -> Result<void> {
     return guard<void>([&]() -> Result<void> {
@@ -981,7 +1164,7 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
     throw e;
   }
   result.commit = std::move(committed).value();
-  if (repo.options.on_indexed) { try { repo.options.on_indexed({ref,result.revision,op,kind}); } catch (...) { /* Observers cannot undo an indexed commit. */ } }
+  if (!copy && repo.options.on_indexed) { try { repo.options.on_indexed({ref,result.revision,op,kind}); } catch (...) { /* Observers cannot undo an indexed commit. */ } }
   return result;
 }
 } // namespace
@@ -1009,6 +1192,58 @@ Result<ChangeResult> AssetRepository::create(const CreateRequest& request, Verif
     auto result = guard<ChangeResult>([&] { return commit_update(*impl_,ref,std::move(doc),std::move(plan),nullptr,op,"asset_created",Json{{"creation_kind",request.creation_kind}},failure_report); });
     if (!result && result.error().message_id == "am.commit.base_changed") fail(Errc::conflict,"am.repo.asset_exists","Asset appeared during creation");
     return take(std::move(result));
+  });
+}
+Result<CopyResult> AssetRepository::copy_independent(const CopyRequest& request) {
+  return guard<CopyResult>([&] {
+    impl_->require_write();
+    auto source = take(snapshot(request.source));
+    if (!source.writable()) fail(Errc::unsupported,"am.repo.write_unsupported_version","Format is read-only");
+    const auto& current = source.manifest().known();
+    if (current.contains("extensions") && !current["extensions"].empty())
+      fail(Errc::unsupported,"am.repo.copy_extensions_unsupported","Extension clone contracts are unavailable");
+    if (!array(current,"historical_files").empty())
+      fail(Errc::unsupported,"am.repo.copy_history_unsupported","Historical files cannot be retained in revision one");
+    std::set<std::string> files;
+    for (const auto& f : array(current,"files")) files.insert(string(f,"id"));
+    for (const auto& f : array(current,"files")) for (const auto& r : array(f,"derived_from"))
+      if (!files.contains(string(r,"file_id")))
+        fail(Errc::unsupported,"am.repo.copy_history_unsupported","Derived file is not current");
+    if (!opaque_paths(current,source.archive()).empty())
+      fail(Errc::unsupported,"am.repo.copy_opaque_entries","Unregistered ZIP entries cannot be remapped");
+    const AssetRef ref{impl_->options.library_id,identifier(request.new_asset_id)};
+    Impl::Lease lock(*impl_,ref);
+    if (std::filesystem::exists(paths::native(impl_->path(ref))) ||
+        std::filesystem::exists(paths::native(impl_->root / "trash" / (ref.asset_id+".zip"))))
+      fail(Errc::conflict,"am.repo.asset_exists","Asset already exists");
+    const auto op = identifier(request.op_id), now = timestamp(impl_->options.clock());
+    auto document = take(manifest::parse_manifest(source.manifest_text(),impl_->options.codec_limits));
+    auto& j = document.known();
+    j["history"] = {{"entries",Json::array()}};
+    j["asset"]["revision"] = 1; j["asset"]["created_at"] = now; j["asset"]["modified_at"] = now;
+    // Readers accept omitted membership; new writers always emit the array.
+    if (auto groups = j.find("groups"); groups != j.end())
+      for (auto& group : *groups) if (!group.contains("file_refs")) group["file_refs"] = Json::array();
+    CopyRemap remap(take(manifest::write_manifest(document)),impl_->options.codec_limits);
+    remap.collect();
+    // Removed history IDs still participate in the completeness check.
+    for (const auto& h : array(current["history"],"entries")) remap.ids.emplace(string(h,"operation_id"),std::string{});
+    auto copy_doc = take(manifest::parse_manifest(remap.render(request.source.asset_id,ref.asset_id),impl_->options.codec_limits));
+    IndependentCopy copy{source,std::move(remap.ids),{}};
+    const auto old_files = registered(current), new_files = registered(copy_doc.known());
+    for (std::size_t i = 0; i < old_files.size(); ++i) {
+      const auto& name = old_files[i].path;
+      auto found = std::find_if(source.archive().entries().begin(),source.archive().entries().end(),[&](const auto& e) { return e.raw_name == name; });
+      if (found == source.archive().entries().end()) fail(Errc::corrupt_data,"am.manifest.missing_stream",name);
+      copy.entries.emplace(new_files[i].path,found->index);
+    }
+    const Json details{{"creation_kind","independent_copy"},{"source_asset",{{"asset_id",request.source.asset_id},{"revision",source.revision()}}}};
+    auto result = guard<ChangeResult>([&] {
+      return commit_update(*impl_,ref,std::move(copy_doc),Plan{},nullptr,op,"asset_created",details,nullptr,&copy);
+    });
+    if (!result && result.error().message_id == "am.commit.base_changed")
+      fail(Errc::conflict,"am.repo.asset_exists","Asset appeared during creation");
+    return CopyResult{ref,source.revision(),take(std::move(result))};
   });
 }
 Result<ChangeResult> AssetRepository::change(const ChangeRequest& request, VerificationReport* failure_report) {

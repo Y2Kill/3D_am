@@ -53,6 +53,7 @@ std::vector<std::byte> carried_extra(Bytes source, const RawCopyOptions& options
     if (size > source.size() - p) fail("Invalid source extra length");
     p += size;
     if (id == 1) continue;
+    if (options.target_name && id == 0x7075) { dropped_ids.insert(id); continue; }
     if (std::find(options.carry_extra_ids.begin(), options.carry_extra_ids.end(), id) == options.carry_extra_ids.end()) {
       if (options.drop_unlisted) {
         dropped_ids.insert(id);
@@ -243,9 +244,15 @@ Result<WrittenEntry> ZipWriter::copy_raw(const ZipArchive& archive, std::size_t 
     impl_->check(); if (impl_->open) return invalid_state();
     if (index >= archive.entries().size()) return write_error(Errc::io_error, "am.zip.io_error", "Invalid raw-copy entry index");
     const auto& source = archive.entries()[index];
-    impl_->validate_name(source.raw_name, source.uncompressed_size);
+    const auto& name = options.target_name ? *options.target_name : source.raw_name;
+    impl_->validate_name(name, source.uncompressed_size);
+    if (options.target_name && std::find(options.carry_extra_ids.begin(), options.carry_extra_ids.end(), 0x7075) != options.carry_extra_ids.end())
+      return write_error(Errc::invalid_argument, "am.zip.write.invalid_name", "Unicode Path extra cannot accompany raw-copy renaming");
     if (source.encrypted || (source.method != 0 && source.method != 8)) unsupported("Raw-copy compression/encryption cannot be verified");
-    Record r; r.entry.name = source.raw_name; r.entry.method = static_cast<CompressionMethod>(source.method);
+    Record r; r.entry.name = name; r.entry.method = static_cast<CompressionMethod>(source.method);
+    // Renaming retains data flags; the writer emits UTF-8 names and explicit
+    // sizes in headers rather than a trailing data descriptor.
+    if (options.target_name) r.entry.flags = static_cast<std::uint16_t>((source.flags & ~0x8u) | 0x800u);
     r.entry.uncompressed_size = source.uncompressed_size; r.entry.compressed_size = source.compressed_size; r.entry.crc32 = source.crc32;
     r.dos = {source.dos_date, source.dos_time}; r.local64 = source.uncompressed_size >= max32 || source.compressed_size >= max32;
     std::set<std::uint16_t> dropped_ids;

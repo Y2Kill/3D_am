@@ -151,6 +151,15 @@ struct LifecycleResult {
   AssetRef ref;
   std::string op_id;
 };
+struct CopyRequest {
+  AssetRef source;
+  std::optional<std::string> new_asset_id, op_id;
+};
+struct CopyResult {
+  AssetRef ref;
+  std::uint64_t source_revision = 0;
+  ChangeResult change;
+};
 struct ImportReadyRequest {
   std::filesystem::path source;
   std::optional<std::string> replace_expected;
@@ -180,6 +189,7 @@ class AssetRepository {
   // Optional output receives the actual verification report even on failure.
   Result<ChangeResult> create(const CreateRequest&, VerificationReport* failure_report = nullptr);
   Result<ChangeResult> change(const ChangeRequest&, VerificationReport* failure_report = nullptr);
+  Result<CopyResult> copy_independent(const CopyRequest&);
   Result<LifecycleResult> trash(const AssetRef&);
   Result<LifecycleResult> restore(const AssetRef&);
   Result<LifecycleResult> purge(const AssetRef&);

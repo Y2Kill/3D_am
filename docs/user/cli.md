@@ -18,6 +18,7 @@ am library info <dir> [--json] [--verbose]
 am library rebuild <dir> [--json] [--verbose]
 am library sync <dir> [--full] [--json] [--verbose]
 am library list <dir> [--json] [--trash] [--verbose]
+am library copy <dir> <asset-id> [--json] [--verbose]
 am library trash <dir> <asset-id>... [--json] [--verbose]
 am library restore <dir> <asset-id>... [--json] [--verbose]
 am library purge <dir> (<asset-id>... | --all) --yes [--json] [--verbose]
@@ -105,6 +106,35 @@ an unknown or overflowing total is null. `--trash` includes trash rows. A stale
 index produces a warning and still returns 0. Use `sync` for disk changes or
 `rebuild` when required. Automatic filesystem watching is planned separately. `info` also reports
 `indexed_assets` (null if the index is unavailable).
+
+### Independent asset copy
+
+`am library copy <dir> <asset-id>` creates a separate asset in the same library.
+It reads one snapshot of the active source, assigns a new AssetID and new local
+instance IDs, and remaps their references and `content/<InputID>/` paths.
+Payload bytes and their SHA-256 hashes remain unchanged; compressed ZIP streams
+are transferred without recompression. The source ZIP remains unchanged.
+
+The copy starts at revision 1 with one `asset_created` history entry recording
+`creation_kind: independent_copy` and the source AssetID and revision. Previous
+history, annotations, collection membership, and dismissed suggestions are not
+copied. New asset timestamps reflect the copy operation. Contract identifiers
+such as FieldID and TypeID remain unchanged.
+
+The current implementation refuses extensions, plugin field values, historical
+files, references to deleted files, and unregistered ZIP entries. It also refuses
+when a source instance ID remains embedded in other JSON data after remapping.
+The error detail identifies the first remaining JSON reference. Newer minor
+formats are read-only for this operation. Restore a trashed source before copying.
+Ordinary ZIP copying preserves IDs and remains available.
+
+JSON contains `source: {asset_id, revision}`, the new `asset_id`, `revision: 1`,
+`files` (new FileIDs and storage paths), and `error: null` on success. On refusal,
+unavailable result fields are null and `error` contains the stable message ID.
+`--verbose` adds the successful copy's verification report. Exit code 0 means
+the copy was committed; 4 means refusal or failed verification; 2 means invalid
+arguments. An index-update warning leaves the committed ZIP in place and marks
+the index for rebuilding.
 
 ### Library trash
 

@@ -144,6 +144,41 @@ Result<AssetOutcome> sync_library(const std::filesystem::path& root, bool full) 
     return out;
   });
 }
+Result<AssetOutcome> copy_library(const std::filesystem::path& root, const std::string& id, bool verbose) {
+  return guard([&]() -> Result<AssetOutcome> {
+    AssetOutcome out;
+    out.value = {{"source",{{"asset_id",id},{"revision",nullptr}}},{"asset_id",nullptr},
+                 {"revision",nullptr},{"files",Json::array()},{"error",nullptr}};
+    auto rejected = [&](const Error& e) -> Result<AssetOutcome> {
+      out.status = ExitCode::operation_failed;
+      auto encoded = error_json(e); if (!encoded) return encoded.error();
+      out.value["error"] = *encoded; out.diagnostics.push_back(e); return out;
+    };
+    const auto uuid = Uuid::parse_canonical(id);
+    if (!uuid || uuid->version() != 4 || (uuid->bytes()[8] & 0xc0) != 0x80) {
+      auto result = rejected(Error::make(Errc::invalid_argument,"AssetID must be canonical UUIDv4")
+                                 .id("am.repo.invalid_operation"));
+      if (result) result->status = ExitCode::usage;
+      return result;
+    }
+    library::OpenOptions options; options.application_version = kAppVersion;
+    auto opened = catalog::Catalog::open(root,options); if (!opened) return rejected(opened.error());
+    const repository::AssetRef ref{opened->library().config().library_id,id};
+    auto copied = opened->copy_independent({ref,{},{}});
+    if (!copied) return rejected(copied.error());
+    const auto& result = copied->copy;
+    out.value["source"]["revision"] = result.source_revision;
+    out.value["asset_id"] = result.ref.asset_id; out.value["revision"] = result.change.revision;
+    for (const auto& stream : result.change.verification.v4)
+      out.value["files"].push_back({{"id",stream.id},{"path",stream.path}});
+    for (auto& warning : copied->warnings) out.diagnostics.push_back(std::move(warning));
+    if (verbose) {
+      auto report = repository::verification_json(result.change.verification); if (!report) return report.error();
+      out.value["verification"] = *report;
+    }
+    return out;
+  });
+}
 namespace {
 Result<AssetOutcome> lifecycle_library(const std::filesystem::path& root, const std::vector<std::string>& requested,
                                        std::string_view kind, bool all, bool confirmed) {

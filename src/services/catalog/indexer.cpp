@@ -640,6 +640,14 @@ Result<CatalogLifecycle> Catalog::trash(const repository::AssetRef& ref) {
     return CatalogLifecycle{std::move(changed), std::move(impl_->warnings)};
   });
 }
+Result<CatalogCopy> Catalog::copy_independent(const repository::CopyRequest& request) {
+  return guard<CatalogCopy>([&]() -> Result<CatalogCopy> {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->warnings.clear();
+    auto copied = take(impl_->library->assets().copy_independent(request));
+    return CatalogCopy{std::move(copied),std::move(impl_->warnings)};
+  });
+}
 Result<CatalogLifecycle> Catalog::restore(const repository::AssetRef& ref) {
   return guard<CatalogLifecycle>([&]() -> Result<CatalogLifecycle> {
     const std::lock_guard lock(impl_->mutex);
