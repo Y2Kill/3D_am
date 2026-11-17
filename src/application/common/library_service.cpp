@@ -17,6 +17,10 @@ Json config_json(const library::Config& c) {
   return {{"library_id", c.library_id}, {"name", c.name}, {"created_at", c.created_at}, {"schema_version", c.schema_version}};
 }
 Json optional_bool(const std::optional<bool>& b) { return b ? Json(*b) : Json(nullptr); }
+void opening_warnings(AssetOutcome& out, const catalog::Catalog& catalog) {
+  const auto& warnings = catalog.open_report().warnings;
+  out.diagnostics.insert(out.diagnostics.end(),warnings.begin(),warnings.end());
+}
 }  // namespace
 Result<AssetOutcome> init_library(const std::filesystem::path& root, const std::string& name) {
   return guard([&]() -> Result<AssetOutcome> {
@@ -98,6 +102,7 @@ Result<AssetOutcome> rebuild_library(const std::filesystem::path& root) {
     AssetOutcome out;
     out.value = {{"indexed",report->indexed},{"duration_ms",report->duration_ms},{"skipped",Json::array()},{"ignored",report->ignored}};
     for (const auto& s : report->skipped) out.value["skipped"].push_back({{"path",s.path},{"reason",s.reason},{"message_id",s.message_id}});
+    opening_warnings(out,*opened);
     return out;
   });
 }
@@ -111,6 +116,7 @@ Result<AssetOutcome> list_library(const std::filesystem::path& root, bool trash)
     for (const auto& r : *rows) out.value["assets"].push_back({{"asset_id",r.asset_id},{"revision",r.revision},{"title",r.title ? Json(*r.title) : Json(nullptr)},
       {"health",r.health},{"file_count",r.file_count},{"content_bytes",r.content_bytes ? Json(*r.content_bytes) : Json(nullptr)},{"in_trash",r.in_trash}});
     if (*required) out.diagnostics.push_back(Error::make(Errc::incomplete,"Index rebuild required").id("am.catalog.rebuild_required").with_severity(Severity::warning));
+    opening_warnings(out,*opened);
     return out;
   });
 }
@@ -141,6 +147,7 @@ Result<AssetOutcome> sync_library(const std::filesystem::path& root, bool full) 
       out.diagnostics.push_back(Error::make(Errc::not_found, "Indexed asset is missing", id)
                                     .id("am.catalog.asset_missing")
                                     .with_severity(Severity::warning));
+    opening_warnings(out,*opened);
     return out;
   });
 }
@@ -165,7 +172,7 @@ Result<AssetOutcome> copy_library(const std::filesystem::path& root, const std::
     auto opened = catalog::Catalog::open(root,options); if (!opened) return rejected(opened.error());
     const repository::AssetRef ref{opened->library().config().library_id,id};
     auto copied = opened->copy_independent({ref,{},{}});
-    if (!copied) return rejected(copied.error());
+    if (!copied) { auto result = rejected(copied.error()); if (result) opening_warnings(*result,*opened); return result; }
     const auto& result = copied->copy;
     out.value["source"]["revision"] = result.source_revision;
     out.value["asset_id"] = result.ref.asset_id; out.value["revision"] = result.change.revision;
@@ -176,6 +183,7 @@ Result<AssetOutcome> copy_library(const std::filesystem::path& root, const std::
       auto report = repository::verification_json(result.change.verification); if (!report) return report.error();
       out.value["verification"] = *report;
     }
+    opening_warnings(out,*opened);
     return out;
   });
 }
@@ -200,7 +208,7 @@ Result<AssetOutcome> lifecycle_library(const std::filesystem::path& root, const 
     auto opened = catalog::Catalog::open(root, options);
     if (!opened) return opened.error();
     auto ids = requested;
-    if (all) {
+    if (all && std::filesystem::exists(paths::native(root / "trash"))) {
       for (const auto& entry : std::filesystem::directory_iterator(paths::native(root / "trash"))) {
         if (entry.is_symlink() || !entry.is_regular_file() || entry.path().extension() != ".zip") continue;
         const auto raw = entry.path().stem().u8string();
@@ -228,6 +236,7 @@ Result<AssetOutcome> lifecycle_library(const std::filesystem::path& root, const 
         for (auto& warning : result->warnings) out.diagnostics.push_back(std::move(warning));
       out.value["results"].push_back(std::move(row));
     }
+    opening_warnings(out,*opened);
     return out;
   });
 }
@@ -304,6 +313,55 @@ Result<AssetOutcome> add_ready_library(const std::filesystem::path& root,
       if (detail.status == "failed" || detail.status == "conflict") out.status = ExitCode::operation_failed;
       out.value["results"].push_back(std::move(row));
     }
+    opening_warnings(out,*opened);
+    return out;
+  });
+}
+Result<AssetOutcome> verify_library(const std::filesystem::path& root, bool full, bool trash, bool verbose) {
+  return guard([&]() -> Result<AssetOutcome> {
+    library::OpenOptions options; options.application_version = kAppVersion;
+    auto opened = catalog::Catalog::open(root,options);
+    if (!opened && (opened.error().message_id == "am.library.storage_read_only" || opened.error().message_id == "am.repo.storage_read_only")) {
+      options.mode = library::Mode::read_only; opened = catalog::Catalog::open(root,options);
+    }
+    if (!opened) return opened.error();
+    catalog::LibraryVerifyOptions verify; verify.level = full ? catalog::LibraryVerifyLevel::full : catalog::LibraryVerifyLevel::quick; verify.include_trash = trash;
+    auto report = opened->verify(verify); if (!report) return report.error();
+    AssetOutcome out;
+    out.status = report->corrupt || report->unreadable ? ExitCode::check_failed :
+                 report->unsupported || report->cancelled ? ExitCode::partial : ExitCode::success;
+    out.value = {{"level",full ? "full" : "quick"},{"total",report->total},{"checked",report->checked},{"ok",report->ok},
+      {"warn",report->warn},{"corrupt",report->corrupt},{"unsupported",report->unsupported},{"unreadable",report->unreadable},
+      {"cancelled",report->cancelled},{"index_updated",report->index_updated},{"items",Json::array()},
+      {"skipped",Json::array()},{"ignored",report->ignored},{"duration_ms",report->duration_ms}};
+    for (const auto& item : report->items) {
+      if (item.status != "ok" || verbose)
+        out.value["items"].push_back({{"asset_id",item.asset_id},{"path",item.path},{"in_trash",item.in_trash},{"indexed",item.indexed},
+          {"status",item.status},{"message_id",item.message_id},{"pointer",item.pointer ? Json(*item.pointer) : Json(nullptr)},
+          {"stream",item.stream ? Json{{"id",item.stream->id},{"path",item.stream->path}} : Json(nullptr)}});
+      if (item.status != "ok")
+        out.diagnostics.push_back(Error::make(Errc::corrupt_data,"Library verification finding",item.path).id(item.message_id)
+          .with_severity(item.status == "warn" ? Severity::warning : Severity::error));
+    }
+    for (const auto& item : report->skipped)
+      out.value["skipped"].push_back({{"path",item.path},{"reason",item.reason},{"message_id",item.message_id}});
+    const auto& recovery = opened->open_report();
+    out.value["recovery"] = {{"recovered",Json::array()},{"reindexed",recovery.reindexed},
+      {"previous_session_unclosed",recovery.previous_session_unclosed},{"sync",nullptr}};
+    for (const auto& item : recovery.recovered) {
+      const auto raw = item.path.generic_u8string();
+      out.value["recovery"]["recovered"].push_back({{"op_id",item.op_id},{"path",std::string(raw.begin(),raw.end())},
+        {"outcome",commit::outcome_name(item.outcome)},{"detail",item.detail}});
+    }
+    if (recovery.sync) {
+      const auto& s = *recovery.sync;
+      auto& json = out.value["recovery"]["sync"];
+      json = {{"added",s.added},{"updated",s.updated},{"unchanged",s.unchanged},{"missing",s.missing},
+        {"skipped",Json::array()},{"ignored",s.ignored},{"duration_ms",s.duration_ms},{"full",s.full}};
+      for (const auto& item : s.skipped) json["skipped"].push_back({{"path",item.path},{"reason",item.reason},{"message_id",item.message_id}});
+    }
+    out.diagnostics.insert(out.diagnostics.end(),report->warnings.begin(),report->warnings.end());
+    opening_warnings(out,*opened);
     return out;
   });
 }

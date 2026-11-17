@@ -106,6 +106,8 @@ class IndexStore {
   Result<TrashSummary> trash_summary() const;
   Result<bool> rebuild_required() const;
   Result<void> mark_rebuild_required();
+  Result<std::optional<std::string>> get_meta(std::string_view key) const;
+  Result<void> set_meta(std::string_view key, std::string_view value);
 
  private:
   Connection db_;

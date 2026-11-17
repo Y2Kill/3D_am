@@ -28,6 +28,38 @@ struct SyncReport {
   std::int64_t duration_ms = 0;
   bool full = false;
 };
+enum class LibraryVerifyLevel { quick, full };
+struct LibraryVerifyOptions {
+  LibraryVerifyLevel level = LibraryVerifyLevel::quick;
+  bool include_trash = true;
+  std::function<void(std::size_t,std::size_t)> progress;
+  std::function<bool()> cancelled;
+};
+struct LibraryVerifyStream { std::string id, path; };
+struct LibraryVerifyItem {
+  std::string asset_id, path, status, message_id;
+  bool in_trash = false, indexed = false;
+  std::optional<std::string> pointer;
+  std::optional<LibraryVerifyStream> stream;
+};
+struct LibraryVerifyReport {
+  LibraryVerifyLevel level = LibraryVerifyLevel::quick;
+  std::size_t total = 0, checked = 0, ok = 0, warn = 0, corrupt = 0, unsupported = 0, unreadable = 0;
+  bool cancelled = false, index_updated = false;
+  std::vector<LibraryVerifyItem> items;
+  std::vector<SkippedAsset> skipped;
+  std::vector<std::string> ignored;
+  std::vector<Error> warnings;
+  std::int64_t duration_ms = 0;
+};
+struct OpenReport {
+  std::vector<commit::RecoveryItem> recovered;
+  std::vector<std::string> reindexed;
+  bool previous_session_unclosed = false;
+  std::optional<SyncReport> sync;
+  std::size_t pending_read_only = 0;
+  std::vector<Error> warnings;
+};
 struct IndexerHooks {
   // Per-instance failure injection. No global state; empty in production.
   std::function<Result<void>(std::string_view)> before_update;
@@ -45,6 +77,8 @@ class Indexer {
   Result<RebuildReport> rebuild();
   Result<SyncReport> sync(const SyncOptions& = {});
   Result<void> update(const repository::AssetRef&, bool in_trash = false);
+  Result<void> refresh(std::string_view asset_id);
+  Result<LibraryVerifyReport> verify(const LibraryVerifyOptions&);
   Result<void> remove(std::string_view asset_id);
   Result<std::vector<db::IndexSummary>> list(bool include_trash = false) const;
   Result<bool> rebuild_required() const;
@@ -82,6 +116,8 @@ class Catalog {
   Catalog& operator=(const Catalog&) = delete;
   library::Library& library() noexcept;
   Indexer& indexer() noexcept;
+  const OpenReport& open_report() const noexcept;
+  Result<LibraryVerifyReport> verify(const LibraryVerifyOptions& = {});
   Result<SyncReport> sync(const SyncOptions& = {});
   Result<CatalogChange> create(const repository::CreateRequest&);
   Result<CatalogChange> change(const repository::ChangeRequest&);

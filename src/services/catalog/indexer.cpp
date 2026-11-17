@@ -162,7 +162,7 @@ struct Candidates {
   std::vector<std::string> ignored;
   std::vector<SkippedAsset> duplicates;
 };
-Candidates list_candidates(const fs::path& root) {
+Candidates list_candidates(const fs::path& root, bool include_trash = true) {
   Candidates out;
   std::vector<Candidate> all;
   auto consider = [&](const fs::directory_entry& entry, const std::string& relative, bool trash) {
@@ -187,8 +187,9 @@ Candidates list_candidates(const fs::path& root) {
     for (const auto& entry : fs::directory_iterator(shard.path()))
       consider(entry, relative + "/" + utf8(entry.path().filename()), false);
   }
-  for (const auto& entry : fs::directory_iterator(paths::native(root / "trash")))
-    consider(entry, "trash/" + utf8(entry.path().filename()), true);
+  if (include_trash)
+    for (const auto& entry : fs::directory_iterator(paths::native(root / "trash")))
+      consider(entry, "trash/" + utf8(entry.path().filename()), true);
   std::sort(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.relative < b.relative; });
   std::set<std::string> seen;
   for (auto& candidate : all) {
@@ -557,6 +558,119 @@ Result<void> Indexer::remove(std::string_view id) {
     return store_.remove(id);
   });
 }
+Result<void> Indexer::refresh(std::string_view id) {
+  return guard<void>([&]() -> Result<void> {
+    writable(library_);
+    const repository::AssetRef ref{library_.config().library_id,std::string(id)};
+    const auto uuid = Uuid::parse_canonical(id);
+    if (!uuid || uuid->version() != 4 || (uuid->bytes()[8] & 0xc0) != 0x80)
+      return error(Errc::invalid_argument,"am.catalog.manifest_invalid","Asset ID is not UUIDv4");
+    if (fs::exists(paths::native(root_/"assets"/std::string(id.substr(34))/(std::string(id)+".zip")))) return update(ref,false);
+    if (fs::exists(paths::native(root_/"trash"/(std::string(id)+".zip")))) return update(ref,true);
+    return remove(id);
+  });
+}
+Result<LibraryVerifyReport> Indexer::verify(const LibraryVerifyOptions& options) {
+  return guard<LibraryVerifyReport>([&]() -> Result<LibraryVerifyReport> {
+    const auto start = std::chrono::steady_clock::now();
+    auto candidates = list_candidates(root_,options.include_trash);
+    LibraryVerifyReport out; out.level = options.level; out.total = candidates.winners.size();
+    out.skipped = std::move(candidates.duplicates); out.ignored = std::move(candidates.ignored);
+    std::map<std::string,db::IndexState> previous;
+    bool index_ready = library_.database_info(library::DatabaseKind::index).state == library::DatabaseState::ok &&
+                       library_.database(library::DatabaseKind::index);
+    if (index_ready) {
+      auto rows = store_.sync_state();
+      if (rows) for (auto& row : *rows) previous.emplace(row.asset_id,std::move(row));
+      else index_ready = false;
+    }
+    if (index_ready) {
+      auto required = store_.rebuild_required(); index_ready = required && !*required;
+    }
+    if (!index_ready) out.warnings.push_back(error(Errc::incomplete,"am.catalog.rebuild_required").with_severity(Severity::warning));
+    struct Repair { std::string id; std::optional<db::IndexRecord> record; std::optional<db::IndexMark> mark; };
+    std::vector<Repair> repairs;
+    if (options.progress) options.progress(0,out.total);
+    for (const auto& c : candidates.winners) {
+      if (options.cancelled && options.cancelled()) { out.cancelled = true; break; }
+      LibraryVerifyItem item; item.asset_id = c.id; item.path = c.relative; item.in_trash = c.trash;
+      item.indexed = previous.contains(c.id);
+      repository::ContainerVerifyOptions check;
+      check.streams = options.level == LibraryVerifyLevel::full; check.level = repository::VerifyLevel::full;
+      repository::ContainerContents contents;
+      auto verified = repository::verify_container(c.path,check,&contents);
+      if (!verified) {
+        if (verified.error().code == Errc::resource_exhausted || verified.error().code == Errc::internal) throw verified.error();
+        item.status = verified.error().code == Errc::unsupported ? "unsupported" :
+                      verified.error().code == Errc::corrupt_data ? "corrupt" : "unreadable";
+        item.message_id = verified.error().message_id;
+      } else {
+        const auto& report = *verified;
+        if (contents.document) {
+          auto mapped = map(*contents.document,contents.manifest_text,Location{c.relative,"0",0,c.trash},report);
+          if (mapped) { item.status = mapped->summary.health; item.message_id = mapped->health_detail.value_or(""); }
+          else { item.status = mapped.error().code == Errc::unsupported ? "unsupported" : "corrupt"; item.message_id = mapped.error().message_id; }
+          if (string(member(contents.document->known(),"asset"),"id") != c.id) {
+            item.status = "corrupt"; item.message_id = "am.catalog.id_mismatch"; item.pointer = "/asset/id";
+          }
+        } else item.status = report.error && report.error->code == Errc::unsupported ? "unsupported" : "corrupt";
+        if (report.error) {
+          if (item.message_id.empty()) item.message_id = report.error->message_id;
+          if (report.error->code == Errc::io_error || report.error->code == Errc::not_found) item.status = "unreadable";
+        }
+        for (const auto& finding : report.v3_findings)
+          if (!item.pointer && finding.message_id == item.message_id && !finding.pointer.empty()) item.pointer = finding.pointer;
+        for (const auto& stream : report.v4)
+          if (stream.status == repository::StreamStatus::failed || stream.status == repository::StreamStatus::unsupported) {
+            if (stream.status == repository::StreamStatus::failed) item.status = "corrupt";
+            else if (item.status != "corrupt") item.status = "unsupported";
+            item.stream = LibraryVerifyStream{stream.id,stream.path};
+            if (stream.error) {
+              item.message_id = stream.error->message_id;
+              if (stream.error->code == Errc::io_error || stream.error->code == Errc::not_found) item.status = "unreadable";
+            }
+            break;
+          }
+        if (item.status.empty()) item.status = "corrupt";
+      }
+      if (item.message_id.empty() && item.status != "ok") item.message_id = "am.catalog.manifest_invalid";
+      if (index_ready && item.indexed && library_.mode() == library::Mode::read_write) {
+        if (item.status == "corrupt" || item.status == "unreadable")
+          repairs.push_back({c.id,{},db::IndexMark{c.id,"corrupt",item.message_id,{}}});
+        else if ((item.status == "ok" || item.status == "warn") && previous.at(c.id).health == "corrupt")
+          repairs.push_back({c.id,take(read(c.path,c.relative,c.trash)),{}});
+      }
+      if (item.status == "ok") ++out.ok;
+      else if (item.status == "warn") ++out.warn;
+      else if (item.status == "corrupt") ++out.corrupt;
+      else if (item.status == "unsupported") ++out.unsupported;
+      else ++out.unreadable;
+      out.items.push_back(std::move(item)); ++out.checked;
+      if (options.progress) options.progress(out.checked,out.total);
+    }
+    if (index_ready && library_.mode() == library::Mode::read_write) {
+      auto applied = guard<void>([&]() -> Result<void> {
+        auto tx = take(store_.begin_sync());
+        for (const auto& repair : repairs) {
+          if (repair.mark) take(tx.mark(*repair.mark));
+          else if (repair.record) {
+            if (hooks_.before_update) take(hooks_.before_update(repair.id));
+            take(tx.insert(*repair.record));
+          }
+        }
+        return tx.commit();
+      });
+      out.index_updated = applied.ok();
+      if (!applied) {
+        auto marked = store_.mark_rebuild_required();
+        out.warnings.push_back(error(Errc::io_error,"am.catalog.index_update_failed").with_severity(Severity::warning).caused_by(applied.error()));
+        if (!marked) { auto warning = marked.error(); warning.severity = Severity::warning; out.warnings.push_back(std::move(warning)); }
+      }
+    }
+    out.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+    return out;
+  });
+}
 Result<std::vector<db::IndexSummary>> Indexer::list(bool trash) const { return store_.list(trash); }
 Result<bool> Indexer::rebuild_required() const { return store_.rebuild_required(); }
 Result<std::int64_t> Indexer::count() const { return store_.count(); }
@@ -572,8 +686,24 @@ struct Catalog::Impl {
   std::optional<library::Library> library;
   std::unique_ptr<Indexer> indexer;
   std::vector<Error> warnings;
+  OpenReport opened;
+  bool opening = true, session_marked = false;
+  ~Impl() noexcept {
+    if (session_marked && library) {
+      try { db::IndexStore store(library->database(library::DatabaseKind::index)); (void)store.set_meta("writer_session","closed"); }
+      catch (...) {}
+    }
+  }
+  void index_warning(const std::string& id, const Error& cause, std::vector<Error>& output) {
+    auto marked = indexer->mark_rebuild_required();
+    output.push_back(error(Errc::io_error,"am.catalog.index_update_failed",id).with_severity(Severity::warning).caused_by(cause));
+    if (!marked) { auto warning = marked.error(); warning.severity = Severity::warning; output.push_back(std::move(warning)); }
+  }
   void observe(const repository::IndexedEvent& event) {
     const std::lock_guard lock(mutex);
+    // Recovery notifications are deferred to the explicit refresh pass after
+    // recover, including kinds whose repository observer is not replayed.
+    if (opening) return;
     auto indexed = event.kind == "remove" || event.kind == "purge" ? indexer->remove(event.ref.asset_id)
                                                                    : indexer->update(event.ref, event.kind == "trash");
     if (!indexed) {
@@ -605,11 +735,72 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
     };
     p->library.emplace(take(library::Library::open(root, options)));
     p->indexer = std::make_unique<Indexer>(fs::absolute(root).lexically_normal(), *p->library, std::move(hooks));
+    if (options.mode == library::Mode::read_only) {
+      if (p->library->database_info(library::DatabaseKind::state).state == library::DatabaseState::ok) {
+        auto state_connection = db::Connection::borrow(p->library->database(library::DatabaseKind::state));
+        auto query = state_connection.prepare("SELECT count(*) FROM pending_ops");
+        if (query) {
+          auto row = query->step();
+          if (row && *row == db::Step::row) p->opened.pending_read_only = static_cast<std::size_t>(query->integer(0));
+        }
+      }
+      if (p->opened.pending_read_only)
+        p->opened.warnings.push_back(error(Errc::incomplete,"am.library.recovery_pending",std::to_string(p->opened.pending_read_only)).with_severity(Severity::warning));
+    } else {
+      auto journal = db::StateJournal::open(root);
+      if (!journal) return error(journal.error().code,"am.library.recovery_failed").caused_by(journal.error());
+      auto before = (*journal)->list();
+      if (!before) return error(before.error().code,"am.library.recovery_failed").caused_by(before.error());
+      auto recovered = p->library->assets().recover();
+      if (!recovered) return error(recovered.error().code,"am.library.recovery_failed").caused_by(recovered.error());
+      p->opened.recovered = std::move(*recovered);
+      for (const auto& item : p->opened.recovered)
+        if (item.outcome == commit::RecoveryOutcome::failed || item.outcome == commit::RecoveryOutcome::skipped ||
+            item.outcome == commit::RecoveryOutcome::skipped_locked) {
+          auto warning = error(Errc::incomplete,"am.library.recovery_incomplete",item.op_id+" "+utf8(item.path)+" "+item.detail).with_severity(Severity::warning);
+          if (item.error) warning = std::move(warning).caused_by(*item.error);
+          p->opened.warnings.push_back(std::move(warning));
+        }
+      const bool available = p->library->database_info(library::DatabaseKind::index).state == library::DatabaseState::ok && p->library->database(library::DatabaseKind::index);
+      bool ready = available && !take(p->indexer->rebuild_required());
+      std::set<std::string> touched;
+      for (const auto& row : *before) touched.insert(row.asset_id);
+      for (const auto& id : touched) {
+        if (!ready) break;
+        auto updated = p->indexer->refresh(id);
+        if (updated) p->opened.reindexed.push_back(id);
+        else { p->index_warning(id,updated.error(),p->opened.warnings); ready = false; }
+      }
+      if (available) {
+        db::IndexStore store(p->library->database(library::DatabaseKind::index));
+        auto session = store.get_meta("writer_session");
+        if (session) {
+          p->opened.previous_session_unclosed = !*session || **session != "closed";
+          if (ready && p->opened.previous_session_unclosed) {
+            auto synced = p->indexer->sync();
+            if (synced) p->opened.sync = std::move(*synced);
+            else { p->index_warning("startup sync",synced.error(),p->opened.warnings); ready = false; }
+          }
+        } else { p->index_warning("writer_session",session.error(),p->opened.warnings); ready = false; }
+        auto marked = store.set_meta("writer_session","open");
+        if (marked) p->session_marked = true;
+        else { p->index_warning("writer_session",marked.error(),p->opened.warnings); ready = false; }
+      }
+      if (!ready) p->opened.warnings.push_back(error(Errc::incomplete,"am.catalog.rebuild_required").with_severity(Severity::warning));
+    }
+    p->opening = false;
     return Catalog(std::move(p));
   });
 }
 library::Library& Catalog::library() noexcept { return *impl_->library; }
 Indexer& Catalog::indexer() noexcept { return *impl_->indexer; }
+const OpenReport& Catalog::open_report() const noexcept { return impl_->opened; }
+Result<LibraryVerifyReport> Catalog::verify(const LibraryVerifyOptions& options) {
+  return guard<LibraryVerifyReport>([&]() -> Result<LibraryVerifyReport> {
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->indexer->verify(options);
+  });
+}
 Result<SyncReport> Catalog::sync(const SyncOptions& options) {
   return guard<SyncReport>([&]() -> Result<SyncReport> {
     const std::lock_guard lock(impl_->mutex);
