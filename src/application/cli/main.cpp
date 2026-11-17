@@ -185,6 +185,12 @@ int main(int argc, char** argv) {
            app::add_ready_library(path(add_ready_root), sources,
                                   replace_ready->count() ? std::optional(add_ready_replace) : std::nullopt, verbose));
   });
+  std::string copy_root, copy_id;
+  auto* copy = library->add_subcommand("copy", "Create an independent asset with new instance IDs");
+  copy->add_option("dir", copy_root)->required();
+  copy->add_option("asset-id", copy_id)->required();
+  presentation(copy);
+  copy->callback([&] { render("library copy", app::copy_library(path(copy_root),copy_id,verbose)); });
   auto* asset = cli.add_subcommand("asset", "Create, inspect, check, and extract a standalone asset ZIP");
   asset->require_subcommand(1);
   std::vector<std::string> inputs;

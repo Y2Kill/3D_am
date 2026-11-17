@@ -27,6 +27,7 @@ struct RawCopyOptions {
   bool carry_comment = false;
   // Explicit carry settings take priority over dropping unlisted metadata.
   bool drop_unlisted = false;
+  std::optional<std::string> target_name;
 };
 struct WrittenEntry {
   std::size_t index = 0;

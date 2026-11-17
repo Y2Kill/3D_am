@@ -66,6 +66,10 @@ struct CatalogLifecycle {
   repository::LifecycleResult change;
   std::vector<Error> warnings;
 };
+struct CatalogCopy {
+  repository::CopyResult copy;
+  std::vector<Error> warnings;
+};
 // Owns the write owner and its observer. The stable Impl also keeps callbacks
 // valid when Catalog is moved. Index failures never undo a committed ZIP.
 class Catalog {
@@ -81,6 +85,7 @@ class Catalog {
   Result<SyncReport> sync(const SyncOptions& = {});
   Result<CatalogChange> create(const repository::CreateRequest&);
   Result<CatalogChange> change(const repository::ChangeRequest&);
+  Result<CatalogCopy> copy_independent(const repository::CopyRequest&);
   Result<CatalogLifecycle> trash(const repository::AssetRef&);
   Result<CatalogLifecycle> restore(const repository::AssetRef&);
   Result<CatalogLifecycle> purge(const repository::AssetRef&);
