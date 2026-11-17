@@ -240,6 +240,21 @@ class LibraryCli(unittest.TestCase):
         self.assertEqual(source_path.read_bytes(), source_before_refusal)
         self.assertEqual(len(self.run_am("list")["assets"]), 2)
         self.assertEqual(list((self.root / ".am/.am-tmp").iterdir()), [])
+        del manifest["extensions"]
+        old_path = manifest["files"][0]["storage_path"]
+        unsafe_path = old_path.rsplit("/", 1)[0] + "/unsafe?.bin"
+        manifest["files"][0]["storage_path"] = unsafe_path
+        contents[unsafe_path] = contents.pop(old_path)
+        contents["manifest.json"] = json.dumps(manifest, ensure_ascii=False).encode("utf-8")
+        with zipfile.ZipFile(source_path, "w") as archive:
+            for name, data in contents.items():
+                info = Utf8Info(name)
+                info.create_system = 0
+                info.external_attr = 0x20
+                archive.writestr(info, data)
+        rejected_path = self.run_am("copy", 4, source_id)
+        self.assertEqual(rejected_path["error"]["message_id"], "am.repo.invalid_operation")
+        self.assertEqual(len(self.run_am("list")["assets"]), 2)
 
     def test_trash(self):
         self.run_am("init")

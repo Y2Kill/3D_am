@@ -150,10 +150,17 @@ Result<AssetOutcome> copy_library(const std::filesystem::path& root, const std::
     out.value = {{"source",{{"asset_id",id},{"revision",nullptr}}},{"asset_id",nullptr},
                  {"revision",nullptr},{"files",Json::array()},{"error",nullptr}};
     auto rejected = [&](const Error& e) -> Result<AssetOutcome> {
-      out.status = e.code == Errc::invalid_argument ? ExitCode::usage : ExitCode::operation_failed;
+      out.status = ExitCode::operation_failed;
       auto encoded = error_json(e); if (!encoded) return encoded.error();
       out.value["error"] = *encoded; out.diagnostics.push_back(e); return out;
     };
+    const auto uuid = Uuid::parse_canonical(id);
+    if (!uuid || uuid->version() != 4 || (uuid->bytes()[8] & 0xc0) != 0x80) {
+      auto result = rejected(Error::make(Errc::invalid_argument,"AssetID must be canonical UUIDv4")
+                                 .id("am.repo.invalid_operation"));
+      if (result) result->status = ExitCode::usage;
+      return result;
+    }
     library::OpenOptions options; options.application_version = kAppVersion;
     auto opened = catalog::Catalog::open(root,options); if (!opened) return rejected(opened.error());
     const repository::AssetRef ref{opened->library().config().library_id,id};
