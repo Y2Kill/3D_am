@@ -1221,6 +1221,9 @@ Result<CopyResult> AssetRepository::copy_independent(const CopyRequest& request)
     auto& j = document.known();
     j["history"] = {{"entries",Json::array()}};
     j["asset"]["revision"] = 1; j["asset"]["created_at"] = now; j["asset"]["modified_at"] = now;
+    // Readers accept omitted membership; new writers always emit the array.
+    if (auto groups = j.find("groups"); groups != j.end())
+      for (auto& group : *groups) if (!group.contains("file_refs")) group["file_refs"] = Json::array();
     CopyRemap remap(take(manifest::write_manifest(document)),impl_->options.codec_limits);
     remap.collect();
     // Removed history IDs still participate in the completeness check.

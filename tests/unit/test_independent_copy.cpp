@@ -219,6 +219,12 @@ TEST(IndependentCopy, RepeatedCopiesCopyOfCopyAndSourceRestrictions) {
   const auto j = Json::parse(value(w.repository().snapshot(c.ref)).manifest_text());
   EXPECT_EQ(j["history"]["entries"][0]["details"]["source_asset"]["asset_id"],a.ref.asset_id);
   auto occupied = w.catalog.copy_independent({w.asset.ref,a.ref.asset_id,{}}); ASSERT_FALSE(occupied); EXPECT_EQ(occupied.error().message_id,"am.repo.asset_exists");
+  auto without_membership = w.plain();
+  without_membership["groups"] = Json::array({{{"id",id()},{"name","Empty group"},{"type","custom"}}});
+  w.install(without_membership);
+  const auto empty_group = value(w.catalog.copy_independent({w.asset.ref,{},{}})).copy;
+  const auto written = Json::parse(value(w.repository().snapshot(empty_group.ref)).manifest_text());
+  ASSERT_TRUE(written["groups"][0].contains("file_refs")); EXPECT_EQ(written["groups"][0]["file_refs"],Json::array());
   value(w.catalog.trash(w.asset.ref)); auto trashed = w.catalog.copy_independent({w.asset.ref,{},{}}); ASSERT_FALSE(trashed); EXPECT_EQ(trashed.error().code,am::Errc::not_found);
   value(w.catalog.restore(w.asset.ref)); auto newer = w.plain(); newer["format"]["version"]["minor"] = 1; w.install(newer);
   auto refused = w.catalog.copy_independent({w.asset.ref,{},{}}); ASSERT_FALSE(refused); EXPECT_EQ(refused.error().message_id,"am.repo.write_unsupported_version"); w.clean();
