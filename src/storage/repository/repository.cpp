@@ -1081,10 +1081,9 @@ bool is_independent_copy(const AssetSnapshot& snapshot, const manifest::CodecLim
   const auto entries = text.member(text.member(0,"history"),"entries");
   bool found = false;
   text.each(entries,[&](auto entry) {
-    if (text.value(text.member(entry,"revision")).empty()) {
-      const auto details = text.member(entry,"details");
-      found = found || text.value(text.member(details,"creation_kind")) == "independent_copy";
-    }
+    const auto details = text.member(entry,"details");
+    found = found || (text.value(text.member(entry,"operation")) == "asset_created" &&
+                     text.value(text.member(details,"creation_kind")) == "independent_copy");
   });
   return found;
 }

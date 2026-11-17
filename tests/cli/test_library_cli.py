@@ -181,6 +181,66 @@ class LibraryCli(unittest.TestCase):
         self.assertEqual(self.run_am("list")["assets"][0]["revision"], 2)
         self.assertEqual(hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest(), userdata)
 
+    def test_copy(self):
+        self.run_am("init")
+        if os.name != "nt":
+            refused = self.run_am("copy", 4, str(uuid.uuid4()))
+            self.assertEqual(refused["error"]["message_id"], "am.library.storage_read_only")
+            reason = "Production writes require a verified fixed NTFS volume; service copy is tested with injected capabilities"
+            print(reason)
+            self.skipTest(reason)
+        self.run_am("rebuild")
+        payload = self.work / "copy-source.bin"
+        payload.write_bytes(b"independent copy payload")
+        ready = self.work / "ready-copy.zip"
+        created = subprocess.run([str(CONFIG.am), "asset", "create", str(payload), "-o", str(ready), "--json"],
+                                 capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(created.returncode, 0, (created.stdout, created.stderr))
+        source_id = self.run_am("add-ready", 0, str(ready))["results"][0]["asset_id"]
+        source_path = self.root / "assets" / source_id[-2:] / (source_id + ".zip")
+        before = source_path.read_bytes()
+        userdata = hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest()
+        copied = self.run_am("copy", 0, source_id)
+        (CONFIG.root / "t021-copy-success.json").write_text(json.dumps(copied, ensure_ascii=False), encoding="utf-8")
+        self.assertNotEqual(copied["asset_id"], source_id)
+        self.assertEqual(copied["source"], {"asset_id": source_id, "revision": 1})
+        self.assertEqual(copied["revision"], 1)
+        self.assertEqual(len(copied["files"]), 1)
+        self.assertIsNone(copied["error"])
+        listed = self.run_am("list")["assets"]
+        self.assertEqual({row["asset_id"] for row in listed}, {source_id, copied["asset_id"]})
+        destination = self.root / "assets" / copied["asset_id"][-2:] / (copied["asset_id"] + ".zip")
+        verified = subprocess.run([str(CONFIG.am), "asset", "verify", str(destination), "--json"],
+                                  capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(verified.returncode, 0, (verified.stdout, verified.stderr))
+        self.assertEqual(source_path.read_bytes(), before)
+        self.assertEqual(hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest(), userdata)
+        invalid = self.run_am("copy", 2, "invalid-id")
+        self.assertEqual(invalid["error"]["message_id"], "am.repo.invalid_operation")
+        with zipfile.ZipFile(source_path) as archive:
+            contents = {info.filename: archive.read(info) for info in archive.infolist()}
+        manifest = json.loads(contents["manifest.json"])
+        manifest["extensions"] = {"org.test.copy": {"schema_version": "1", "data": {}}}
+        contents["manifest.json"] = json.dumps(manifest, ensure_ascii=False).encode("utf-8")
+
+        class Utf8Info(zipfile.ZipInfo):
+            def _encodeFilenameFlags(self):
+                return self.filename.encode("utf-8"), self.flag_bits | 0x800
+
+        with zipfile.ZipFile(source_path, "w") as archive:
+            for name, data in contents.items():
+                info = Utf8Info(name)
+                info.create_system = 0
+                info.external_attr = 0x20
+                archive.writestr(info, data)
+        source_before_refusal = source_path.read_bytes()
+        refused = self.run_am("copy", 4, source_id, "--verbose")
+        (CONFIG.root / "t021-copy-refusal.json").write_text(json.dumps(refused, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(refused["error"]["message_id"], "am.repo.copy_extensions_unsupported")
+        self.assertEqual(source_path.read_bytes(), source_before_refusal)
+        self.assertEqual(len(self.run_am("list")["assets"]), 2)
+        self.assertEqual(list((self.root / ".am/.am-tmp").iterdir()), [])
+
     def test_trash(self):
         self.run_am("init")
         self.assertIsNone(self.run_am("info")["trash"])

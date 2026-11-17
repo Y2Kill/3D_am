@@ -222,6 +222,22 @@ TEST(ImportReady, NewRevisionThreeKeepsEveryByteHistoryAndActualIndexRevision) {
   EXPECT_EQ(value(dst.catalog.indexer().list())[0].revision, 3);
   dst.clean();
 }
+TEST(ImportReady, UnreadableIdentityRevisionOrMinorIsClassifiedInvalid) {
+  RecordProperty("req", "K-31");
+  World src, dst;
+  const auto asset = src.create();
+  for (const auto* field : {"id","revision","minor"}) {
+    SCOPED_TRACE(field);
+    const auto input = altered(src,asset,std::string("unreadable-")+field+".zip",[&](repo::Json& j) {
+      if (std::string_view(field) == "minor") j["format"]["version"].erase("minor");
+      else j["asset"].erase(field);
+    });
+    repo::ImportReadyResult detail;
+    const auto result = dst.catalog.import_ready({input,{}},&detail); ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().message_id,"am.repo.import_invalid"); EXPECT_EQ(detail.classification,"invalid");
+    EXPECT_EQ(value(dst.catalog.indexer().count()),0); dst.clean();
+  }
+}
 TEST(ImportReady, IdenticalManifestSkipsPublicationAndReportsWholeZipEquality) {
   RecordProperty("req", "K-31");
   World src, dst;

@@ -250,6 +250,9 @@ Result<WrittenEntry> ZipWriter::copy_raw(const ZipArchive& archive, std::size_t 
       return write_error(Errc::invalid_argument, "am.zip.write.invalid_name", "Unicode Path extra cannot accompany raw-copy renaming");
     if (source.encrypted || (source.method != 0 && source.method != 8)) unsupported("Raw-copy compression/encryption cannot be verified");
     Record r; r.entry.name = name; r.entry.method = static_cast<CompressionMethod>(source.method);
+    // Renaming retains data flags; the writer emits UTF-8 names and explicit
+    // sizes in headers rather than a trailing data descriptor.
+    if (options.target_name) r.entry.flags = static_cast<std::uint16_t>((source.flags & ~0x8u) | 0x800u);
     r.entry.uncompressed_size = source.uncompressed_size; r.entry.compressed_size = source.compressed_size; r.entry.crc32 = source.crc32;
     r.dos = {source.dos_date, source.dos_time}; r.local64 = source.uncompressed_size >= max32 || source.compressed_size >= max32;
     std::set<std::uint16_t> dropped_ids;

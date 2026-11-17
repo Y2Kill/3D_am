@@ -471,3 +471,58 @@ TEST(ZipWriter, UnicodeKeyAllocationFailureIsFatalOutOfMemory) {
   auto sticky = writer->finish(); ASSERT_FALSE(sticky); EXPECT_EQ(sticky.error().message_id, entry.error().message_id); EXPECT_EQ(sink->size(), 0u);
 }
 #endif
+
+TEST(ZipWriter, RawRenamePreservesCompressedBytesHeadersAndDataFlags) {
+  RecordProperty("req", "K-3");
+  for (const auto method : {0,8}) {
+    zip_test::Entry source; source.name = "content/original.bin"; source.data = std::string(10000,'a');
+    source.method = static_cast<std::uint16_t>(method); source.flags = method == 8 ? 0x806 : 0x800;
+    auto archive = open(zip_test::build({source}).bytes); ASSERT_TRUE(archive);
+    auto sink = std::make_shared<MemorySink>(); auto writer = ZipWriter::create(sink); ASSERT_TRUE(writer);
+    RawCopyOptions options; options.target_name = "content/renamed-\u043a\u043e\u043f\u0438\u044f.bin";
+    ReadBudget budget(1000000); auto copied = writer->copy_raw(*archive,0,budget,options); ASSERT_TRUE(copied);
+    auto summary = writer->finish(); ASSERT_TRUE(summary); verify(*sink,*summary);
+    auto renamed = open(snapshot(*sink)); ASSERT_TRUE(renamed); ASSERT_EQ(renamed->entries().size(),1u);
+    const auto& entry = renamed->entries()[0]; EXPECT_EQ(entry.raw_name,*options.target_name);
+    EXPECT_EQ(entry.flags,source.flags); EXPECT_EQ(entry.method,source.method);
+    EXPECT_EQ(entry.crc32,archive->entries()[0].crc32); EXPECT_EQ(entry.compressed_size,archive->entries()[0].compressed_size);
+    EXPECT_EQ(entry.uncompressed_size,archive->entries()[0].uncompressed_size);
+    EXPECT_EQ(raw(*renamed,0),raw(*archive,0)); EXPECT_TRUE(renamed->verify_entry(0,budget,true));
+  }
+}
+TEST(ZipWriter, RawRenameRejectsCollisionUnsafeUtf8AndLimitsBeforeWriting) {
+  RecordProperty("req", "K-3");
+  auto archive = open(zip_test::build({zip_test::Entry{}}).bytes); ASSERT_TRUE(archive);
+  const std::vector<std::string> names{"content/exists","../escape","content/../escape","",std::string(201,'x'),std::string("content/\xff",9)};
+  for (const auto& name : names) {
+    auto sink = std::make_shared<MemorySink>(); auto writer = ZipWriter::create(sink); ASSERT_TRUE(writer);
+    ASSERT_TRUE(add(*writer,"content/exists","abc")); const auto before = snapshot(*sink);
+    RawCopyOptions options; options.target_name = name; ReadBudget budget(1000000);
+    const auto copied = writer->copy_raw(*archive,0,budget,options); ASSERT_FALSE(copied);
+    EXPECT_EQ(copied.error().code,am::Errc::invalid_argument); EXPECT_EQ(snapshot(*sink),before);
+    options.target_name = "content/valid"; EXPECT_TRUE(writer->copy_raw(*archive,0,budget,options));
+  }
+  auto sink = std::make_shared<MemorySink>(); WriterOptions limits; limits.zip_limits.max_name_bytes = 10;
+  auto writer = ZipWriter::create(sink,limits); ASSERT_TRUE(writer);
+  RawCopyOptions options; options.target_name = "content/long-name"; ReadBudget budget(1000000);
+  const auto limited = writer->copy_raw(*archive,0,budget,options); ASSERT_FALSE(limited);
+  EXPECT_EQ(limited.error().message_id,"am.zip.limit_exceeded"); EXPECT_EQ(sink->size(),0u);
+}
+TEST(ZipWriter, RawRenameDropsUnicodePathAndRejectsExplicitCarry) {
+  RecordProperty("req", "K-3");
+  zip_test::Entry e; e.name = "content/old";
+  zip_test::append(e.local_extra,0x7075,2); zip_test::append(e.local_extra,5+e.name.size(),2);
+  zip_test::append(e.local_extra,1,1); zip_test::append(e.local_extra,0,4);
+  for (char c : e.name) e.local_extra.push_back(static_cast<std::byte>(c));
+  e.central_extra = e.local_extra;
+  auto archive = open(zip_test::build({e}).bytes); ASSERT_TRUE(archive);
+  auto sink = std::make_shared<MemorySink>(); auto writer = ZipWriter::create(sink); ASSERT_TRUE(writer);
+  ReadBudget budget(1000000); RawCopyOptions options; options.target_name = "content/new"; options.carry_extra_ids = {0x7075};
+  const auto rejected = writer->copy_raw(*archive,0,budget,options); ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code,am::Errc::invalid_argument); EXPECT_EQ(sink->size(),0u);
+  options.carry_extra_ids.clear(); const auto copied = writer->copy_raw(*archive,0,budget,options); ASSERT_TRUE(copied);
+  EXPECT_EQ(copied->dropped_extra_fields,1u); auto summary = writer->finish(); ASSERT_TRUE(summary);
+  auto renamed = open(snapshot(*sink)); ASSERT_TRUE(renamed);
+  EXPECT_TRUE(renamed->entries()[0].local_extra.empty()); EXPECT_TRUE(renamed->entries()[0].central_extra.empty());
+  EXPECT_EQ(raw(*renamed,0),raw(*archive,0)); verify(*sink,*summary);
+}

@@ -6,6 +6,9 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- `am library copy` for independent assets with new instance IDs, remapped
+  references, revision-one source history, and unchanged compressed payloads.
+  Unsupported extension, plugin-value, historical, or opaque references are refused.
 - `am library add-ready` for verified byte-preserving asset imports, explicit
   manifest-hash replacement, ID conflict reports, and unchanged newer-minor storage.
 - Library `trash`, `restore`, and confirmed `purge` commands, with recovery
