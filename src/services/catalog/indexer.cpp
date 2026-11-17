@@ -595,6 +595,11 @@ Result<LibraryVerifyReport> Indexer::verify(const LibraryVerifyOptions& options)
       if (options.cancelled && options.cancelled()) { out.cancelled = true; break; }
       LibraryVerifyItem item; item.asset_id = c.id; item.path = c.relative; item.in_trash = c.trash;
       item.indexed = previous.contains(c.id);
+      std::optional<db::IndexStat> observed;
+      if (index_ready && item.indexed && library_.mode() == library::Mode::read_write) {
+        auto location = guard<Location>([&]() -> Result<Location> { return stat_location(c); });
+        if (location) observed = db::IndexStat{location->zip_size,location->zip_mtime_ns};
+      }
       repository::ContainerVerifyOptions check;
       check.streams = options.level == LibraryVerifyLevel::full; check.level = repository::VerifyLevel::full;
       repository::ContainerContents contents;
@@ -636,7 +641,7 @@ Result<LibraryVerifyReport> Indexer::verify(const LibraryVerifyOptions& options)
       if (item.message_id.empty() && item.status != "ok") item.message_id = "am.catalog.manifest_invalid";
       if (index_ready && item.indexed && library_.mode() == library::Mode::read_write) {
         if (item.status == "corrupt" || item.status == "unreadable")
-          repairs.push_back({c.id,{},db::IndexMark{c.id,"corrupt",item.message_id,{}}});
+          repairs.push_back({c.id,{},db::IndexMark{c.id,"corrupt",item.message_id,observed}});
         else if ((item.status == "ok" || item.status == "warn") && previous.at(c.id).health == "corrupt")
           repairs.push_back({c.id,take(read(c.path,c.relative,c.trash)),{}});
       }

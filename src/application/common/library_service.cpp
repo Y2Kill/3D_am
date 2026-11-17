@@ -21,6 +21,13 @@ void opening_warnings(AssetOutcome& out, const catalog::Catalog& catalog) {
   const auto& warnings = catalog.open_report().warnings;
   out.diagnostics.insert(out.diagnostics.end(),warnings.begin(),warnings.end());
 }
+Result<AssetOutcome> catalog_failure(const Error& e, const catalog::Catalog& catalog) {
+  if (catalog.open_report().warnings.empty()) return e;
+  AssetOutcome out; out.status = error_exit_code(e);
+  auto encoded = error_json(e); if (!encoded) return encoded.error();
+  out.value["error"] = *encoded; out.diagnostics.push_back(e); opening_warnings(out,catalog);
+  return out;
+}
 }  // namespace
 Result<AssetOutcome> init_library(const std::filesystem::path& root, const std::string& name) {
   return guard([&]() -> Result<AssetOutcome> {
@@ -98,7 +105,7 @@ Result<AssetOutcome> rebuild_library(const std::filesystem::path& root) {
   return guard([&]() -> Result<AssetOutcome> {
     library::OpenOptions options; options.application_version = kAppVersion;
     auto opened = catalog::Catalog::open(root,options); if (!opened) return opened.error();
-    auto report = opened->indexer().rebuild(); if (!report) return report.error();
+    auto report = opened->indexer().rebuild(); if (!report) return catalog_failure(report.error(),*opened);
     AssetOutcome out;
     out.value = {{"indexed",report->indexed},{"duration_ms",report->duration_ms},{"skipped",Json::array()},{"ignored",report->ignored}};
     for (const auto& s : report->skipped) out.value["skipped"].push_back({{"path",s.path},{"reason",s.reason},{"message_id",s.message_id}});
@@ -110,8 +117,8 @@ Result<AssetOutcome> list_library(const std::filesystem::path& root, bool trash)
   return guard([&]() -> Result<AssetOutcome> {
     library::OpenOptions options; options.mode = library::Mode::read_only;
     auto opened = catalog::Catalog::open(root,options); if (!opened) return opened.error();
-    auto rows = opened->indexer().list(trash); if (!rows) return rows.error();
-    auto required = opened->indexer().rebuild_required(); if (!required) return required.error();
+    auto rows = opened->indexer().list(trash); if (!rows) return catalog_failure(rows.error(),*opened);
+    auto required = opened->indexer().rebuild_required(); if (!required) return catalog_failure(required.error(),*opened);
     AssetOutcome out; out.value = {{"assets",Json::array()},{"rebuild_required",*required}};
     for (const auto& r : *rows) out.value["assets"].push_back({{"asset_id",r.asset_id},{"revision",r.revision},{"title",r.title ? Json(*r.title) : Json(nullptr)},
       {"health",r.health},{"file_count",r.file_count},{"content_bytes",r.content_bytes ? Json(*r.content_bytes) : Json(nullptr)},{"in_trash",r.in_trash}});
@@ -127,7 +134,7 @@ Result<AssetOutcome> sync_library(const std::filesystem::path& root, bool full) 
     auto opened = catalog::Catalog::open(root, options);
     if (!opened) return opened.error();
     auto report = opened->sync({full});
-    if (!report) return report.error();
+    if (!report) return catalog_failure(report.error(),*opened);
     AssetOutcome out;
     out.value = {{"added", report->added},
                  {"updated", report->updated},
@@ -319,14 +326,21 @@ Result<AssetOutcome> add_ready_library(const std::filesystem::path& root,
 }
 Result<AssetOutcome> verify_library(const std::filesystem::path& root, bool full, bool trash, bool verbose) {
   return guard([&]() -> Result<AssetOutcome> {
+    auto failed = [&](const Error& e, const catalog::Catalog* catalog = nullptr) -> Result<AssetOutcome> {
+      AssetOutcome out; out.status = ExitCode::operation_failed;
+      auto encoded = error_json(e); if (!encoded) return encoded.error();
+      out.value["error"] = *encoded; out.diagnostics.push_back(e);
+      if (catalog) opening_warnings(out,*catalog);
+      return out;
+    };
     library::OpenOptions options; options.application_version = kAppVersion;
     auto opened = catalog::Catalog::open(root,options);
     if (!opened && (opened.error().message_id == "am.library.storage_read_only" || opened.error().message_id == "am.repo.storage_read_only")) {
       options.mode = library::Mode::read_only; opened = catalog::Catalog::open(root,options);
     }
-    if (!opened) return opened.error();
+    if (!opened) return failed(opened.error());
     catalog::LibraryVerifyOptions verify; verify.level = full ? catalog::LibraryVerifyLevel::full : catalog::LibraryVerifyLevel::quick; verify.include_trash = trash;
-    auto report = opened->verify(verify); if (!report) return report.error();
+    auto report = opened->verify(verify); if (!report) return failed(report.error(),&*opened);
     AssetOutcome out;
     out.status = report->corrupt || report->unreadable ? ExitCode::check_failed :
                  report->unsupported || report->cancelled ? ExitCode::partial : ExitCode::success;

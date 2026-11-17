@@ -181,6 +181,84 @@ class LibraryCli(unittest.TestCase):
         self.assertEqual(self.run_am("list")["assets"][0]["revision"], 2)
         self.assertEqual(hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest(), userdata)
 
+    def test_verify(self):
+        self.run_am("init")
+        timestamp = "2026-11-17T00:00:00.000Z"
+
+        class Utf8Info(zipfile.ZipInfo):
+            def _encodeFilenameFlags(self):
+                return self.filename.encode("utf-8"), self.flag_bits | 0x800
+
+        def fixture():
+            asset, file, input_id = (str(uuid.uuid4()) for _ in range(3))
+            return {"format": {"id": "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128", "version": {"major": 1, "minor": 0}},
+                    "asset": {"id": asset, "revision": 1, "created_at": timestamp, "modified_at": timestamp},
+                    "inputs": [{"id": input_id, "mode": "strict", "completeness": "complete", "imported_at": timestamp, "objects": [], "entries": []}],
+                    "files": [{"id": file, "storage_path": f"content/{input_id}/payload.bin", "size_bytes": "7",
+                               "sha256": hashlib.sha256(b"payload").hexdigest(), "origin_kind": "user_added"}],
+                    "history": {"entries": [{"revision": 1, "operation_id": str(uuid.uuid4()), "timestamp": timestamp,
+                                             "operation": "asset_created", "tool": {"application_version": "test"},
+                                             "changes": [{"kind": "file_add", "target": file}], "details": {"creation_kind": "user"}}]}}
+
+        def write_zip(path, manifest, data=b"payload"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(path, "w") as archive:
+                for name, body in [("manifest.json", json.dumps(manifest).encode("utf-8")), (manifest["files"][0]["storage_path"], data)]:
+                    info = Utf8Info(name)
+                    info.create_system = 0
+                    info.external_attr = 0x20
+                    archive.writestr(info, body)
+
+        if os.name == "nt":
+            self.run_am("rebuild")
+            payload, ready = self.work / "verify-source.bin", self.work / "verify-ready.zip"
+            payload.write_bytes(b"payload")
+            created = subprocess.run([str(CONFIG.am), "asset", "create", str(payload), "-o", str(ready), "--json"],
+                                     capture_output=True, encoding="utf-8", timeout=60)
+            self.assertEqual(created.returncode, 0, (created.stdout, created.stderr))
+            imported = self.run_am("add-ready", 0, str(ready))["results"][0]
+            asset_id = imported["asset_id"]
+            with zipfile.ZipFile(ready) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+        else:
+            manifest = fixture()
+            asset_id = manifest["asset"]["id"]
+        target = self.root / "assets" / asset_id[-2:] / (asset_id + ".zip")
+        if os.name != "nt":
+            write_zip(target, manifest)
+        healthy = self.run_am("verify")
+        self.assertEqual((healthy["level"], healthy["total"], healthy["checked"], healthy["ok"]), ("quick", 1, 1, 1))
+        self.assertEqual(healthy["items"], [])
+        self.assertIn("recovery", healthy)
+        self.assertEqual(healthy["index_updated"], os.name == "nt")
+        (CONFIG.root / "t022-verify-success.json").write_text(json.dumps(healthy), encoding="utf-8")
+        write_zip(target, manifest, b"PAYLOAD")
+        before = target.read_bytes()
+        quick = self.run_am("verify")
+        self.assertEqual(quick["corrupt"], 0)
+        full = self.run_am("verify", 1, "--full")
+        self.assertEqual(full["corrupt"], 1)
+        self.assertEqual(full["items"][0]["status"], "corrupt")
+        self.assertTrue(full["items"][0]["message_id"])
+        self.assertEqual(full["items"][0]["stream"]["id"], manifest["files"][0]["id"])
+        self.assertEqual(target.read_bytes(), before)
+        (CONFIG.root / "t022-verify-corrupt.json").write_text(json.dumps(full), encoding="utf-8")
+        trashed = fixture()
+        write_zip(self.root / "trash" / (trashed["asset"]["id"] + ".zip"), trashed)
+        self.assertEqual(self.run_am("verify")["total"], 2)
+        active = self.run_am("verify", 0, "--no-trash", "--verbose")
+        self.assertEqual(active["total"], 1)
+        self.assertFalse(active["items"][0]["in_trash"])
+        manifest["format"]["version"]["major"] = 2
+        write_zip(target, manifest)
+        unsupported = self.run_am("verify", 3, "--no-trash")
+        self.assertEqual(unsupported["unsupported"], 1)
+        missing = self.work / "missing-library"
+        failed = subprocess.run([str(CONFIG.am), "library", "verify", str(missing), "--json"], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(failed.returncode, 4, (failed.stdout, failed.stderr))
+        (self.root / "am-library.toml").write_text("not valid TOML = [", encoding="utf-8")
+        self.assertEqual(self.run_am("verify", 4)["error"]["message_id"], "am.library.config_invalid")
+
     def test_copy(self):
         self.run_am("init")
         if os.name != "nt":

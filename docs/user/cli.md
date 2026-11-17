@@ -17,6 +17,7 @@ am library init <dir> [--name <text>] [--json] [--verbose]
 am library info <dir> [--json] [--verbose]
 am library rebuild <dir> [--json] [--verbose]
 am library sync <dir> [--full] [--json] [--verbose]
+am library verify <dir> [--full] [--no-trash] [--json] [--verbose]
 am library list <dir> [--json] [--trash] [--verbose]
 am library copy <dir> <asset-id> [--json] [--verbose]
 am library trash <dir> <asset-id>... [--json] [--verbose]
@@ -107,6 +108,41 @@ index produces a warning and still returns 0. Use `sync` for disk changes or
 `rebuild` when required. Automatic filesystem watching is planned separately. `info` also reports
 `indexed_assets` (null if the index is unavailable).
 
+### Recovery and library verification
+
+Opening a library for writing first recovers pending operations and refreshes
+the affected index rows. After an unclosed writer session, it also runs a
+stat-based sync. An unavailable index is reported for rebuilding; ZIP recovery
+still runs. A journal failure prevents opening for writing. Individual blocked
+or unresolved operations produce warnings with their operation IDs and paths.
+Read-only opening reports pending operations without recovering them.
+
+`am library verify <dir>` checks the ZIP candidates on disk, including trash,
+independently of index contents. The default quick check runs V1–V3 without
+reading payload streams. `--full` also checks stream size, CRC, and SHA-256;
+`--no-trash` excludes trash. ZIP bytes remain unchanged.
+
+JSON contains `level`, `total`, `checked`, `ok`, `warn`, `corrupt`, `unsupported`,
+`unreadable`, `cancelled`, `duration_ms`, `index_updated`, `items`, `skipped`,
+`ignored`, and `recovery`. Items include the asset ID, relative path, trash and
+index flags, status, message ID, and an optional JSON pointer or failed stream.
+Only non-OK items appear by default; `--verbose` includes every checked asset.
+Recovery reports recovered operations, reindexed IDs, the previous session
+state, and optional startup sync. The service opening report also exposes the
+read-only pending count.
+
+With a usable writable index, verification records corrupt or unreadable indexed
+assets as corrupt in one final transaction. It restores previously corrupt rows
+after successful verification. It does not add unindexed ZIPs or change rows for
+missing ZIPs. An unchanged ZIP retains its corruption mark during stat-based sync.
+On Linux or storage without supported production writes, verification retries
+read-only and reports `index_updated: false`; verification still runs.
+
+Exit codes are 0 for OK/warnings, 1 for corrupt or unreadable assets, 3 for
+unsupported assets or cancellation, and 4 for opening or operation errors.
+The service API supports progress and cancellation between assets, committing
+index results for the assets already checked. The CLI has no cancellation flag.
+
 ### Independent asset copy
 
 `am library copy <dir> <asset-id>` creates a separate asset in the same library.
@@ -148,6 +184,7 @@ edited. `list` hides trash by default; `list --trash` includes it.
 returns exit code 2 with `am.cli.purge_confirmation_required`. `--all` selects
 regular, correctly named UUIDv4 ZIPs in trash. Other files, directories, and
 symbolic links are left in place. There is no automatic cleanup.
+An absent trash directory is an empty selection: `purge --all --yes` returns 0.
 
 Each requested ID is processed separately. JSON contains `results`, with
 `asset_id`, `status` (`done` or `failed`), and `error` (null on success). Exit code
