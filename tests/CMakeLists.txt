@@ -184,3 +184,7 @@ if(AM_PYTHON_TESTS)
     set_tests_properties(sql_check PROPERTIES LABELS "schema;req:ADR-0006;req:ADR-0007;req:ADR-0037")
   endif()
 endif()
+
+if(TARGET am_cli)
+  add_subdirectory(performance/gen_library)
+endif()

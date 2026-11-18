@@ -6,6 +6,9 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Deterministic synthetic library generation and process-based catalog scale measurements,
+  with resumable public-API writes and checks for ZIP-free clean catalog startup.
+
 - Persistent job storage with validated transitions, exact JSON, progress,
   decisions, queue ordering, and recovery after interrupted writer sessions.
 - Library operation logging and read-only `am library log` with filtering and
