@@ -123,20 +123,33 @@ def disk_bytes(library):
     """Allocated file bytes, plus logical lengths for transparent comparison."""
     allocated = logical = 0
     if os.name == "nt":
-        get_size = ctypes.WinDLL("kernel32", use_last_error=True).GetCompressedFileSizeW
-        get_size.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_ulong)]
-        get_size.restype = ctypes.c_ulong
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        create = kernel.CreateFileW
+        create.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+                           ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
+        create.restype = ctypes.c_void_p
+        info = kernel.GetFileInformationByHandleEx
+        info.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong]
+        close = kernel.CloseHandle
+        close.argtypes = [ctypes.c_void_p]
+        class StandardInfo(ctypes.Structure):
+            _fields_ = [("allocation", ctypes.c_longlong), ("length", ctypes.c_longlong),
+                        ("links", ctypes.c_ulong), ("delete_pending", ctypes.c_ubyte), ("directory", ctypes.c_ubyte)]
     for path in library.rglob("*"):
         if path.is_file():
             stat = path.stat()
             logical += stat.st_size
             if os.name == "nt":
-                high = ctypes.c_ulong()
-                ctypes.set_last_error(0)
-                low = get_size(str(path.resolve()), ctypes.byref(high))
-                if low == 0xFFFFFFFF and ctypes.get_last_error():
+                handle = create(str(path.resolve()), 0x80, 7, None, 3, 0, None)  # READ_ATTRIBUTES, shared, OPEN_EXISTING
+                if handle == ctypes.c_void_p(-1).value:
                     raise ctypes.WinError(ctypes.get_last_error())
-                allocated += (high.value << 32) | low
+                try:
+                    standard = StandardInfo()
+                    if not info(handle, 0, ctypes.byref(standard), ctypes.sizeof(standard)):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    allocated += standard.allocation
+                finally:
+                    close(handle)
             else:
                 allocated += stat.st_blocks * 512
     return allocated, logical

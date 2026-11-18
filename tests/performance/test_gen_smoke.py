@@ -137,7 +137,7 @@ def main():
                              "--root", str(work), "--library", str(work / "missing"), "--generation-report", str(generation_report),
                              "--counts", "100", "--repeat", "1", "--storage", "synthetic-test", "--build-type", args.build_type,
                              "--output", str(work / "failed.json")], capture_output=True)
-    assert failed.returncode != 0 and not (work / "failed.json").exists()
+    assert failed.returncode != 0 and b"Child exited with code" in failed.stderr and not (work / "failed.json").exists()
     print("perf_gen_smoke: PASS (plan, full verify, metadata, unique payloads, resume, mismatch, runner/privacy/failure)")
 
 
