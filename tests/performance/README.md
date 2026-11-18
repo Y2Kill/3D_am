@@ -82,6 +82,8 @@ hostname, username or serial numbers. GPU is null when not detected.
 its generator JSON. This is useful for smoke checks or a resumed measurement; the descriptor must
 match the report. Its generation timing describes the supplied generation invocation, not an
 invented uninterrupted duration.
+Already generated volumes do not need a generation-time estimate or a 10000-asset pilot.
+For these volumes, `assume_capabilities` is taken from the supplied generator report.
 
 Operations run as separate processes: `version`, library `info`, `list --json`, unchanged stat
 `sync`, quick `verify`, and finally `rebuild`. The first sample of each operation is recorded as

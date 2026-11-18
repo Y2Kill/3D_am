@@ -172,7 +172,7 @@ def run(args):
     speed_10k = None
     for count in args.counts:
         estimate = count / speed_10k if speed_10k else None
-        if count > 10000 and (estimate is None or estimate > 3 * 60 * 60):
+        if not args.library and count > 10000 and (estimate is None or estimate > 3 * 60 * 60):
             result["volumes"].append({"assets": count, "status": "not_measured", "reason": "generation_estimate_exceeds_3h" if estimate else "missing_10000_baseline", "estimated_generation_seconds": estimate})
             continue
         library = args.library or args.root / f"library-{count}"
@@ -190,6 +190,7 @@ def run(args):
             generation = json.loads(output)
         if not args.library and generation["created"] != count:
             raise MeasurementError("Measurement requires a freshly generated volume; choose a new --root")
+        result["environment"]["assume_capabilities"] = generation["assume_capabilities"]
         if count == 10000:
             speed_10k = generation["assets_per_second"]
         print(f"Generated {count}: {generation['assets_per_second']:.3f} assets/s", file=sys.stderr, flush=True)

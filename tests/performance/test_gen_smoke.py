@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import uuid
+from unittest import mock
 import zipfile
 
 PLAN = "ff6dad951f904b063f1388ad1fa39b3c0764bfb75ec26af3b4ddf6ab5f23f767"
@@ -131,6 +132,27 @@ def main():
         pass
     else:
         raise AssertionError("A nonzero child exit was accepted as measurement data")
+    # A ready large library needs no generation budget or 10000-asset pilot.
+    # Stub process work here: the real child metrics are covered above, and this
+    # check must not generate an additional large performance dataset in CI.
+    ready = work / "ready-large"
+    ready_parameters = {**generation["parameters"], "count": 50000}
+    Path(str(ready) + ".gen.json").write_text(json.dumps(ready_parameters), encoding="utf-8")
+    ready_report = work / "ready-generation.json"
+    ready_report.write_text(json.dumps({**generation, "parameters": ready_parameters, "assets": 50000}), encoding="utf-8")
+    ready_args = argparse.Namespace(root=work, am=args.am, generator=args.generator, library=ready,
+                                   generation_report=ready_report, counts=[50000], repeat=1, seed=1,
+                                   storage="synthetic-test", assume_capabilities=not bool(assume), build_type=args.build_type,
+                                   output=work / "ready-result.json")
+    with mock.patch.object(module, "measured", return_value=({"seconds": 1, "peak_memory_bytes": 1}, b"test-version")) as process_work, \
+            mock.patch.object(module, "environment", return_value={}), \
+            mock.patch.object(module, "disk_bytes", return_value=(0, 0)), \
+            mock.patch.object(module, "operations", return_value={}) as operation_work:
+        ready_result = module.run(ready_args)
+        assert ready_result["volumes"][0]["status"] == "measured"
+        assert ready_result["environment"]["assume_capabilities"] == generation["assume_capabilities"]
+        operation_work.assert_called_once_with(args.am, ready, 1, work)
+        assert process_work.call_count == 1  # version only; no generator process
     # Check the executable script's exit status as well (a real am refusal).
     Path(str(work / "missing") + ".gen.json").write_text(json.dumps(generation["parameters"]), encoding="utf-8")
     failed = subprocess.run([sys.executable, "-I", str(runner), "--am", str(args.am), "--generator", str(args.generator),
