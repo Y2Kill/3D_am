@@ -179,7 +179,14 @@ Result<AssetOutcome> copy_library(const std::filesystem::path& root, const std::
     auto opened = catalog::Catalog::open(root,options); if (!opened) return rejected(opened.error());
     const repository::AssetRef ref{opened->library().config().library_id,id};
     auto copied = opened->copy_independent({ref,{},{}});
-    if (!copied) { auto result = rejected(copied.error()); if (result) opening_warnings(*result,*opened); return result; }
+    if (!copied) {
+      auto result = rejected(copied.error());
+      if (result) {
+        opening_warnings(*result,*opened);
+        const auto& warnings=opened->operation_warnings(); result->diagnostics.insert(result->diagnostics.end(),warnings.begin(),warnings.end());
+      }
+      return result;
+    }
     const auto& result = copied->copy;
     out.value["source"]["revision"] = result.source_revision;
     out.value["asset_id"] = result.ref.asset_id; out.value["revision"] = result.change.revision;
@@ -238,6 +245,7 @@ Result<AssetOutcome> lifecycle_library(const std::filesystem::path& root, const 
         if (!encoded) return encoded.error();
         row["error"] = *encoded;
         out.diagnostics.push_back(result.error());
+        const auto& warnings=opened->operation_warnings(); out.diagnostics.insert(out.diagnostics.end(),warnings.begin(),warnings.end());
         out.status = ExitCode::operation_failed;
       } else
         for (auto& warning : result->warnings) out.diagnostics.push_back(std::move(warning));
@@ -378,5 +386,29 @@ Result<AssetOutcome> verify_library(const std::filesystem::path& root, bool full
     opening_warnings(out,*opened);
     return out;
   });
+}
+Result<LibraryLogOutcome> library_log(const std::filesystem::path& root,const db::LogQuery& query) {
+  try {
+    library::OpenOptions options; options.mode=library::Mode::read_only;
+    auto catalog=catalog::Catalog::open(root,options); if(!catalog) return catalog.error();
+    db::OperationLog log(catalog->library().database(library::DatabaseKind::state),true);
+    auto entries=log.query(query); if(!entries) return entries.error();
+    LibraryLogOutcome out; out.entries=std::move(*entries); out.diagnostics=catalog->open_report().warnings;
+    out.json="{\"entries\":[";
+    bool first=true;
+    for(const auto& entry:out.entries) {
+      Json row{{"seq",entry.seq},{"at",entry.at},{"level",entry.level},{"code",entry.code},
+        {"job_id",entry.job_id ? Json(*entry.job_id) : Json(nullptr)},
+        {"asset_id",entry.asset_id ? Json(*entry.asset_id) : Json(nullptr)},{"message",entry.message}};
+      auto encoded=row.dump(); encoded.pop_back();
+      if(!first) out.json+=',';
+      first=false;
+      // OperationLog validates this JSON without converting exact numbers.
+      out.json+=encoded+",\"detail\":"+entry.detail_json.value_or("null")+"}";
+    }
+    out.json+="],\"next_after\":"+(out.entries.empty() ? std::string("null") : std::to_string(out.entries.back().seq))+",\"command\":\"library log\"}";
+    return out;
+  } catch(const std::bad_alloc&) { return Error::make(Errc::resource_exhausted,"Allocation failed").id("am.app.out_of_memory"); }
+  catch(...) { return Error::make(Errc::internal,"Log presentation failed").id("am.app.internal"); }
 }
 }  // namespace am::application

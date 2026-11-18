@@ -18,6 +18,7 @@ am library info <dir> [--json] [--verbose]
 am library rebuild <dir> [--json] [--verbose]
 am library sync <dir> [--full] [--json] [--verbose]
 am library verify <dir> [--full] [--no-trash] [--json] [--verbose]
+am library log <dir> [--asset <id>] [--job <id>] [--after <seq>] [--limit <n>] [--json] [--verbose]
 am library list <dir> [--json] [--trash] [--verbose]
 am library copy <dir> <asset-id> [--json] [--verbose]
 am library trash <dir> <asset-id>... [--json] [--verbose]
@@ -142,6 +143,31 @@ Exit codes are 0 for OK/warnings, 1 for corrupt or unreadable assets, 3 for
 unsupported assets or cancellation, and 4 for opening or operation errors.
 The service API supports progress and cancellation between assets, committing
 index results for the assets already checked. The CLI has no cancellation flag.
+
+### Library operation log
+
+`am library log <dir>` reads the persistent operation log in read-only mode,
+including on Linux. It reports ready imports, independent copies, trash/restore/
+purge, startup recovery, and library verification. Asset `create`/`change` history
+stays inside the ZIP; `sync` and `rebuild` return reports without log entries.
+A failed log append produces a warning and leaves the completed operation intact.
+
+Entries are ordered by increasing `seq`. `--asset` and `--job` filter entries;
+`--after` selects entries with a larger sequence number. `--limit` accepts 1–1000
+and defaults to 100. JSON contains `entries` and `next_after` (the last sequence
+number, or null for an empty page). Each entry contains `seq`, UTC `at`, `level`,
+`code`, `job_id`, `asset_id`, technical `message`, and parsed `detail`. Exact JSON
+numbers in details are retained. Text output uses event codes for translated
+messages; `--verbose` adds technical diagnostics. Successful reads return 0,
+including empty results; invalid arguments return 2.
+
+Job storage now persists states, progress, decisions, and queue positions.
+Opening for writing recovers interrupted running jobs after ZIP recovery and
+reindexing; read-only opening reports them without changes. The attempt counter
+increases at each actual start, rather than during recovery. Retry policy uses
+an adjustable `max_attempts` (default 3, a hypothesis for measurement). There is
+no executor or jobs CLI yet. Log rotation and diagnostic export are planned
+separately; there is no automatic history cleanup.
 
 ### Independent asset copy
 

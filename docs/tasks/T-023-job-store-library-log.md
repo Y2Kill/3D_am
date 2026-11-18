@@ -1,6 +1,6 @@
 # T-023. Хранилище заданий `IJobStore` и журнал библиотеки `op_log` (M2, P0.5 — часть 8)
 
-**Статус:** ready · **Веха:** M2 · **Основание:** ТЗ v1.8 §6.7 п. 1, 2, 5–7 [СОГЛАСОВАНО], §10.10 п. 1, 4, 5, §14.4 п. 3, 4, 6; SPEC `container_manifest_v1.md` §10 («импорт готового ассета … запись идёт в журнал библиотеки»); ADR-0015, ADR-0024 (`IJobStore` — уровень `contracts`, реализация — `storage`), ADR-0033 п. 3; `docs/architecture/jobs_and_sessions.md` §1; `schemas/sql/state.sql` (таблицы `jobs`, `op_log` уже опубликованы); T-020 (журнал библиотеки отложен до этой задачи), T-022 (порядок восстановления при открытии)
+**Статус:** review · **Веха:** M2 · **Основание:** ТЗ v1.8 §6.7 п. 1, 2, 5–7 [СОГЛАСОВАНО], §10.10 п. 1, 4, 5, §14.4 п. 3, 4, 6; SPEC `container_manifest_v1.md` §10 («импорт готового ассета … запись идёт в журнал библиотеки»); ADR-0015, ADR-0024 (`IJobStore` — уровень `contracts`, реализация — `storage`), ADR-0033 п. 3; `docs/architecture/jobs_and_sessions.md` §1; `schemas/sql/state.sql` (таблицы `jobs`, `op_log` уже опубликованы); T-020 (журнал библиотеки отложен до этой задачи), T-022 (порядок восстановления при открытии)
 
 ## Цель
 
@@ -173,3 +173,118 @@
 - Политика хранения и ротация журналов, экспорт обезличенной диагностики, spdlog — M3a (ТЗ §14.4 п. 9; открытый §10.10 п. 7).
 - Сессии внешнего редактирования (`edit_sessions`) и очистка `snapshots` при старте — отдельные задачи.
 - Генератор `gen_library` и замер К-112 — отдельная задача M2.
+
+## Отчёт исполнителя
+
+**Итог:** T-023 выполнена, статус `review`. Решения по В-1/В-2 учтены.
+
+### Ветка и коммиты
+
+- Ветка `codex/T-023` от `main` (`1c68c7c`); T-022 принята (`fe218e8`, приёмка `0a3818a`).
+- `202c1eb` — реализация, пользовательская документация и тесты. Дополнительные проверки recovery-записей и req-метка — `c8c41c7` (Strengthen T-023 recovery log assertions). Итоговый отчёт, матрица и статус — отдельный завершающий коммит.
+- Слияние в main, push и переписывание истории не выполнялись. Прежний пользовательский `3D_am_open_questions_e2472e9.zip` не изменён.
+
+### Выполнение критериев приёмки
+
+1. Фактические итоги обязательных четырёх команд приведены ниже. Добавлено 14 тестов: 12 GoogleTest и два CLI. Минимальная конфигурация остаётся 86 тестов; Windows CLI — 414 вместо 400; Linux CLI — 411 вместо 397.
+2. Реализованы контракт, SQLite-хранилище, восстановление заданий в Catalog::open после pending_ops/refresh, журнал и интеграция операций, CLI library log, документация и тесты 1–11. Имена и методики — в таблице ниже.
+3. Изменены только разрешённые файлы. Единственное изменение Library — поле max_attempts в OpenOptions. Схемы, AssetRepository, протокол и журнал фиксаций, src/jobs, ADR, спецификация, jobs_and_sessions.md, golden ZIP, roadmap, coverage_matrix и зависимости не менялись. Существующие SQLite и foundation JSON сверены с docs/research/libraries.md; новых библиотек и загрузок не требовалось.
+
+Контракт `include/am/contracts/job_store.hpp` зависит только от foundation и стандартной библиотеки; функции имён/разбора/переходов — inline/constexpr. `job_terminal` считает конечными только succeeded/cancelled; failed допускает повтор.
+
+Таблица переходов проверяется в `job_transition_allowed` и перед записью в `StateJobStore::transition` (`src/storage/db/job_store.cpp:130`). Изменение — один `UPDATE jobs … WHERE job_id=? AND state=? RETURNING …` (строка 141). Ровно одна возвращённая строка означает успех, отсутствие — `Errc::conflict/am.jobs.state_conflict`. Недопустимый переход — `Errc::invalid_argument/am.jobs.transition_invalid`; обычный transition отдельно отклоняет running → queued, зарезервированный для восстановления. В тесте гонки используются два независимых SQLite-соединения, а не только mutex одного объекта.
+
+enqueue, перенумерация, очистка истории и восстановление — транзакции BEGIN IMMEDIATE. Mutex объекта и mutex заимствованного SQLite-соединения защищают составные операции. Хранилище не закрывает соединение владельца. Текст всех JSON-полей сохраняется без преобразования чисел; проверка — foundation `json::parse_strict` с существующими пределами 1024/128 MiB (гипотезы кодека, новых нормативов нет).
+
+Запись в read_only возвращает **Errc::read_only/am.catalog.read_only** до SQL; дополнительно проверяется sqlite3_db_readonly. Чтение работает. Часы подставляются в StateJobStore/OperationLog; UTC имеет формат журнала фиксаций.
+
+`max_attempts` передаётся через разрешённое поле `Library::OpenOptions::max_attempts` в конструктор StateJobStore. Значение по умолчанию **3 — гипотеза**, не норматив; nfr_measurement_plan.md не менялся. Конкретный метод `recover_running()` нужен для теста 7 и отделяет разрешённый startup-переход running → queued от обычного интерфейса IJobStore. Сам IJobStore сверх заданного набора методов не расширялся.
+
+В `Catalog::open` строки 805–822 идут после ZIP-recover и прохода refresh, до чтения/записи writer_session: сначала журналируются пункты ZIP-recovery, затем восстанавливаются задания и журналируются их исходы. Ошибка job store даёт am.jobs.recovery_failed с причиной, не отменяя восстановление ZIP. В read_only выполняется только SELECT count(*) для running и предупреждение am.jobs.recovery_pending. В OpenReport добавлены jobs_requeued/jobs_failed.
+
+OperationLog пишет seq/at самостоятельно, фильтрует по job/asset/after_seq, возвращает возрастающий seq; prune_before явный, автоматической очистки нет. remove_finished учитывает незавершённых детей и возвращает число фактически удалённых строк, включая каскадных потомков.
+
+Catalog журналирует import_ready, copy, trash/restore/purge, каждый recovery и итог verify; create/change/sync/rebuild не журналируются. Ошибка append — am.catalog.log_failed без rebuild_required и без отмены операции. Для отказов copy/lifecycle добавлен узкий доступ к operation_warnings, чтобы фасад передавал предупреждение и при Result<Error>. Если посторонний/нечитаемый import-источник не содержит известного AssetID, asset_id остаётся NULL; вымышленный ID не создаётся.
+
+CLI log открывает Catalog read_only. Для JSON используется отдельный LibraryLogOutcome: метаданные экранируются обычным JSON-сериализатором, а проверенный detail включается как исходный JSON. Это сохраняет 1e9999, -0 и порядок/пробелы без преобразования в double. Обычный текст строится по code через каталог; технический message показывается только с verbose. В JSON message присутствует как заданное диагностическое поле.
+
+### Тесты 1–11
+
+| Пункт | Имена и проверка |
+|---|---|
+| 1 | `JobContract.NamesAndAllTransitionsMatchIndependentTable`: все 10 имён, разбор, терминальность, сверка имён с state.sql и независимая таблица всех 100 пар. |
+| 2 | `StateJobs.LifecyclePersistsExactJsonProgressAndDecisions`: queued/running/report/needs_decision/queued/running/succeeded, attempt 1/2, UTC и переоткрытие БД. |
+| 3 | `StateJobs.ForbiddenTransitionsAndConcurrentCompareAndSwap`: все запрещённые пары без изменения строки; два SQLite-соединения конкурируют за queued → running, один успех и один state_conflict; report вне running и обычный running → queued запрещены. |
+| 4 | `StateJobs.InputValidationDoesNotWriteAndOpaqueFieldsStayExact` и тест жизненного цикла: type, JSON всех четырёх полей, UUIDv4/дубликат, родители и вложенность, предел INTEGER и done/total; непрозрачные 1e9999/-0/пробелы/порядок ключей сохранены. |
+| 5 | `StateJobs.OrderingMovePreservesPriorityAndSiblingPositionsAreUnique`: разные родители, priority DESC, перемещения начало/середина/конец, paused/running/terminal, уникальность позиций, priority не меняется при переносе через другую группу. |
+| 6 | `StateJobs.HierarchyFiltersAndCleanupProtectUnfinishedChildren`: родитель с тремя детьми, фильтры, отсутствие каскадной отмены, защита от удаления незавершённых детей, cutoff и каскад удаления. |
+| 7 | `JobRecovery.CommitRecoveryPrecedesJobsAndReadOnlyPreservesEverything`: verified pending_ops и running attempt 1/3 одновременно; read_only без изменений; затем ZIP/индекс восстановлены, jobs queued/failed с прежними attempt, остальные состояния и метаданные прежние; порядок подтверждён seq в op_log. `JobRecovery.StoreFailureWarnsAfterZipRecoveryWithoutPreventingOpen`: ошибка таблицы jobs предупреждает после успешного ZIP-recovery, индекс не требует перестройки. |
+| 8 | `StateJobs.ReadOnlyRejectsEveryWriteWithoutChangingDatabase`: чтение, все шесть видов записи/восстановление, append/prune журнала отклонены; байты базы прежние. |
+| 9 | `OperationLog.ExactJsonFiltersSequencePruningAndValidation`: часы/seq заполняет журнал, возрастающий seq, фильтры и limit, точный JSON, prune, недопустимые level/detail. |
+| 10 | `CatalogLog.OperationsHaveOneEntryAndUnloggedOperationsStayUnlogged`: новый/identical/конфликт/отказ import_ready, успех/отказ copy, trash/restore/purge, verify, коды/уровни/ID/detail и отсутствие create/change/sync/rebuild. `CatalogLog.FailedAppendWarnsWithoutUndoingAssetOrMarkingIndexForRebuild`: подставленный сбой append, успешные trash/verify, предупреждение, корректные ZIP/индекс, без rebuild_required. Recovery проверен тестами п. 7. |
+| 11 | `cli_library_log`: чтение на обеих ОС без SKIP, фильтры asset/job/after/limit, next_after, limit 0/-1/1001 → 2, точный JSON detail, пользовательский текст без технического message, неизменность файлов. `cli_library_log_writes`: init → asset create → add-ready два раза → две реальные записи info/warn; Windows PASS, на Linux отдельно проверен отказ production-записи и явный SKIP только этой части. |
+
+### Команды и фактический вывод
+
+```text
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 86
+Total Test time (real) = 19.80 sec
+req_report: 13 IDs, 86 tests, 49 without req, 0 invalid IDs
+```
+
+Код 0; лог `.cache/t023-final-min.log`, JUnit/req_report — `.cache/t023-final-min-junit.xml`, `.cache/t023-final-min-req.json`.
+
+```text
+tools\build_cli.cmd --ci
+100% tests passed, 0 tests failed out of 414
+Total Test time (real) = 1059.79 sec
+req_report: 53 IDs, 414 tests, 49 without req, 0 invalid IDs
+```
+
+Код 0, **414/414 PASS, 0 SKIP**. Лог `.cache/t023-final-win.log`, JUnit `.cache/t023-final-win-junit.xml`, трассировка `.cache/t023-final-win-req.json`. arch_check/schema_check/sql_check реально выполнены и PASS.
+
+```text
+tools/build_linux.sh cli --ci  (WSL, Ubuntu)
+100% tests passed, 0 tests failed out of 411
+Total Test time (real) = 1186.47 sec
+req_report: 53 IDs, 411 tests, 48 without req, 0 invalid IDs
+```
+
+Код 0; JUnit: **389 PASS + 22 SKIP, 0 FAIL** из 411. До задачи — 397 тестов, 21 SKIP. Новый единственный пропуск — production-запись cli_library_log_writes по существующей политике fixed NTFS. cli_library_log реально выполнен без SKIP; все новые C++-тесты хранилища, журнала и recovery реально выполнены. Лог `.cache/t023-final-linux.log`, JUnit `.cache/t023-final-linux-junit.xml`, трассировка `.cache/t023-final-linux-req.json`.
+
+```text
+tools\build_cli.cmd --offline --ci
+100% tests passed, 0 tests failed out of 414
+Total Test time (real) = 1057.48 sec
+req_report: 53 IDs, 414 tests, 49 without req, 0 invalid IDs
+```
+
+Код 0; **414/414 PASS, 0 SKIP**. Лог `.cache/t023-final-offline.log`, JUnit `.cache/t023-final-offline-junit.xml`, трассировка `.cache/t023-final-offline-req.json`. Origin-загрузки заблокированы (`x-block-origin`), зависимости использованы из существующих кешей. Во всех четырёх прогонах arch_check/schema_check/sql_check PASS и 0 неверных ID.
+
+Усиленный JobRecovery повторён на Linux: 2/2 PASS, 6.14 sec, 0 invalid IDs; лог `.cache/t023-linux-recovery-log.log`. Реализация после 202c1eb не менялась, последующий c8c41c7 усиливает только assertions/req. Полный offline-прогон включает окончательную версию тестов.
+
+Целевые Windows-проверки: Job* 9/9 PASS (17.85 sec); OperationLog/CatalogLog/CLI/message_catalog_check функционально PASS; arch_check через штатный скрипт отдельно 1/1 PASS (6.50 sec). Linux: Job* 9/9 PASS (9.09 sec), OperationLog/CatalogLog 3/3 PASS (7.85 sec), cli_library_log PASS без SKIP, cli_library_log_writes — явный платформенный SKIP.
+
+После первого Windows-прогона уточнены только assertions и req-метка recovery-теста, без изменения реализации: `tools\build_cli.cmd --offline --ci -R JobRecovery` — 2/2 PASS, 5.87 sec, 0 invalid IDs (`.cache/t023-recovery-log-focus.log`). Проверки подтверждают code/level/asset_id/detail всех трёх recovery-записей и неизменность прогресса остальных состояний.
+
+Прямой запуск CTest для arch_check вне MSVC/vcpkg-окружения повредил только сгенерированный CMake-кэш. Кэш восстановлен CMake --fresh и чистой сборкой с кодовой страницей 65001; проверка Ninja-зависимостей и arch_check после этого PASS. Исходные build-скрипты не менялись. Новых предупреждений MSVC/GCC в коде T-023 нет; прежние предупреждения GCC в неизменённых файлах вне задачи не исправлялись.
+
+### Пример JSON library log
+
+Реальные две записи после нового и повторного add-ready, код 0 (`.cache/t023-win-log-example.json`):
+
+```json
+{"entries": [{"seq": 1, "at": "2026-11-18T08:30:07Z", "level": "info", "code": "library.import_ready", "job_id": null, "asset_id": "3ddd34d3-00a8-4df8-9ec0-1939edfcbdd7", "message": "Library operation completed", "detail": {"classification": "new", "status": "imported", "op_id": "ad700109-6b71-4501-9ca5-076cbc4fd715", "revision": 1}}, {"seq": 2, "at": "2026-11-18T08:30:08Z", "level": "warn", "code": "library.import_ready", "job_id": null, "asset_id": "3ddd34d3-00a8-4df8-9ec0-1939edfcbdd7", "message": "Library operation completed", "detail": {"classification": "identical", "status": "identical", "revision": 1}}], "next_after": 2, "command": "library log"}
+```
+
+### Отклонения и решения владельца
+
+- В-1 закрыт в чате: **выполнять правило T-023**, attempt увеличивать только при queued → running, не при восстановлении. jobs_and_sessions.md согласует управляющий; исполнитель документ не менял.
+- В-2 закрыт в чате: **менять только position, не priority**; непосредственный порядок гарантирован внутри одного приоритета. before=nullopt даёт последнюю позицию среди братьев и, следовательно, конец своей группы приоритета.
+- Тесты хранилища, контракта и журнала объединены в разрешённом test_job_store.cpp; recovery дополнен в разрешённом test_open_recovery.cpp. Реальная CLI-запись выделена в cli_library_log_writes, чтобы чтение журнала на Linux не помечалось SKIP.
+- Строки матрицы NFR-14.4.3/NFR-14.4.9 отражают частичную реализацию: без исполнителя, ротации и экспорта, как предписано задачей.
+
+### Вопросы
+
+Открытых вопросов нет. В-1 и В-2 разрешены явным ответом владельца.

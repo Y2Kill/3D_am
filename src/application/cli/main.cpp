@@ -186,6 +186,28 @@ int main(int argc, char** argv) {
                                   replace_ready->count() ? std::optional(add_ready_replace) : std::nullopt, verbose));
   });
   std::string copy_root, copy_id;
+  std::string log_root, log_asset, log_job; std::int64_t log_after=0; int log_limit=100;
+  auto* library_log=library->add_subcommand("log","Read the library operation log");
+  library_log->add_option("dir",log_root)->required();
+  auto* log_asset_option=library_log->add_option("--asset",log_asset);
+  auto* log_job_option=library_log->add_option("--job",log_job);
+  auto* log_after_option=library_log->add_option("--after",log_after);
+  library_log->add_option("--limit",log_limit)->check(CLI::Range(1,1000));
+  presentation(library_log);
+  library_log->callback([&] {
+    selected_command="library log"; am::db::LogQuery query; query.limit=static_cast<std::size_t>(log_limit);
+    if(log_asset_option->count()) query.asset_id=log_asset;
+    if(log_job_option->count()) query.job_id=log_job;
+    if(log_after_option->count()) query.after_seq=log_after;
+    auto result=app::library_log(path(log_root),query);
+    if(!result) { render("library log",result.error()); return; }
+    if(json) std::cout << result->json << '\n';
+    else for(const auto& entry:result->entries) {
+      std::cout << entry.seq << ' ' << entry.at << ' ' << app::message_text(entry.code) << '\n';
+      if(verbose) std::cout << entry.message << ' ' << entry.detail_json.value_or("null") << '\n';
+    }
+    for(const auto& diagnostic:result->diagnostics) print_error(diagnostic,verbose);
+  });
   std::string library_verify_root; bool library_verify_full = false, library_verify_no_trash = false;
   auto* library_verify = library->add_subcommand("verify", "Check library ZIPs and record detected corruption in the index");
   library_verify->add_option("dir",library_verify_root)->required();

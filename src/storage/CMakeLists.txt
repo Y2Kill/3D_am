@@ -27,7 +27,8 @@ if(AM_WITH_CONTAINER)
     CONTENT "#pragma once\ninline constexpr const char* manifest_schema_parts[] = {R\"AMSCHEMA(${AM_REPOSITORY_SCHEMA_PARTS})AMSCHEMA\"};\n")
   list(APPEND AM_STORAGE_SOURCES asset_zip/source.cpp asset_zip/sha256.cpp
     asset_zip/reader.cpp asset_zip/profile.cpp asset_zip/sink.cpp
-    asset_zip/writer.cpp asset_zip/compression_policy.cpp db/state_journal.cpp db/sqlite.cpp db/index_store.cpp commit/protocol.cpp repository/repository.cpp library/library.cpp)
+    asset_zip/writer.cpp asset_zip/compression_policy.cpp db/state_journal.cpp db/sqlite.cpp db/index_store.cpp
+    db/job_store.cpp db/operation_log.cpp commit/protocol.cpp repository/repository.cpp library/library.cpp)
 endif()
 am_add_module(storage
   SOURCES ${AM_STORAGE_SOURCES}

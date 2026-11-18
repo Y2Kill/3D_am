@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import shutil
+import sqlite3
 import sys
 import unittest
 import uuid
@@ -180,6 +181,62 @@ class LibraryCli(unittest.TestCase):
         self.assertEqual(destination.read_bytes(), newer.read_bytes())
         self.assertEqual(self.run_am("list")["assets"][0]["revision"], 2)
         self.assertEqual(hashlib.sha256((self.root / ".am/userdata.sqlite").read_bytes()).hexdigest(), userdata)
+
+    def test_log(self):
+        self.run_am("init")
+        self.assertEqual(self.run_am("log")["entries"], [])
+        asset, job = str(uuid.uuid4()), str(uuid.uuid4())
+        detail = ' { "n": 1e9999, "z": -0, "ordered": [1, 2] } '
+        with sqlite3.connect(self.root / ".am/state.sqlite") as db:
+            for level in ("info", "warn"):
+                db.execute("INSERT INTO op_log(at,level,job_id,asset_id,code,message,detail) VALUES(?,?,?,?,?,?,?)",
+                           ("2026-11-18T00:00:00Z", level, job, asset, "library.import_ready", "Synthetic diagnostic", detail))
+        before = self.snapshot()
+        report = self.run_am("log")
+        self.assertEqual(len(report["entries"]), 2)
+        first, second = report["entries"]
+        self.assertLess(first["seq"], second["seq"])
+        self.assertEqual(report["next_after"], second["seq"])
+        self.assertEqual(len(self.run_am("log", 0, "--asset", asset, "--job", job)["entries"]), 2)
+        self.assertEqual(self.run_am("log", 0, "--asset", str(uuid.uuid4()))["entries"], [])
+        self.assertEqual(self.run_am("log", 0, "--after", str(first["seq"]), "--limit", "1")["entries"][0]["seq"], second["seq"])
+        self.assertIsNone(self.run_am("log", 0, "--after", str(second["seq"]))["next_after"])
+        process = subprocess.run([str(CONFIG.am), "library", "log", str(self.root), "--json"], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn(detail, process.stdout)
+        raw_result = process.stdout
+        for bad in ("0", "1001", "-1"):
+            process = subprocess.run([str(CONFIG.am), "library", "log", str(self.root), "--limit", bad], capture_output=True, encoding="utf-8", timeout=60)
+            self.assertEqual(process.returncode, 2, (process.stdout, process.stderr))
+        plain = subprocess.run([str(CONFIG.am), "library", "log", str(self.root)], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertIn("Ready asset import", plain.stdout)
+        self.assertNotIn("Synthetic diagnostic", plain.stdout)
+        self.assertEqual(self.snapshot(), before)
+        (CONFIG.root / "t023-log-example.json").write_text(raw_result, encoding="utf-8")
+
+    def test_log_writes(self):
+        self.run_am("init")
+        if os.name != "nt":
+            refused = self.run_am("add-ready", 4, str(self.work / "not-created.zip"))
+            self.assertEqual(refused["error"]["message_id"], "am.library.storage_read_only")
+            reason = "Production writes require a verified fixed NTFS volume; read-only library log is tested without SKIP"
+            print(reason)
+            self.skipTest(reason)
+        self.run_am("rebuild")
+        source, ready = self.work / "source.bin", self.work / "ready.zip"
+        source.write_bytes(b"log fixture")
+        created = subprocess.run([str(CONFIG.am), "asset", "create", str(source), "-o", str(ready), "--json"], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(created.returncode, 0, (created.stdout, created.stderr))
+        asset = self.run_am("add-ready", 0, str(ready))["results"][0]["asset_id"]
+        self.assertEqual(self.run_am("add-ready", 0, str(ready))["results"][0]["status"], "identical")
+        result = self.run_am("log", 0, "--asset", asset)
+        self.assertEqual(len(result["entries"]), 2)
+        self.assertEqual([row["code"] for row in result["entries"]], ["library.import_ready"] * 2)
+        self.assertEqual([row["level"] for row in result["entries"]], ["info", "warn"])
+        self.assertEqual([row["detail"]["status"] for row in result["entries"]], ["imported", "identical"])
+        self.assertEqual(len(self.run_am("log", 0, "--after", str(result["entries"][0]["seq"]), "--limit", "1")["entries"]), 1)
+        (CONFIG.root / "t023-log-writes-example.json").write_text(json.dumps(result), encoding="utf-8")
 
     def test_verify(self):
         self.run_am("init")
