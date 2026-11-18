@@ -390,7 +390,8 @@ TEST(LibraryVerify, PurgeAllWithMissingTrashIsEmptySuccess) {
 #endif
 }
 TEST(JobRecovery, CommitRecoveryPrecedesJobsAndReadOnlyPreservesEverything) {
-  RecordProperty("req","NFR-14.4.3|K-123"); World w; crash(w,"change","after_verified_journal");
+  RecordProperty("req","NFR-14.4.3|NFR-14.4.9|K-123"); World w; crash(w,"change","after_verified_journal");
+  const auto pending=w.pending(); ASSERT_EQ(pending.size(),1u);
   std::string retry, exhausted; std::map<std::string,am::contracts::JobRecord> unchanged;
   using State=am::contracts::JobState;
   {
@@ -406,6 +407,7 @@ TEST(JobRecovery, CommitRecoveryPrecedesJobsAndReadOnlyPreservesEverything) {
       const auto job=value(store.enqueue(spec)).job_id;
       if(state==State::queued) { unchanged[job]=*value(store.get(job)); continue; }
       value(store.transition(job,State::queued,State::running)); am::contracts::JobPatch patch;
+      value(store.report(job,{{1},{2},"files","Inspecting"}));
       if(state==State::needs_decision) patch.decision_json="{\"kind\":\"test\"}";
       value(store.transition(job,State::running,state,patch));
       unchanged[job]=*value(store.get(job));
@@ -431,10 +433,19 @@ TEST(JobRecovery, CommitRecoveryPrecedesJobsAndReadOnlyPreservesEverything) {
       EXPECT_EQ(actual.result_json,original.result_json); EXPECT_EQ(actual.error_json,original.error_json);
       EXPECT_EQ(actual.created_at,original.created_at); EXPECT_EQ(actual.started_at,original.started_at); EXPECT_EQ(actual.finished_at,original.finished_at);
       EXPECT_EQ(actual.position,original.position); EXPECT_EQ(actual.priority,original.priority);
+      EXPECT_EQ(actual.progress.done,original.progress.done); EXPECT_EQ(actual.progress.total,original.progress.total);
+      EXPECT_EQ(actual.progress.unit,original.progress.unit); EXPECT_EQ(actual.progress.stage,original.progress.stage);
     }
     am::db::OperationLog log(c.library().database(lib::DatabaseKind::state)); const auto rows=value(log.query()); ASSERT_EQ(rows.size(),3u);
-    EXPECT_EQ(rows[0].code,"library.recovery"); EXPECT_TRUE(Json::parse(*rows[0].detail_json).contains("op_id"));
+    for(const auto& row:rows) EXPECT_EQ(row.code,"library.recovery");
+    EXPECT_EQ(rows[0].asset_id,w.asset.ref.asset_id); EXPECT_EQ(rows[0].level,"info");
+    EXPECT_EQ(Json::parse(*rows[0].detail_json)["op_id"],pending[0].op_id);
+    EXPECT_EQ(Json::parse(*rows[0].detail_json)["outcome"],"completed");
     EXPECT_EQ(rows[1].job_id,retry); EXPECT_EQ(rows[2].job_id,exhausted);
+    EXPECT_FALSE(rows[1].asset_id); EXPECT_FALSE(rows[2].asset_id);
+    EXPECT_EQ(rows[1].level,"info"); EXPECT_EQ(rows[2].level,"error");
+    EXPECT_EQ(Json::parse(*rows[1].detail_json)["job_id"],retry); EXPECT_EQ(Json::parse(*rows[1].detail_json)["outcome"],"queued");
+    EXPECT_EQ(Json::parse(*rows[2].detail_json)["job_id"],exhausted); EXPECT_EQ(Json::parse(*rows[2].detail_json)["outcome"],"failed");
     EXPECT_EQ(value(c.indexer().list())[0].revision,2); w.clean();
   }
   auto c=value(cat::Catalog::open(w.root,options())); EXPECT_TRUE(c.open_report().jobs_requeued.empty()); EXPECT_TRUE(c.open_report().jobs_failed.empty());
