@@ -114,6 +114,7 @@ def operations(am, library, repeat, work):
         if sys.platform.startswith("linux") and name in ("sync", "rebuild"):
             result[name] = {"status": "not_measured", "reason": "storage_read_only"}
             continue
+        print(f"Measuring {name}: {repeat} processes", file=sys.stderr, flush=True)
         samples = [measured(command, work)[0] for _ in range(repeat)]
         result[name] = {"status": "measured", "first_after_generation": samples[0], "statistics": stats(samples[1:])}
     return result
@@ -184,6 +185,7 @@ def run(args):
             if descriptor != generation["parameters"] or descriptor["count"] != count:
                 raise MeasurementError("Generation report does not match the library descriptor")
         else:
+            print(f"Generating {count} assets", file=sys.stderr, flush=True)
             _, output = measured(command, args.root)
             generation = json.loads(output)
         if not args.library and generation["created"] != count:
