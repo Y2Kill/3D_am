@@ -55,6 +55,7 @@ struct LibraryVerifyReport {
 struct OpenReport {
   std::vector<commit::RecoveryItem> recovered;
   std::vector<std::string> reindexed;
+  std::vector<std::string> jobs_requeued, jobs_failed;
   bool previous_session_unclosed = false;
   std::optional<SyncReport> sync;
   std::size_t pending_read_only = 0;
@@ -66,6 +67,7 @@ struct IndexerHooks {
   std::function<Result<void>(std::size_t)> after_rebuild_insert;
   std::function<Result<void>(const std::filesystem::path&)> before_read;
   std::function<Result<void>(std::size_t)> after_sync_change;
+  std::function<Result<void>(std::string_view)> before_log;
 };
 std::string tag_search_key(std::string_view);
 class Indexer {
@@ -117,6 +119,7 @@ class Catalog {
   library::Library& library() noexcept;
   Indexer& indexer() noexcept;
   const OpenReport& open_report() const noexcept;
+  const std::vector<Error>& operation_warnings() const noexcept;
   Result<LibraryVerifyReport> verify(const LibraryVerifyOptions& = {});
   Result<SyncReport> sync(const SyncOptions& = {});
   Result<CatalogChange> create(const repository::CreateRequest&);

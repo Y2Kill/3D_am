@@ -255,3 +255,51 @@
 "am.app.label.index_updated" = "Index updated"
 "am.app.label.items" = "Items"
 "am.app.label.recovery" = "Recovery"
+
+"am.jobs.type_invalid" = "The job type is invalid."
+
+"am.jobs.json_invalid" = "The job or log JSON is invalid."
+
+"am.jobs.id_invalid" = "The job ID must be a canonical UUIDv4."
+
+"am.jobs.exists" = "A job with this ID already exists."
+
+"am.jobs.parent_invalid" = "The job parent or queue group is invalid."
+
+"am.jobs.progress_invalid" = "The job progress is invalid."
+
+"am.jobs.transition_invalid" = "This job transition or queue operation is not allowed."
+
+"am.jobs.state_conflict" = "The job state has changed."
+
+"am.jobs.store_error" = "The job store could not complete the operation."
+
+"am.jobs.position_overflow" = "The queue position cannot be represented."
+
+"am.jobs.attempts_invalid" = "The job attempt policy is invalid."
+
+"am.jobs.attempts_exhausted" = "The job exhausted its recovery attempts."
+
+"am.jobs.recovery_pending" = "Running jobs are awaiting recovery by the write owner."
+
+"am.jobs.recovery_failed" = "Job recovery could not finish."
+
+"am.jobs.log_error" = "The operation log could not complete the operation."
+
+"am.jobs.log_invalid" = "The operation log entry or query is invalid."
+
+"am.catalog.log_failed" = "The library operation completed, but its log entry could not be stored."
+
+"library.import_ready" = "Ready asset import"
+
+"library.copy" = "Independent asset copy"
+
+"library.trash" = "Move to trash"
+
+"library.restore" = "Restore from trash"
+
+"library.purge" = "Purge from trash"
+
+"library.recovery" = "Library recovery"
+
+"library.verify" = "Library verification"

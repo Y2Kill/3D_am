@@ -6,6 +6,10 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Persistent job storage with validated transitions, exact JSON, progress,
+  decisions, queue ordering, and recovery after interrupted writer sessions.
+- Library operation logging and read-only `am library log` with filtering and
+  sequence-based pagination. Log failures warn without undoing completed operations.
 - `am library verify` with quick and full checks, optional trash exclusion,
   per-asset reports, read-only fallback, and atomic corruption updates in the index.
 - Automatic recovery when opening a library for writing, affected-asset indexing,

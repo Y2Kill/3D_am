@@ -36,6 +36,7 @@ struct OpenOptions {
   std::optional<StorageCapabilities> capabilities;
   std::vector<Migration> migrations;
   std::function<void(const repository::IndexedEvent&)> on_indexed;
+  int max_attempts = 3; // hypothesis; job recovery policy, refined by measurements
 };
 struct InitOptions {
   std::string name;

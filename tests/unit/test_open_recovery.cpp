@@ -9,6 +9,8 @@
 #include "am/foundation/paths.hpp"
 #include "am/foundation/uuid.hpp"
 #include "am/services/catalog/indexer.hpp"
+#include "am/storage/db/job_store.hpp"
+#include "am/storage/db/operation_log.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -386,5 +388,61 @@ TEST(LibraryVerify, PurgeAllWithMissingTrashIsEmptySuccess) {
   // remain intentionally unavailable. Verification itself has no such skip.
   GTEST_SKIP() << "Production writes require a verified fixed NTFS volume; verification itself is tested without SKIP";
 #endif
+}
+TEST(JobRecovery, CommitRecoveryPrecedesJobsAndReadOnlyPreservesEverything) {
+  RecordProperty("req","NFR-14.4.3|K-123"); World w; crash(w,"change","after_verified_journal");
+  std::string retry, exhausted; std::map<std::string,am::contracts::JobRecord> unchanged;
+  using State=am::contracts::JobState;
+  {
+    auto l=value(lib::Library::open(w.root,options())); am::db::StateJobStore store(l.database(lib::DatabaseKind::state));
+    am::contracts::JobSpec spec; spec.type="verify";
+    retry=value(store.enqueue(spec)).job_id; value(store.transition(retry,State::queued,State::running));
+    exhausted=value(store.enqueue(spec)).job_id;
+    for(int i=0;i<3;++i) {
+      value(store.transition(exhausted,State::queued,State::running));
+      if(i<2) { value(store.transition(exhausted,State::running,State::failed)); value(store.transition(exhausted,State::failed,State::queued)); }
+    }
+    for(auto state:{State::queued,State::paused,State::needs_decision,State::waiting_resources,State::resource_error,State::cannot_continue_safely,State::succeeded,State::failed,State::cancelled}) {
+      const auto job=value(store.enqueue(spec)).job_id;
+      if(state==State::queued) { unchanged[job]=*value(store.get(job)); continue; }
+      value(store.transition(job,State::queued,State::running)); am::contracts::JobPatch patch;
+      if(state==State::needs_decision) patch.decision_json="{\"kind\":\"test\"}";
+      value(store.transition(job,State::running,state,patch));
+      unchanged[job]=*value(store.get(job));
+    }
+  }
+  const auto state_hash=hash(w.root/".am/state.sqlite"), zip_hash=hash(w.path());
+  {
+    auto c=value(cat::Catalog::open(w.root,options(lib::Mode::read_only)));
+    EXPECT_TRUE(warning(c.open_report(),"am.jobs.recovery_pending")); EXPECT_TRUE(c.open_report().jobs_requeued.empty());
+    EXPECT_TRUE(c.open_report().jobs_failed.empty());
+  }
+  EXPECT_EQ(hash(w.root/".am/state.sqlite"),state_hash); EXPECT_EQ(hash(w.path()),zip_hash);
+  {
+    auto o=options(); o.max_attempts=3; auto c=value(cat::Catalog::open(w.root,o));
+    EXPECT_EQ(c.open_report().jobs_requeued,(std::vector<std::string>{retry})); EXPECT_EQ(c.open_report().jobs_failed,(std::vector<std::string>{exhausted}));
+    am::db::StateJobStore store(c.library().database(lib::DatabaseKind::state));
+    const auto first=*value(store.get(retry)), last=*value(store.get(exhausted));
+    EXPECT_EQ(first.state,State::queued); EXPECT_EQ(first.attempt,1); EXPECT_EQ(last.state,State::failed); EXPECT_EQ(last.attempt,3);
+    ASSERT_TRUE(last.error_json); EXPECT_EQ(Json::parse(*last.error_json)["message_id"],"am.jobs.attempts_exhausted"); EXPECT_EQ(Json::parse(*last.error_json)["code"],"am.incomplete"); EXPECT_TRUE(last.finished_at);
+    for(const auto& [job,original]:unchanged) {
+      const auto actual=*value(store.get(job)); EXPECT_EQ(actual.state,original.state); EXPECT_EQ(actual.attempt,original.attempt);
+      EXPECT_EQ(actual.params_json,original.params_json); EXPECT_EQ(actual.decision_json,original.decision_json);
+      EXPECT_EQ(actual.result_json,original.result_json); EXPECT_EQ(actual.error_json,original.error_json);
+      EXPECT_EQ(actual.created_at,original.created_at); EXPECT_EQ(actual.started_at,original.started_at); EXPECT_EQ(actual.finished_at,original.finished_at);
+      EXPECT_EQ(actual.position,original.position); EXPECT_EQ(actual.priority,original.priority);
+    }
+    am::db::OperationLog log(c.library().database(lib::DatabaseKind::state)); const auto rows=value(log.query()); ASSERT_EQ(rows.size(),3u);
+    EXPECT_EQ(rows[0].code,"library.recovery"); EXPECT_TRUE(Json::parse(*rows[0].detail_json).contains("op_id"));
+    EXPECT_EQ(rows[1].job_id,retry); EXPECT_EQ(rows[2].job_id,exhausted);
+    EXPECT_EQ(value(c.indexer().list())[0].revision,2); w.clean();
+  }
+  auto c=value(cat::Catalog::open(w.root,options())); EXPECT_TRUE(c.open_report().jobs_requeued.empty()); EXPECT_TRUE(c.open_report().jobs_failed.empty());
+}
+TEST(JobRecovery, StoreFailureWarnsAfterZipRecoveryWithoutPreventingOpen) {
+  RecordProperty("req","NFR-14.4.3|K-123"); World w; crash(w,"change","after_verified_journal");
+  { auto l=value(lib::Library::open(w.root,options())); auto db=am::db::Connection::borrow(l.database(lib::DatabaseKind::state)); value(db.exec("ALTER TABLE jobs RENAME COLUMN state TO broken_state")); }
+  auto c=value(cat::Catalog::open(w.root,options())); EXPECT_TRUE(warning(c.open_report(),"am.jobs.recovery_failed"));
+  EXPECT_EQ(value(c.indexer().list())[0].revision,2); w.clean(); EXPECT_FALSE(value(c.indexer().rebuild_required()));
 }
 #endif
