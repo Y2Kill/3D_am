@@ -145,7 +145,7 @@ def disk_bytes(library):
                     raise ctypes.WinError(ctypes.get_last_error())
                 try:
                     standard = StandardInfo()
-                    if not info(handle, 0, ctypes.byref(standard), ctypes.sizeof(standard)):
+                    if not info(handle, 1, ctypes.byref(standard), ctypes.sizeof(standard)):  # FileStandardInfo
                         raise ctypes.WinError(ctypes.get_last_error())
                     allocated += standard.allocation
                 finally:
