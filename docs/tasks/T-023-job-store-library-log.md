@@ -1,6 +1,6 @@
 # T-023. Хранилище заданий `IJobStore` и журнал библиотеки `op_log` (M2, P0.5 — часть 8)
 
-**Статус:** review · **Веха:** M2 · **Основание:** ТЗ v1.8 §6.7 п. 1, 2, 5–7 [СОГЛАСОВАНО], §10.10 п. 1, 4, 5, §14.4 п. 3, 4, 6; SPEC `container_manifest_v1.md` §10 («импорт готового ассета … запись идёт в журнал библиотеки»); ADR-0015, ADR-0024 (`IJobStore` — уровень `contracts`, реализация — `storage`), ADR-0033 п. 3; `docs/architecture/jobs_and_sessions.md` §1; `schemas/sql/state.sql` (таблицы `jobs`, `op_log` уже опубликованы); T-020 (журнал библиотеки отложен до этой задачи), T-022 (порядок восстановления при открытии)
+**Статус:** done (принята 2026-11-18, `27cbbb3`) · **Веха:** M2 · **Основание:** ТЗ v1.8 §6.7 п. 1, 2, 5–7 [СОГЛАСОВАНО], §10.10 п. 1, 4, 5, §14.4 п. 3, 4, 6; SPEC `container_manifest_v1.md` §10 («импорт готового ассета … запись идёт в журнал библиотеки»); ADR-0015, ADR-0024 (`IJobStore` — уровень `contracts`, реализация — `storage`), ADR-0033 п. 3; `docs/architecture/jobs_and_sessions.md` §1; `schemas/sql/state.sql` (таблицы `jobs`, `op_log` уже опубликованы); T-020 (журнал библиотеки отложен до этой задачи), T-022 (порядок восстановления при открытии)
 
 ## Цель
 
@@ -86,7 +86,7 @@
 5. **Порядок очереди.**
    - Новое задание получает `position = max(position) + 1` среди заданий с тем же `parent_id` (NULL — верхний уровень).
    - `list` сортирует по `(priority DESC, position ASC)` — как индекс `jobs_state`.
-   - `move_before(id, before)`: `id` ставится непосредственно перед `before` среди заданий того же `parent_id`; `before = nullopt` — в конец. Двигать можно только `queued`/`paused`; иное → `am.jobs.transition_invalid`. Разные родители → `am.jobs.parent_invalid`. Перенумерация — одной транзакцией; позиции остаются уникальными в пределах родителя.
+   - `move_before(id, before)`: `id` ставится непосредственно перед `before` среди заданий того же `parent_id`; `before = nullopt` — в конец. Двигать можно только `queued`/`paused`; иное → `am.jobs.transition_invalid`. Разные родители → `am.jobs.parent_invalid`. Перенумерация — одной транзакцией; позиции остаются уникальными в пределах родителя. `move_before` меняет только `position`, `priority` не трогает; непосредственное соседство в `list` гарантируется при равном `priority`, при разных приоритетах вызов успешен, `id` стоит перед `before` в последовательности позиций (В-2).
 6. **Восстановление при открытии** — в `Catalog::open` (`read_write`), **после** шага восстановления `pending_ops` и переиндексации T-022, до отметки сессии:
    - каждое `running` → `queued` (`attempt` не меняется: он увеличится при следующем `queued → running`), если `attempt < max_attempts`; иначе → `failed` с `error_json` от ошибки `Errc::incomplete`/`am.jobs.attempts_exhausted`, `finished_at` = сейчас;
    - `max_attempts` — параметр `OpenOptions`/`StateJobStore` (по умолчанию 3; гипотеза, уточняется по плану измерений — в отчёте и в `docs/architecture/nfr_measurement_plan.md` не записывать как норматив);
@@ -288,3 +288,25 @@ req_report: 53 IDs, 414 tests, 49 without req, 0 invalid IDs
 ### Вопросы
 
 Открытых вопросов нет. В-1 и В-2 разрешены явным ответом владельца.
+
+## Приёмка
+
+Принята 2026-11-18 управляющим, слияние `27cbbb3` (ветка `codex/T-023`, итоговый коммит `8257769`).
+
+**Прогоны управляющего** (все `.cpp` пересобраны): `build_min --ci` 86/86, `build_cli --ci` 414/414, `build_cli --offline --ci` 414/414 PASS. WSL — по отчёту исполнителя (389 PASS, 22 SKIP; `cli_library_log` без SKIP); CI GitHub — после публикации.
+
+**Проверено по коду:**
+- контракт `contracts::IJobStore` зависит только от `foundation`; таблица переходов совпадает с решением 2; `running → queued` через `transition` запрещён, доступен только `recover_running`;
+- `transition` — один `UPDATE … WHERE job_id=? AND state=? RETURNING`, конфликт → `am.jobs.state_conflict`; `attempt` растёт только на `→ running`, там же сбрасывается `finished_at`; `decision_json` очищается при выходе из `needs_decision`;
+- восстановление в `Catalog::open` идёт после `pending_ops` и переиндексации, до отметки сессии; `attempt` при восстановлении не меняется (В-1); `read_only` только предупреждает `am.jobs.recovery_pending`;
+- `move_before` перенумеровывает позиции родителя в одной транзакции и не меняет `priority` (В-2);
+- журнал: записи `import_ready` (в том числе отказ), `copy`, `trash/restore/purge`, `recovery` (ZIP и задания), `verify`; сбой записи → предупреждение `am.catalog.log_failed`, операция не отменяется; `am library log` открывает `read_only`, `detail` выводится байт-в-байт.
+
+**Документы:** `docs/architecture/jobs_and_sessions.md` §1 исправлен по В-1 (`attempt` при восстановлении не растёт); решение 5 этой задачи дополнено по В-2.
+
+**Замечания (не блокируют):**
+1. `remove_finished` удаляет родителя, если все потомки завершены, даже когда `finished_at` потомка не старше порога; такие потомки уходят каскадом раньше срока. Уточнить вместе с политикой хранения (§10.10 п. 4).
+2. В `read_only` ошибка запроса счётчика `running` молча игнорируется — предупреждение `am.jobs.recovery_pending` не выдаётся; допустимо, но стоит отразить в диагностике при работе над журналами M3a.
+3. `Catalog::verify` пишет журнал только при успешном завершении; прерванная ошибкой проверка в `op_log` не попадает.
+4. Проверка UUIDv4 продублирована ещё в двух местах `job_store.cpp` (`validate_id` и проверка `parent_id`) — к открытому замечанию T-022 о выносе в foundation.
+
