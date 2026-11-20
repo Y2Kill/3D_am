@@ -134,3 +134,5 @@ tools/build_linux.sh cli --ci -LE periodic
 
 A periodic measurement still needs an explicit storage label and an appropriate optimized build;
 the CTest registration uses `unspecified` and writes only to `.cache/perf/scale-result.json`.
+
+`operator_notes` optionally records observed execution conditions (for example, operator-reported laptop sleep). These annotations do not alter raw samples; affected wall-clock statistics must be interpreted with that limitation.
