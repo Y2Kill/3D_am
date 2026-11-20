@@ -72,8 +72,9 @@ Result<TrashSummary> summarize_trash(const std::vector<std::string>& zip_sizes);
 class IndexStore;
 class IndexTransaction {
  public:
-  IndexTransaction(IndexTransaction&&) noexcept = default;
-  IndexTransaction& operator=(IndexTransaction&&) noexcept = default;
+  IndexTransaction(IndexTransaction&&) noexcept;
+  IndexTransaction& operator=(IndexTransaction&&) noexcept;
+  ~IndexTransaction();
   IndexTransaction(const IndexTransaction&) = delete;
   IndexTransaction& operator=(const IndexTransaction&) = delete;
   Result<void> insert(const IndexRecord&);
@@ -83,8 +84,10 @@ class IndexTransaction {
 
  private:
   IndexStore* store_;
-  Transaction transaction_;
-  bool empty_rebuild_ = false;
+  std::optional<Transaction> transaction_;
+  bool empty_rebuild_ = false, corrupt_ = false;
+  void finish() noexcept;
+  Result<void> observed(Result<void>);
   IndexTransaction(IndexStore&, Transaction&&, bool empty = false);
   friend class IndexStore;
 };

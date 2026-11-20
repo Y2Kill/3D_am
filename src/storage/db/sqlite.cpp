@@ -10,22 +10,12 @@
 namespace am::db {
 namespace {
 Error error(sqlite3* db, std::string id, int code = SQLITE_ERROR) {
-  code &= 0xff;
-  const auto kind = code == SQLITE_CORRUPT || code == SQLITE_NOTADB ? Errc::corrupt_data
+  const auto primary = code & 0xff;
+  const auto kind = primary == SQLITE_CORRUPT || primary == SQLITE_NOTADB ? Errc::corrupt_data
                     : code == SQLITE_READONLY                        ? Errc::read_only
                     : code == SQLITE_BUSY || code == SQLITE_LOCKED ? Errc::locked
                                                                    : Errc::io_error;
-  const std::string detail = db ? sqlite3_errmsg(db) : "No database connection";
-  if (kind == Errc::corrupt_data && db) {
-    const auto* filename = sqlite3_db_filename(db, "main");
-    if (filename && (std::string_view(filename).ends_with("/index.sqlite") ||
-                     std::string_view(filename).ends_with("\\index.sqlite")))
-      (void)sqlite3_exec(db, "INSERT INTO meta(key,value) VALUES('rebuild_required','1') "
-                           "ON CONFLICT(key) DO UPDATE SET value='1'; "
-                           "INSERT INTO meta(key,value) VALUES('database_check_failed','1') "
-                           "ON CONFLICT(key) DO UPDATE SET value='1'", nullptr, nullptr, nullptr);
-  }
-  return Error::make(kind, "SQLite operation failed", detail)
+  return Error::make(kind, "SQLite operation failed", db ? sqlite3_errmsg(db) : "No database connection")
       .in("storage.db")
       .id(std::move(id));
 }

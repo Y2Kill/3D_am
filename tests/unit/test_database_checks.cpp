@@ -68,13 +68,15 @@ void session(const fs::path& root, const char* value) {
   am::db::IndexStore store(library.database(Kind::index)); take(store.set_meta("writer_session", value));
 }
 // Damage a data B-tree page, leaving the SQLite header, schema and recovery tables readable.
-void damage(const fs::path& root, Kind kind) {
+void damage(const fs::path& root, Kind kind, std::string_view table = "corruption_probe") {
   std::int64_t page = 0, size = 0;
   {
     auto library = take(lib::Library::open(root, options()));
     auto connection = am::db::Connection::borrow(library.database(kind));
-    take(connection.exec("CREATE TABLE corruption_probe(value TEXT); INSERT INTO corruption_probe VALUES('payload')"));
-    auto query = take(connection.prepare("SELECT rootpage FROM sqlite_schema WHERE name='corruption_probe'"));
+    if (table == "corruption_probe")
+      take(connection.exec("CREATE TABLE corruption_probe(value TEXT); INSERT INTO corruption_probe VALUES('payload')"));
+    auto query = take(connection.prepare("SELECT rootpage FROM sqlite_schema WHERE name=?"));
+    take(query.bind(1, table));
     take(query.step()); page = query.integer(0);
     auto pragma = take(connection.prepare("PRAGMA page_size")); take(pragma.step()); size = pragma.integer(0);
   }
@@ -203,19 +205,39 @@ TEST(DatabaseChecks, RuntimeIndexCorruptionMarksRebuildAndUnclosedOpenRepairsDam
   RecordProperty("req", "K-22|K-24");
   for (const bool unclosed : {false, true}) {
     const auto root = fresh();
+    if (!unclosed) {
+      auto catalog = take(cat::Catalog::open(root, options()));
+      am::repository::CreateRequest request; request.metadata=am::repository::Json{{"title","Page corruption target"}};
+      take(catalog.create(request));
+    }
     if (unclosed) session(root, "open");
-    damage(root, Kind::index);
+    damage(root, Kind::index, unclosed ? "corruption_probe" : "assets");
     if (!unclosed) {
       auto library = take(lib::Library::open(root, options()));
-      auto connection = am::db::Connection::borrow(library.database(Kind::index));
-      auto query = connection.prepare("SELECT * FROM corruption_probe");
-      if (query) {
-        auto row = query->step(); ASSERT_FALSE(row); EXPECT_EQ(row.error().code, am::Errc::corrupt_data);
-      } else EXPECT_EQ(query.error().code, am::Errc::corrupt_data);
-      am::db::IndexStore store(library.database(Kind::index)); EXPECT_TRUE(take(store.rebuild_required()));
+      am::db::IndexStore store(library.database(Kind::index));
+      auto rows = store.list(); ASSERT_FALSE(rows); EXPECT_EQ(rows.error().code, am::Errc::corrupt_data);
+      EXPECT_TRUE(take(store.rebuild_required()));
     }
     auto catalog = take(cat::Catalog::open(root, options()));
     EXPECT_EQ(take(catalog.library().check_database(Kind::index, lib::DatabaseCheckLevel::full)).status, "ok");
     EXPECT_FALSE(take(catalog.indexer().rebuild_required()));
   }
+}
+
+TEST(DatabaseChecks, CorruptionMarkerSurvivesIndexTransactionRollback) {
+  RecordProperty("req", "K-22|K-24");
+  const auto root = fresh(); damage(root, Kind::index, "fts_names_content");
+  auto library = take(lib::Library::open(root, options()));
+  am::db::IndexStore store(library.database(Kind::index));
+  {
+    auto transaction = take(store.begin_sync());
+    am::db::IndexRecord record; record.summary.asset_id="failed-row";record.summary.revision=1;
+    record.summary.health="ok";record.rel_path="failed.zip";record.zip_size="0";record.manifest_json="{}";
+    record.names={"model.stl"};
+    auto inserted=transaction.insert(record);ASSERT_FALSE(inserted);EXPECT_EQ(inserted.error().code,am::Errc::corrupt_data);
+    EXPECT_FALSE(transaction.commit());
+  }
+  EXPECT_EQ(take(store.count()),0);
+  EXPECT_TRUE(take(store.rebuild_required()));
+  EXPECT_EQ(take(store.get_meta("database_check_failed")),std::optional<std::string>("1"));
 }
