@@ -1,0 +1,1111 @@
+{
+  "schema": "am.perf.scale.v1",
+  "date": "2026-11-18T14:04:55.751843+00:00",
+  "program": {
+    "version": "am 0.1.0 (asset format v1)",
+    "commit": "2581afaca6a4cf050efa0bdc73e6d52ae175dbbc",
+    "build_type": "Release"
+  },
+  "environment": {
+    "os": "Windows",
+    "os_version": "10.0.19045",
+    "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+    "logical_cores": 12,
+    "ram_bytes": 119992246272,
+    "gpu": null,
+    "storage": "nvme-ssd",
+    "filesystem": "NTFS",
+    "assume_capabilities": false
+  },
+  "cold_cache": "not_measured",
+  "repeat": 5,
+  "volumes": [
+    {
+      "status": "measured",
+      "assets": 100,
+      "parameters": {
+        "plan_version": 1,
+        "count": 100,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 861,
+      "trash": 1,
+      "generation_seconds": 6.9839708,
+      "assets_per_second": 14.318502018937423,
+      "plan_sha256": "ff6dad951f904b063f1388ad1fa39b3c0764bfb75ec26af3b4ddf6ab5f23f767",
+      "library_bytes": 9077000,
+      "library_file_bytes": 8879795,
+      "estimated_generation_seconds": null,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0119615,
+            "peak_memory_bytes": 7249920
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0122732,
+                "peak_memory_bytes": 7249920
+              },
+              {
+                "seconds": 0.0132801,
+                "peak_memory_bytes": 7233536
+              },
+              {
+                "seconds": 0.0140669,
+                "peak_memory_bytes": 7262208
+              },
+              {
+                "seconds": 0.0137235,
+                "peak_memory_bytes": 7290880
+              }
+            ],
+            "median_seconds": 0.0135018,
+            "p95_seconds": 0.0140669,
+            "min_seconds": 0.0122732,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7290880
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0499608,
+            "peak_memory_bytes": 13705216
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0454035,
+                "peak_memory_bytes": 13660160
+              },
+              {
+                "seconds": 0.0496234,
+                "peak_memory_bytes": 13701120
+              },
+              {
+                "seconds": 0.04592,
+                "peak_memory_bytes": 13660160
+              },
+              {
+                "seconds": 0.0480717,
+                "peak_memory_bytes": 13680640
+              }
+            ],
+            "median_seconds": 0.046995850000000006,
+            "p95_seconds": 0.0496234,
+            "min_seconds": 0.0454035,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 13701120
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0625808,
+            "peak_memory_bytes": 13721600
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0559203,
+                "peak_memory_bytes": 13803520
+              },
+              {
+                "seconds": 0.0638275,
+                "peak_memory_bytes": 13770752
+              },
+              {
+                "seconds": 0.0518391,
+                "peak_memory_bytes": 13750272
+              },
+              {
+                "seconds": 0.0678623,
+                "peak_memory_bytes": 13697024
+              }
+            ],
+            "median_seconds": 0.059873899999999994,
+            "p95_seconds": 0.0678623,
+            "min_seconds": 0.0518391,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 13803520
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.082317,
+            "peak_memory_bytes": 12578816
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0872993,
+                "peak_memory_bytes": 12562432
+              },
+              {
+                "seconds": 0.1745814,
+                "peak_memory_bytes": 12578816
+              },
+              {
+                "seconds": 0.0781691,
+                "peak_memory_bytes": 12595200
+              },
+              {
+                "seconds": 0.1697736,
+                "peak_memory_bytes": 12513280
+              }
+            ],
+            "median_seconds": 0.12853645,
+            "p95_seconds": 0.1745814,
+            "min_seconds": 0.0781691,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 12595200
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 2.6198684,
+            "peak_memory_bytes": 16695296
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 2.2969548,
+                "peak_memory_bytes": 16732160
+              },
+              {
+                "seconds": 2.1266488,
+                "peak_memory_bytes": 16527360
+              },
+              {
+                "seconds": 2.1284417,
+                "peak_memory_bytes": 16637952
+              },
+              {
+                "seconds": 2.1050094,
+                "peak_memory_bytes": 16662528
+              }
+            ],
+            "median_seconds": 2.12754525,
+            "p95_seconds": 2.2969548,
+            "min_seconds": 2.1050094,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 16732160
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 2.7628534,
+            "peak_memory_bytes": 18026496
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 2.3729401,
+                "peak_memory_bytes": 18145280
+              },
+              {
+                "seconds": 2.0829875,
+                "peak_memory_bytes": 18100224
+              },
+              {
+                "seconds": 2.0693802,
+                "peak_memory_bytes": 18042880
+              },
+              {
+                "seconds": 2.0254115,
+                "peak_memory_bytes": 18288640
+              }
+            ],
+            "median_seconds": 2.07618385,
+            "p95_seconds": 2.3729401,
+            "min_seconds": 2.0254115,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 18288640
+          }
+        }
+      }
+    },
+    {
+      "status": "measured",
+      "assets": 1000,
+      "parameters": {
+        "plan_version": 1,
+        "count": 1000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 7895,
+      "trash": 10,
+      "generation_seconds": 78.1827516,
+      "assets_per_second": 12.790544967209877,
+      "plan_sha256": "91bff2065450d8d054f55e963c378ebf358dc76a7f110cac533b936aa5f82458",
+      "library_bytes": 81731848,
+      "library_file_bytes": 79693600,
+      "estimated_generation_seconds": null,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0137581,
+            "peak_memory_bytes": 7245824
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0120542,
+                "peak_memory_bytes": 7274496
+              },
+              {
+                "seconds": 0.0121465,
+                "peak_memory_bytes": 7241728
+              },
+              {
+                "seconds": 0.0121618,
+                "peak_memory_bytes": 7245824
+              },
+              {
+                "seconds": 0.0125127,
+                "peak_memory_bytes": 7245824
+              }
+            ],
+            "median_seconds": 0.012154149999999999,
+            "p95_seconds": 0.0125127,
+            "min_seconds": 0.0120542,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7274496
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.1140963,
+            "peak_memory_bytes": 14327808
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.1132142,
+                "peak_memory_bytes": 14413824
+              },
+              {
+                "seconds": 0.1196867,
+                "peak_memory_bytes": 14360576
+              },
+              {
+                "seconds": 0.1090852,
+                "peak_memory_bytes": 14381056
+              },
+              {
+                "seconds": 0.1150099,
+                "peak_memory_bytes": 14315520
+              }
+            ],
+            "median_seconds": 0.11411204999999999,
+            "p95_seconds": 0.1196867,
+            "min_seconds": 0.1090852,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 14413824
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.1212237,
+            "peak_memory_bytes": 15151104
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.1193432,
+                "peak_memory_bytes": 15089664
+              },
+              {
+                "seconds": 0.1256492,
+                "peak_memory_bytes": 15032320
+              },
+              {
+                "seconds": 0.1237705,
+                "peak_memory_bytes": 15159296
+              },
+              {
+                "seconds": 0.1238178,
+                "peak_memory_bytes": 15056896
+              }
+            ],
+            "median_seconds": 0.12379415,
+            "p95_seconds": 0.1256492,
+            "min_seconds": 0.1193432,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 15159296
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.1550429,
+            "peak_memory_bytes": 15560704
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.2724446,
+                "peak_memory_bytes": 15720448
+              },
+              {
+                "seconds": 0.1504733,
+                "peak_memory_bytes": 15515648
+              },
+              {
+                "seconds": 0.1507468,
+                "peak_memory_bytes": 15577088
+              },
+              {
+                "seconds": 0.1557211,
+                "peak_memory_bytes": 15618048
+              }
+            ],
+            "median_seconds": 0.15323395,
+            "p95_seconds": 0.2724446,
+            "min_seconds": 0.1504733,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 15720448
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 17.7776251,
+            "peak_memory_bytes": 21262336
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 18.1096622,
+                "peak_memory_bytes": 21188608
+              },
+              {
+                "seconds": 18.7290565,
+                "peak_memory_bytes": 20934656
+              },
+              {
+                "seconds": 19.4241969,
+                "peak_memory_bytes": 20746240
+              },
+              {
+                "seconds": 19.606112,
+                "peak_memory_bytes": 20918272
+              }
+            ],
+            "median_seconds": 19.0766267,
+            "p95_seconds": 19.606112,
+            "min_seconds": 18.1096622,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 21188608
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 20.9805309,
+            "peak_memory_bytes": 20365312
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 20.7950529,
+                "peak_memory_bytes": 20402176
+              },
+              {
+                "seconds": 19.4064939,
+                "peak_memory_bytes": 20471808
+              },
+              {
+                "seconds": 21.199015,
+                "peak_memory_bytes": 20684800
+              },
+              {
+                "seconds": 22.7027497,
+                "peak_memory_bytes": 20451328
+              }
+            ],
+            "median_seconds": 20.997033950000002,
+            "p95_seconds": 22.7027497,
+            "min_seconds": 19.4064939,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 20684800
+          }
+        }
+      }
+    },
+    {
+      "status": "measured",
+      "assets": 10000,
+      "parameters": {
+        "plan_version": 1,
+        "count": 10000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 84455,
+      "trash": 100,
+      "generation_seconds": 919.9179859,
+      "assets_per_second": 10.870534279440704,
+      "plan_sha256": "544790a0c50e0034068625b3dd756a0158338697cca4675f565c699e665076aa",
+      "library_bytes": 863428872,
+      "library_file_bytes": 842967763,
+      "estimated_generation_seconds": null,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0127031,
+            "peak_memory_bytes": 7233536
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0126861,
+                "peak_memory_bytes": 7221248
+              },
+              {
+                "seconds": 0.0127345,
+                "peak_memory_bytes": 7262208
+              },
+              {
+                "seconds": 0.0117083,
+                "peak_memory_bytes": 7233536
+              },
+              {
+                "seconds": 0.0125,
+                "peak_memory_bytes": 7241728
+              }
+            ],
+            "median_seconds": 0.012593050000000001,
+            "p95_seconds": 0.0127345,
+            "min_seconds": 0.0117083,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7262208
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 1.9199076,
+            "peak_memory_bytes": 14462976
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 1.8644972,
+                "peak_memory_bytes": 14413824
+              },
+              {
+                "seconds": 1.873419,
+                "peak_memory_bytes": 14393344
+              },
+              {
+                "seconds": 1.9120081,
+                "peak_memory_bytes": 14393344
+              },
+              {
+                "seconds": 1.7795634,
+                "peak_memory_bytes": 14450688
+              }
+            ],
+            "median_seconds": 1.8689581,
+            "p95_seconds": 1.9120081,
+            "min_seconds": 1.7795634,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 14450688
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 2.0708311,
+            "peak_memory_bytes": 32059392
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 1.922053,
+                "peak_memory_bytes": 32141312
+              },
+              {
+                "seconds": 1.922651,
+                "peak_memory_bytes": 32002048
+              },
+              {
+                "seconds": 1.9830085,
+                "peak_memory_bytes": 32063488
+              },
+              {
+                "seconds": 1.9359615,
+                "peak_memory_bytes": 32038912
+              }
+            ],
+            "median_seconds": 1.92930625,
+            "p95_seconds": 1.9830085,
+            "min_seconds": 1.922053,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 32141312
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 2.0457819,
+            "peak_memory_bytes": 25899008
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 2.0168425,
+                "peak_memory_bytes": 26071040
+              },
+              {
+                "seconds": 2.0037697,
+                "peak_memory_bytes": 26091520
+              },
+              {
+                "seconds": 2.0485735,
+                "peak_memory_bytes": 26124288
+              },
+              {
+                "seconds": 2.0174546,
+                "peak_memory_bytes": 26230784
+              }
+            ],
+            "median_seconds": 2.01714855,
+            "p95_seconds": 2.0485735,
+            "min_seconds": 2.0037697,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 26230784
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 175.950094,
+            "peak_memory_bytes": 34910208
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 182.9702157,
+                "peak_memory_bytes": 35102720
+              },
+              {
+                "seconds": 178.6711323,
+                "peak_memory_bytes": 35098624
+              },
+              {
+                "seconds": 167.4397752,
+                "peak_memory_bytes": 35598336
+              },
+              {
+                "seconds": 232.3390046,
+                "peak_memory_bytes": 34574336
+              }
+            ],
+            "median_seconds": 180.820674,
+            "p95_seconds": 232.3390046,
+            "min_seconds": 167.4397752,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 35598336
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 294.7030806,
+            "peak_memory_bytes": 28094464
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 295.8079525,
+                "peak_memory_bytes": 27271168
+              },
+              {
+                "seconds": 339.7522075,
+                "peak_memory_bytes": 27398144
+              },
+              {
+                "seconds": 320.1514216,
+                "peak_memory_bytes": 27713536
+              },
+              {
+                "seconds": 335.4623864,
+                "peak_memory_bytes": 27594752
+              }
+            ],
+            "median_seconds": 327.80690400000003,
+            "p95_seconds": 339.7522075,
+            "min_seconds": 295.8079525,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 27713536
+          }
+        }
+      }
+    },
+    {
+      "status": "measured",
+      "assets": 50000,
+      "parameters": {
+        "plan_version": 1,
+        "count": 50000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 426067,
+      "trash": 500,
+      "generation_seconds": 7466.9974378,
+      "assets_per_second": 6.6961319347568296,
+      "plan_sha256": "c8ecdaa65994fc2fa661ed7ac599172ffdbd1e74398b08e19be358bb8fabea79",
+      "library_bytes": 4355526920,
+      "library_file_bytes": 4253122139,
+      "estimated_generation_seconds": 4599.5899295,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.1000313,
+            "peak_memory_bytes": 7229440
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0131825,
+                "peak_memory_bytes": 7249920
+              },
+              {
+                "seconds": 0.013838,
+                "peak_memory_bytes": 7225344
+              },
+              {
+                "seconds": 0.0157528,
+                "peak_memory_bytes": 7254016
+              },
+              {
+                "seconds": 0.0110851,
+                "peak_memory_bytes": 7233536
+              }
+            ],
+            "median_seconds": 0.01351025,
+            "p95_seconds": 0.0157528,
+            "min_seconds": 0.0110851,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7254016
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 11.2692653,
+            "peak_memory_bytes": 14606336
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 11.4009132,
+                "peak_memory_bytes": 14520320
+              },
+              {
+                "seconds": 11.2592288,
+                "peak_memory_bytes": 14532608
+              },
+              {
+                "seconds": 11.2945454,
+                "peak_memory_bytes": 14565376
+              },
+              {
+                "seconds": 11.3197259,
+                "peak_memory_bytes": 14520320
+              }
+            ],
+            "median_seconds": 11.30713565,
+            "p95_seconds": 11.4009132,
+            "min_seconds": 11.2592288,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 14565376
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 11.8193169,
+            "peak_memory_bytes": 120795136
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 12.7764679,
+                "peak_memory_bytes": 120680448
+              },
+              {
+                "seconds": 12.4034539,
+                "peak_memory_bytes": 120668160
+              },
+              {
+                "seconds": 12.3473645,
+                "peak_memory_bytes": 120684544
+              },
+              {
+                "seconds": 11.8429278,
+                "peak_memory_bytes": 120655872
+              }
+            ],
+            "median_seconds": 12.3754092,
+            "p95_seconds": 12.7764679,
+            "min_seconds": 11.8429278,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 120684544
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 12.2709571,
+            "peak_memory_bytes": 71643136
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 12.5200228,
+                "peak_memory_bytes": 71426048
+              },
+              {
+                "seconds": 13.4850138,
+                "peak_memory_bytes": 71417856
+              },
+              {
+                "seconds": 12.4968465,
+                "peak_memory_bytes": 71471104
+              },
+              {
+                "seconds": 12.5133995,
+                "peak_memory_bytes": 71495680
+              }
+            ],
+            "median_seconds": 12.516711149999999,
+            "p95_seconds": 13.4850138,
+            "min_seconds": 12.4968465,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 71495680
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 926.647007,
+            "peak_memory_bytes": 97230848
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 933.3755414,
+                "peak_memory_bytes": 96702464
+              },
+              {
+                "seconds": 1098.9020336,
+                "peak_memory_bytes": 96854016
+              },
+              {
+                "seconds": 1078.6782144,
+                "peak_memory_bytes": 97357824
+              },
+              {
+                "seconds": 1529.4143421,
+                "peak_memory_bytes": 97533952
+              }
+            ],
+            "median_seconds": 1088.790124,
+            "p95_seconds": 1529.4143421,
+            "min_seconds": 933.3755414,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 97533952
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 4782.5817875,
+            "peak_memory_bytes": 56647680
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 4383.6391714,
+                "peak_memory_bytes": 56500224
+              },
+              {
+                "seconds": 4065.8308045,
+                "peak_memory_bytes": 56651776
+              },
+              {
+                "seconds": 4012.4174648,
+                "peak_memory_bytes": 56750080
+              },
+              {
+                "seconds": 4002.4734028,
+                "peak_memory_bytes": 56766464
+              }
+            ],
+            "median_seconds": 4039.12413465,
+            "p95_seconds": 4383.6391714,
+            "min_seconds": 4002.4734028,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 56766464
+          }
+        }
+      }
+    },
+    {
+      "status": "measured",
+      "assets": 100000,
+      "parameters": {
+        "plan_version": 1,
+        "count": 100000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 843407,
+      "trash": 1000,
+      "generation_seconds": 21213.4300839,
+      "assets_per_second": 4.7139948421587565,
+      "plan_sha256": "2be01a6649966a6f6fa0042c145d7f6d3bdf40959e84c81ecf4ad72f0e6f8c51",
+      "library_bytes": 8628592904,
+      "library_file_bytes": 8423637664,
+      "estimated_generation_seconds": 9199.179859,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0145104,
+            "peak_memory_bytes": 7245824
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0139626,
+                "peak_memory_bytes": 7237632
+              },
+              {
+                "seconds": 0.0131028,
+                "peak_memory_bytes": 7274496
+              },
+              {
+                "seconds": 0.0121742,
+                "peak_memory_bytes": 7245824
+              },
+              {
+                "seconds": 0.0114373,
+                "peak_memory_bytes": 7237632
+              }
+            ],
+            "median_seconds": 0.0126385,
+            "p95_seconds": 0.0139626,
+            "min_seconds": 0.0114373,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7274496
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 25.0820593,
+            "peak_memory_bytes": 14569472
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 24.7255041,
+                "peak_memory_bytes": 14651392
+              },
+              {
+                "seconds": 25.1201283,
+                "peak_memory_bytes": 14635008
+              },
+              {
+                "seconds": 24.5626953,
+                "peak_memory_bytes": 14585856
+              },
+              {
+                "seconds": 25.1615829,
+                "peak_memory_bytes": 14663680
+              }
+            ],
+            "median_seconds": 24.9228162,
+            "p95_seconds": 25.1615829,
+            "min_seconds": 24.5626953,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 14663680
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 25.8254651,
+            "peak_memory_bytes": 232046592
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 25.9540285,
+                "peak_memory_bytes": 231452672
+              },
+              {
+                "seconds": 25.6683227,
+                "peak_memory_bytes": 231608320
+              },
+              {
+                "seconds": 25.7465867,
+                "peak_memory_bytes": 231460864
+              },
+              {
+                "seconds": 25.8881448,
+                "peak_memory_bytes": 232067072
+              }
+            ],
+            "median_seconds": 25.81736575,
+            "p95_seconds": 25.9540285,
+            "min_seconds": 25.6683227,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 232067072
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 26.7578861,
+            "peak_memory_bytes": 128069632
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 27.3117397,
+                "peak_memory_bytes": 128319488
+              },
+              {
+                "seconds": 26.7160998,
+                "peak_memory_bytes": 128241664
+              },
+              {
+                "seconds": 26.6091525,
+                "peak_memory_bytes": 128204800
+              },
+              {
+                "seconds": 26.8161982,
+                "peak_memory_bytes": 128159744
+              }
+            ],
+            "median_seconds": 26.766149,
+            "p95_seconds": 27.3117397,
+            "min_seconds": 26.6091525,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 128319488
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 1583.8652318,
+            "peak_memory_bytes": 180224000
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 1628.471106,
+                "peak_memory_bytes": 180314112
+              },
+              {
+                "seconds": 1643.5524213,
+                "peak_memory_bytes": 180764672
+              },
+              {
+                "seconds": 1900.9414134,
+                "peak_memory_bytes": 180420608
+              },
+              {
+                "seconds": 2001.4407298,
+                "peak_memory_bytes": 180047872
+              }
+            ],
+            "median_seconds": 1772.24691735,
+            "p95_seconds": 2001.4407298,
+            "min_seconds": 1628.471106,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 180764672
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 16793.8547876,
+            "peak_memory_bytes": 102088704
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 16942.8546938,
+                "peak_memory_bytes": 102551552
+              },
+              {
+                "seconds": 16489.2390017,
+                "peak_memory_bytes": 102514688
+              },
+              {
+                "seconds": 13675.5970312,
+                "peak_memory_bytes": 102387712
+              },
+              {
+                "seconds": 26456.3059372,
+                "peak_memory_bytes": 102502400
+              }
+            ],
+            "median_seconds": 16716.04684775,
+            "p95_seconds": 26456.3059372,
+            "min_seconds": 13675.5970312,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 102551552
+          }
+        }
+      }
+    },
+    {
+      "assets": 250000,
+      "status": "not_measured",
+      "reason": "generation_estimate_exceeds_3h",
+      "estimated_generation_seconds": 22997.949647499998
+    }
+  ],
+  "version_baseline": {
+    "seconds": 0.014386,
+    "peak_memory_bytes": 7233536
+  },
+  "estimated_250000_generation_seconds": 22997.949647499998,
+  "operator_notes": [
+    {
+      "condition": "operator_reported_system_sleep",
+      "observed_local_date": "2026-11-20",
+      "timezone": "Europe/Kiev",
+      "assets": 100000,
+      "operation": "rebuild",
+      "sample_index": null,
+      "effect": "Wall-clock sample may include system suspension; raw samples are retained without adjustment."
+    }
+  ]
+}
