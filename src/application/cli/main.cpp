@@ -209,7 +209,7 @@ int main(int argc, char** argv) {
     for(const auto& diagnostic:result->diagnostics) print_error(diagnostic,verbose);
   });
   std::string library_verify_root; bool library_verify_full = false, library_verify_no_trash = false;
-  auto* library_verify = library->add_subcommand("verify", "Check library ZIPs and record detected corruption in the index");
+  auto* library_verify = library->add_subcommand("verify", "Check library databases and ZIPs; record detected corruption in the index");
   library_verify->add_option("dir",library_verify_root)->required();
   library_verify->add_flag("--full",library_verify_full,"Read and verify every payload stream");
   library_verify->add_flag("--no-trash",library_verify_no_trash,"Exclude assets in trash");

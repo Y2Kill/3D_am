@@ -54,17 +54,21 @@ void insert(Connection& c, std::string_view table, std::string_view columns, std
   take(s.step());
 }
 void erase(Connection& c, std::string_view id) {
-  // Foreign keys cascade the ordinary child rows; FTS tables have no FK.
-  for (const auto* table : {"fts_assets", "fts_names", "fts_docs", "assets"}) {
-    auto s = take(c.prepare("DELETE FROM " + std::string(table) + " WHERE asset_id=?"));
+  // Foreign keys cascade ordinary children and ownership maps after the FTS rows are removed.
+  for (const auto* sql : {
+      "DELETE FROM fts_assets WHERE rowid=(SELECT rowid FROM assets WHERE asset_id=?)",
+      "DELETE FROM fts_names WHERE rowid IN (SELECT fts_rowid FROM fts_names_owner WHERE asset_id=?)",
+      "DELETE FROM fts_docs WHERE rowid IN (SELECT fts_rowid FROM fts_docs_owner WHERE asset_id=?)",
+      "DELETE FROM assets WHERE asset_id=?"}) {
+    auto s = take(c.prepare(sql));
     take(s.bind(1, id));
     take(s.step());
   }
 }
-void put(Connection& c, const IndexRecord& r) {
+void put(Connection& c, const IndexRecord& r, bool replace = true) {
   const auto& a = r.summary;
   const auto& id = a.asset_id;
-  erase(c, id);
+  if (replace) erase(c, id);
   insert(c, "assets",
          "asset_id,revision,rel_path,in_trash,zip_size,zip_mtime_ns,manifest_sha256,format_major,format_minor,title,"
          "description,created_at,modified_at,incomplete,health,health_detail,primary_preview,file_count,content_bytes,"
@@ -108,9 +112,16 @@ void put(Connection& c, const IndexRecord& r) {
   for (const auto& f : r.fields)
     insert(c, "asset_fields", "asset_id,scope,owner_id,field_id,type_id,num,txt,unit",
            {id, f.scope, f.owner_id, f.field_id, cell(f.type_id), cell(f.num), cell(f.txt), cell(f.unit)});
-  insert(c, "fts_assets", "asset_id,title,description,authors,tags,sources",
-         {id, cell(a.title), cell(r.description), r.authors_text, r.tags_text, r.sources_text});
-  for (const auto& n : r.names) insert(c, "fts_names", "asset_id,name", {id, n});
+  auto asset_row = take(c.prepare("SELECT rowid FROM assets WHERE asset_id=?"));
+  take(asset_row.bind(1, id)); take(asset_row.step());
+  insert(c, "fts_assets", "rowid,asset_id,title,description,authors,tags,sources",
+         {asset_row.integer(0), id, cell(a.title), cell(r.description), r.authors_text, r.tags_text, r.sources_text});
+  for (const auto& n : r.names) {
+    auto owner = take(c.prepare("INSERT INTO fts_names_owner(asset_id) VALUES(?) RETURNING fts_rowid"));
+    take(owner.bind(1, id)); take(owner.step());
+    const auto rowid = owner.integer(0); take(owner.step());
+    insert(c, "fts_names", "rowid,asset_id,name", {rowid, id, n});
+  }
 }
 void meta(Connection& c, std::string_view key, std::string_view value) {
   auto s =
@@ -154,17 +165,18 @@ Result<IndexTransaction> IndexStore::begin_rebuild() {
   return guard<IndexTransaction>([&]() -> Result<IndexTransaction> {
     auto tx = take(Transaction::begin(db_));
     take(db_.exec("DELETE FROM fts_assets; DELETE FROM fts_names; DELETE FROM fts_docs; DELETE FROM assets"));
-    return IndexTransaction(*this, std::move(tx));
+    return IndexTransaction(*this, std::move(tx), true);
   });
 }
 Result<IndexTransaction> IndexStore::begin_sync() {
   return guard<IndexTransaction>(
       [&]() -> Result<IndexTransaction> { return IndexTransaction(*this, take(Transaction::begin(db_))); });
 }
-IndexTransaction::IndexTransaction(IndexStore& s, Transaction&& t) : store_(&s), transaction_(std::move(t)) {}
+IndexTransaction::IndexTransaction(IndexStore& s, Transaction&& t, bool empty)
+    : store_(&s), transaction_(std::move(t)), empty_rebuild_(empty) {}
 Result<void> IndexTransaction::insert(const IndexRecord& r) {
   return guard<void>([&]() -> Result<void> {
-    put(store_->db_, r);
+    put(store_->db_, r, !empty_rebuild_);
     return {};
   });
 }

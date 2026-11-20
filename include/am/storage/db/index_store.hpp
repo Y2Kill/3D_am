@@ -84,7 +84,8 @@ class IndexTransaction {
  private:
   IndexStore* store_;
   Transaction transaction_;
-  IndexTransaction(IndexStore&, Transaction&&);
+  bool empty_rebuild_ = false;
+  IndexTransaction(IndexStore&, Transaction&&, bool empty = false);
   friend class IndexStore;
 };
 using IndexRebuild = IndexTransaction;

@@ -21,6 +21,16 @@ void opening_warnings(AssetOutcome& out, const catalog::Catalog& catalog) {
   const auto& warnings = catalog.open_report().warnings;
   out.diagnostics.insert(out.diagnostics.end(),warnings.begin(),warnings.end());
 }
+Json database_checks_json(const std::vector<library::DatabaseCheck>& checks) {
+  Json out = Json::object();
+  for (const auto& check : checks) {
+    const char* name = check.database == library::DatabaseKind::index ? "index" :
+                       check.database == library::DatabaseKind::state ? "state" : "userdata";
+    out[name] = {{"status",check.status},{"check",check.level == library::DatabaseCheckLevel::full ? "integrity_check" : "quick_check"},
+                 {"detail",check.detail},{"message_id",check.message_id}};
+  }
+  return out;
+}
 Result<AssetOutcome> catalog_failure(const Error& e, const catalog::Catalog& catalog) {
   if (catalog.open_report().warnings.empty()) return e;
   AssetOutcome out; out.status = error_exit_code(e);
@@ -346,16 +356,36 @@ Result<AssetOutcome> verify_library(const std::filesystem::path& root, bool full
     if (!opened && (opened.error().message_id == "am.library.storage_read_only" || opened.error().message_id == "am.repo.storage_read_only")) {
       options.mode = library::Mode::read_only; opened = catalog::Catalog::open(root,options);
     }
-    if (!opened) return failed(opened.error());
+    if (!opened) {
+      // A damaged authoritative database can prevent recovery/open. Still expose all DB findings.
+      library::OpenOptions read; read.mode = library::Mode::read_only;
+      auto inspection = library::Library::open(root, read);
+      if (inspection) {
+        std::vector<library::DatabaseCheck> checks; bool damaged = false;
+        for (const auto kind : {library::DatabaseKind::index, library::DatabaseKind::userdata, library::DatabaseKind::state}) {
+          auto check = inspection->check_database(kind, full ? library::DatabaseCheckLevel::full : library::DatabaseCheckLevel::quick);
+          if (!check) return check.error();
+          if (kind != library::DatabaseKind::index && check->status != "ok") damaged = true;
+          checks.push_back(std::move(*check));
+        }
+        if (damaged) {
+          auto out = failed(opened.error()); if (!out) return out;
+          out->status = ExitCode::check_failed; out->value["databases"] = database_checks_json(checks);
+          return out;
+        }
+      }
+      return failed(opened.error());
+    }
     catalog::LibraryVerifyOptions verify; verify.level = full ? catalog::LibraryVerifyLevel::full : catalog::LibraryVerifyLevel::quick; verify.include_trash = trash;
     auto report = opened->verify(verify); if (!report) return failed(report.error(),&*opened);
     AssetOutcome out;
-    out.status = report->corrupt || report->unreadable ? ExitCode::check_failed :
+    out.status = report->database_failed || report->corrupt || report->unreadable ? ExitCode::check_failed :
                  report->unsupported || report->cancelled ? ExitCode::partial : ExitCode::success;
     out.value = {{"level",full ? "full" : "quick"},{"total",report->total},{"checked",report->checked},{"ok",report->ok},
       {"warn",report->warn},{"corrupt",report->corrupt},{"unsupported",report->unsupported},{"unreadable",report->unreadable},
       {"cancelled",report->cancelled},{"index_updated",report->index_updated},{"items",Json::array()},
       {"skipped",Json::array()},{"ignored",report->ignored},{"duration_ms",report->duration_ms}};
+    out.value["databases"] = database_checks_json(report->databases);
     for (const auto& item : report->items) {
       if (item.status != "ok" || verbose)
         out.value["items"].push_back({{"asset_id",item.asset_id},{"path",item.path},{"in_trash",item.in_trash},{"indexed",item.indexed},

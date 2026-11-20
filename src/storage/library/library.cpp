@@ -231,15 +231,22 @@ std::string quote(const std::string& value) {
   for (auto c : value) { out += c; if (c == '\'') out += c; }
   return out + "'";
 }
+bool schema_present(sqlite3* db, DatabaseKind kind) {
+  const char* tables = kind == DatabaseKind::index ? "'assets','meta','fts_assets','fts_names','fts_docs','fts_names_owner','fts_docs_owner'" :
+                       kind == DatabaseKind::state ? "'pending_ops','pending_ops_new','snapshots','jobs','op_log','edit_sessions','edit_session_files'" :
+                       "'relations','collections','collection_items','saved_searches','tag_dict','tag_aliases','tag_relations','category_tree','field_defs','suggestion_decisions','dedup_reviews'";
+  const auto expected = kind == DatabaseKind::userdata ? "11" : "7";
+  return scalar(db, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN (" + std::string(tables) + ")") == expected;
+}
 int supported(DatabaseKind kind, const OpenOptions& options) {
-  int target = 1;
+  int target = kind == DatabaseKind::index ? 2 : 1;
   std::map<int, const Migration*> chain;
   for (const auto& step : options.migrations) if (step.database == kind) {
     if (kind == DatabaseKind::index || step.from < 1 || step.from == INT_MAX || !step.apply || !chain.emplace(step.from, &step).second)
       fail(Errc::invalid_argument, "am.library.migration_invalid", name(kind));
     target = std::max(target, step.from + 1);
   }
-  for (int v = 1; v < target; ++v) if (!chain.contains(v))
+  for (int v = 1; kind != DatabaseKind::index && v < target; ++v) if (!chain.contains(v))
     fail(Errc::invalid_argument, "am.library.migration_invalid", name(kind));
   return target;
 }
@@ -296,12 +303,15 @@ Database open_database(const Path& root, DatabaseKind kind, const OpenOptions& o
     try {
       const int version = std::stoi(scalar(out.handle.get(), "PRAGMA user_version"));
       out.info.user_version = version;
-      const bool intact = scalar(out.handle.get(), "PRAGMA integrity_check") == "ok";
+      // Read the schema B-tree only; data pages are checked explicitly by verify/recovery.
+      const bool intact = version == 0 || schema_present(out.handle.get(), kind);
       compatible = intact && version == target;
       if (compatible && kind == DatabaseKind::index)
         out.info.rebuild_required = scalar(out.handle.get(), "SELECT value FROM meta WHERE key='rebuild_required'") == "1";
+      if (compatible && kind == DatabaseKind::index && rw &&
+          scalar(out.handle.get(), "SELECT value FROM meta WHERE key='database_check_failed'") == "1") compatible = false;
       if (rw && kind != DatabaseKind::index) {
-        if (!intact) fail(Errc::corrupt_data, "am.library.db_error", std::string(name(kind)) + ": integrity_check");
+        if (!intact) fail(Errc::corrupt_data, "am.library.db_error", std::string(name(kind)) + ": required schema missing");
         if (version == 0 && scalar(out.handle.get(), "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'") == "0") {
           exec(out.handle.get(), schema(kind)); compatible = true;
           if (target > 1) migrate(out.handle.get(), kind, 1, target, root, options);
@@ -329,7 +339,7 @@ Database open_database(const Path& root, DatabaseKind kind, const OpenOptions& o
       fail(Errc::io_error, "am.library.db_error", out.info.detail);
     out.handle.reset();
     if (!compatible) {
-      if (exists) stale(path);
+      if (exists) { stale(path); out.info.reason = "recreated"; }
       out.handle = connect(path, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
       exec(out.handle.get(), schema(kind));
       exec(out.handle.get(), "INSERT INTO meta(key,value) VALUES('rebuild_required','1')");
@@ -355,11 +365,13 @@ struct Library::Impl {
   // Destruction order keeps the owner lock until all connections are closed.
   std::unique_ptr<OwnerLock> lock;
   Config config;
+  Path root;
   StorageCapabilities caps;
   Mode mode = Mode::read_only;
   OwnerInfo owner;
   std::array<Database, 3> databases;
   std::optional<repository::AssetRepository> assets;
+  std::function<void(DatabaseKind, DatabaseCheckLevel)> on_database_check;
 };
 Library::Library(std::unique_ptr<Impl> p) : impl_(std::move(p)) {}
 Library::Library(Library&&) noexcept = default;
@@ -372,6 +384,56 @@ const OwnerInfo& Library::owner() const noexcept { return impl_->owner; }
 const DatabaseInfo& Library::database_info(DatabaseKind k) const noexcept { return impl_->databases[static_cast<std::size_t>(k)].info; }
 sqlite3* Library::database(DatabaseKind k) const noexcept { return impl_->databases[static_cast<std::size_t>(k)].handle.get(); }
 repository::AssetRepository& Library::assets() noexcept { return *impl_->assets; }
+Result<DatabaseCheck> Library::check_database(DatabaseKind kind, DatabaseCheckLevel level) {
+  return guard<DatabaseCheck>([&]() -> Result<DatabaseCheck> {
+    DatabaseCheck out; out.database = kind; out.level = level;
+    auto* db = database(kind);
+    if (!db) {
+      out.status = "unavailable"; out.detail = database_info(kind).detail;
+      out.message_id = "am.library.db_error"; return out;
+    }
+    if (impl_->on_database_check) impl_->on_database_check(kind, level);
+    sqlite3_stmt* raw = nullptr;
+    const char* sql = level == DatabaseCheckLevel::full ? "PRAGMA integrity_check" : "PRAGMA quick_check";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &raw, nullptr);
+    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(raw, sqlite3_finalize);
+    bool ok = true, saw_row = false;
+    if (rc == SQLITE_OK) {
+      while ((rc = sqlite3_step(raw)) == SQLITE_ROW) {
+        saw_row = true;
+        const auto* text = sqlite3_column_text(raw, 0);
+        const std::string finding = text ? reinterpret_cast<const char*>(text) : "";
+        if (finding != "ok") { ok = false; if (!out.detail.empty()) out.detail += "\n"; out.detail += finding; }
+      }
+    }
+    if (rc != SQLITE_DONE) { ok = false; out.detail = sqlite3_errmsg(db); }
+    out.status = ok && saw_row ? "ok" : "corrupt";
+    if (out.status != "ok") {
+      out.message_id = "am.library.db_error";
+      if (kind == DatabaseKind::index && mode() == Mode::read_write) {
+        // Preserve the finding even if damage prevents persisting the disposable-index flag.
+        impl_->databases[static_cast<std::size_t>(kind)].info.rebuild_required = true;
+        (void)sqlite3_exec(db, "INSERT INTO meta(key,value) VALUES('rebuild_required','1') "
+                             "ON CONFLICT(key) DO UPDATE SET value='1'; "
+                             "INSERT INTO meta(key,value) VALUES('database_check_failed','1') "
+                             "ON CONFLICT(key) DO UPDATE SET value='1'", nullptr, nullptr, nullptr);
+      }
+    }
+    return out;
+  });
+}
+Result<void> Library::reset_index() {
+  return guard<void>([&]() -> Result<void> {
+    if (mode() != Mode::read_write) return error(Errc::read_only, "am.library.storage_read_only");
+    auto& index = impl_->databases[static_cast<std::size_t>(DatabaseKind::index)];
+    index.handle.reset();
+    stale(impl_->root / ".am/index.sqlite");
+    OpenOptions options; options.mode = Mode::read_write;
+    index = open_database(impl_->root, DatabaseKind::index, options, impl_->caps);
+    index.info.reason = "recreated";
+    return {};
+  });
+}
 Result<Config> Library::init(const Path& path, const InitOptions& options) {
   return guard<Config>([&] {
     const auto root = fs::absolute(path).lexically_normal();
@@ -426,6 +488,8 @@ Result<Library> Library::open(const Path& path, const OpenOptions& options) {
     repo.capabilities = static_cast<const repository::StorageCapabilities&>(p->caps);
     repo.on_indexed = options.on_indexed;
     p->assets.emplace(take(repository::AssetRepository::open(root, std::move(repo))));
+    p->root = root;
+    p->on_database_check = options.on_database_check;
     return Library(std::move(p));
   });
 }

@@ -578,9 +578,20 @@ Result<LibraryVerifyReport> Indexer::verify(const LibraryVerifyOptions& options)
     auto candidates = list_candidates(root_,options.include_trash);
     LibraryVerifyReport out; out.level = options.level; out.total = candidates.winners.size();
     out.skipped = std::move(candidates.duplicates); out.ignored = std::move(candidates.ignored);
+    bool database_index_ok = true;
+    for (const auto kind : {library::DatabaseKind::index, library::DatabaseKind::userdata, library::DatabaseKind::state}) {
+      auto check = take(library_.check_database(kind, options.level == LibraryVerifyLevel::full
+          ? library::DatabaseCheckLevel::full : library::DatabaseCheckLevel::quick));
+      if (check.status != "ok") {
+        if (kind == library::DatabaseKind::index) database_index_ok = false;
+        else out.database_failed = true;
+      }
+      out.databases.push_back(std::move(check));
+    }
     std::map<std::string,db::IndexState> previous;
     bool index_ready = library_.database_info(library::DatabaseKind::index).state == library::DatabaseState::ok &&
                        library_.database(library::DatabaseKind::index);
+    index_ready = index_ready && database_index_ok;
     if (index_ready) {
       auto rows = store_.sync_state();
       if (rows) for (auto& row : *rows) previous.emplace(row.asset_id,std::move(row));
@@ -761,8 +772,30 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
     };
     p->library.emplace(take(library::Library::open(root, options)));
     p->before_log=hooks.before_log;
+    const auto index_kind = library::DatabaseKind::index;
+    const bool index_available = p->library->database_info(index_kind).state == library::DatabaseState::ok && p->library->database(index_kind);
+    p->opened.previous_session_unclosed = true;
+    if (index_available) {
+      db::IndexStore store(p->library->database(index_kind));
+      auto session = store.get_meta("writer_session");
+      if (session) p->opened.previous_session_unclosed = !*session || **session != "closed";
+    }
+    if (options.mode == library::Mode::read_write && p->opened.previous_session_unclosed) {
+      bool damaged_index = false;
+      // Authoritative databases must be intact before any journal/job recovery writes.
+      for (const auto kind : {library::DatabaseKind::state, library::DatabaseKind::userdata, index_kind}) {
+        auto check = take(p->library->check_database(kind, library::DatabaseCheckLevel::full));
+        if (check.status != "ok") {
+          if (kind != index_kind) return error(Errc::corrupt_data, "am.library.db_error", check.detail);
+          damaged_index = true;
+        }
+      }
+      if (damaged_index) take(p->library->reset_index());
+    }
     p->indexer = std::make_unique<Indexer>(fs::absolute(root).lexically_normal(), *p->library, std::move(hooks));
     if (options.mode == library::Mode::read_only) {
+      if (p->opened.previous_session_unclosed)
+        p->opened.warnings.push_back(error(Errc::incomplete,"am.library.recovery_pending","writer_session").with_severity(Severity::warning));
       if (p->library->database_info(library::DatabaseKind::state).state == library::DatabaseState::ok) {
         auto state_connection = db::Connection::borrow(p->library->database(library::DatabaseKind::state));
         auto query = state_connection.prepare("SELECT count(*) FROM pending_ops");
@@ -795,6 +828,7 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
           if (item.error) warning = std::move(warning).caused_by(*item.error);
           p->opened.warnings.push_back(std::move(warning));
         }
+      if (p->library->database_info(index_kind).reason == "recreated") take(p->indexer->rebuild());
       const bool available = p->library->database_info(library::DatabaseKind::index).state == library::DatabaseState::ok && p->library->database(library::DatabaseKind::index);
       bool ready = available && !take(p->indexer->rebuild_required());
       std::set<std::string> touched;
@@ -852,7 +886,7 @@ Result<LibraryVerifyReport> Catalog::verify(const LibraryVerifyOptions& options)
     auto result=impl_->indexer->verify(options);
     if (result) {
       const auto& r=*result;
-      impl_->log("library.verify",r.corrupt || r.unreadable ? "error" : r.warn || r.unsupported || r.cancelled ? "warn" : "info",{},
+      impl_->log("library.verify",r.database_failed || r.corrupt || r.unreadable ? "error" : r.warn || r.unsupported || r.cancelled ? "warn" : "info",{},
         repository::Json{{"level",r.level==LibraryVerifyLevel::full ? "full" : "quick"},{"total",r.total},{"checked",r.checked},
           {"ok",r.ok},{"warn",r.warn},{"corrupt",r.corrupt},{"unsupported",r.unsupported},{"unreadable",r.unreadable},{"cancelled",r.cancelled}},result->warnings);
     }

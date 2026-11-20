@@ -46,6 +46,8 @@ struct LibraryVerifyReport {
   LibraryVerifyLevel level = LibraryVerifyLevel::quick;
   std::size_t total = 0, checked = 0, ok = 0, warn = 0, corrupt = 0, unsupported = 0, unreadable = 0;
   bool cancelled = false, index_updated = false;
+  std::vector<library::DatabaseCheck> databases;
+  bool database_failed = false;
   std::vector<LibraryVerifyItem> items;
   std::vector<SkippedAsset> skipped;
   std::vector<std::string> ignored;

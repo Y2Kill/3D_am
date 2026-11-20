@@ -16,6 +16,12 @@ struct Config {
 };
 enum class DatabaseKind { index, userdata, state };
 enum class DatabaseState { ok, missing, incompatible, newer, unavailable };
+enum class DatabaseCheckLevel { quick, full };
+struct DatabaseCheck {
+  DatabaseKind database = DatabaseKind::index;
+  DatabaseCheckLevel level = DatabaseCheckLevel::quick;
+  std::string status, detail, message_id;
+};
 struct DatabaseInfo {
   DatabaseState state = DatabaseState::missing;
   std::optional<int> user_version;
@@ -37,6 +43,8 @@ struct OpenOptions {
   std::vector<Migration> migrations;
   std::function<void(const repository::IndexedEvent&)> on_indexed;
   int max_attempts = 3; // hypothesis; job recovery policy, refined by measurements
+  // Per-instance observer for deterministic check-count tests.
+  std::function<void(DatabaseKind, DatabaseCheckLevel)> on_database_check;
 };
 struct InitOptions {
   std::string name;
@@ -59,6 +67,9 @@ class Library {
   // Borrowed connection; valid only for this Library's lifetime. SQLite itself
   // rejects writes on read-only connections. Do not close this handle.
   sqlite3* database(DatabaseKind) const noexcept;
+  Result<DatabaseCheck> check_database(DatabaseKind, DatabaseCheckLevel);
+  // Discard a damaged disposable index before constructing its consumers.
+  Result<void> reset_index();
   repository::AssetRepository& assets() noexcept;
  private:
   struct Impl;
