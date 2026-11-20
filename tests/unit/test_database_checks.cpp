@@ -33,6 +33,36 @@ std::string bytes(const fs::path& path) {
   std::ifstream input(am::paths::native(path), std::ios::binary);
   return {std::istreambuf_iterator<char>(input), {}};
 }
+// Observe actual PRAGMAs on every connection opened in this test, including recovery's handles.
+// The automatic extension is scoped and removed without resetting unrelated SQLite extensions.
+thread_local std::array<int,3>* sql_checks = nullptr;
+int trace_checks(unsigned, void*, void* statement, void*) {
+  const auto* sql = sqlite3_sql(static_cast<sqlite3_stmt*>(statement));
+  if (!sql_checks || !sql) return 0;
+  const std::string_view text(sql);
+  if (!text.starts_with("PRAGMA integrity_check") && !text.starts_with("PRAGMA quick_check")) return 0;
+  const auto* filename = sqlite3_db_filename(sqlite3_db_handle(static_cast<sqlite3_stmt*>(statement)), "main");
+  if (!filename) return 0;
+  const std::string_view path(filename);
+  const auto kind = path.ends_with("index.sqlite") ? Kind::index : path.ends_with("state.sqlite") ? Kind::state : Kind::userdata;
+  ++(*sql_checks)[static_cast<std::size_t>(kind)];
+  return 0;
+}
+int install_trace(sqlite3* db, char**, const sqlite3_api_routines*) {
+  return sqlite3_trace_v2(db, SQLITE_TRACE_STMT, trace_checks, nullptr);
+}
+struct TraceChecks {
+  std::array<int,3> counts{};
+  TraceChecks() {
+    const int rc = sqlite3_auto_extension(reinterpret_cast<void(*)()>(install_trace));
+    if (rc != SQLITE_OK) throw std::runtime_error("Trace extension failed");
+    sql_checks = &counts;
+  }
+  ~TraceChecks() {
+    (void)sqlite3_cancel_auto_extension(reinterpret_cast<void(*)()>(install_trace));
+    sql_checks = nullptr;
+  }
+};
 void session(const fs::path& root, const char* value) {
   auto library = take(lib::Library::open(root, options()));
   am::db::IndexStore store(library.database(Kind::index)); take(store.set_meta("writer_session", value));
@@ -58,6 +88,7 @@ TEST(DatabaseChecks, CleanOpenSkipsChecksAndUnclosedWriterChecksThreeDatabases) 
   RecordProperty("req", "K-112|K-24");
   const auto root = fresh();
   std::array<int,3> checks{};
+  TraceChecks sql;
   auto config = options();
   config.on_database_check = [&](Kind kind, lib::DatabaseCheckLevel level) {
     EXPECT_EQ(level, lib::DatabaseCheckLevel::full); ++checks[static_cast<std::size_t>(kind)];
@@ -65,23 +96,27 @@ TEST(DatabaseChecks, CleanOpenSkipsChecksAndUnclosedWriterChecksThreeDatabases) 
   { auto library = take(lib::Library::open(root, config)); }
   { auto catalog = take(cat::Catalog::open(root, config)); EXPECT_FALSE(catalog.open_report().previous_session_unclosed); }
   EXPECT_EQ(checks, (std::array<int,3>{0,0,0}));
+  EXPECT_EQ(sql.counts, checks);
   for (const auto* flag : {"open", "unknown"}) {
-    session(root, flag); checks.fill(0);
+    session(root, flag); checks.fill(0); sql.counts.fill(0);
     config.mode = lib::Mode::read_only;
     { auto catalog = take(cat::Catalog::open(root, config)); EXPECT_TRUE(catalog.open_report().previous_session_unclosed); EXPECT_FALSE(catalog.open_report().warnings.empty()); }
     EXPECT_EQ(checks, (std::array<int,3>{0,0,0}));
+    EXPECT_EQ(sql.counts, checks);
     config.mode = lib::Mode::read_write;
     { auto catalog = take(cat::Catalog::open(root, config)); EXPECT_TRUE(catalog.open_report().previous_session_unclosed); }
     EXPECT_EQ(checks, (std::array<int,3>{1,1,1}));
+    EXPECT_EQ(sql.counts, checks);
   }
   {
     auto library = take(lib::Library::open(root, options()));
     auto connection = am::db::Connection::borrow(library.database(Kind::index));
     take(connection.exec("DELETE FROM meta WHERE key='writer_session'"));
   }
-  checks.fill(0);
+  checks.fill(0); sql.counts.fill(0);
   { auto catalog = take(cat::Catalog::open(root, config)); }
   EXPECT_EQ(checks, (std::array<int,3>{1,1,1}));
+  EXPECT_EQ(sql.counts, checks);
 }
 TEST(DatabaseChecks, VerifyReportsAllDatabasesAtBothLevels) {
   RecordProperty("req", "K-22");
