@@ -142,9 +142,10 @@ Database verification runs `quick_check` by default and `integrity_check` with
 `--full` on all three databases. The `databases` object has `index`, `userdata`,
 and `state` entries, each with `status` (`ok`, `corrupt`, or `unavailable`), `check`,
 `detail`, and `message_id`. Text output includes the same findings. A damaged
-index produces a warning and a rebuild marker; the next writable catalog open
-rebuilds it. State or userdata damage produces exit code 1, including when it
-prevents recovery during writable opening.
+index produces a warning. Writable verification persists a rebuild marker; the
+next writable catalog open rebuilds it. Read-only verification reports findings
+without persisting changes. State or userdata damage produces exit code 1, including
+when it prevents recovery during writable opening.
 
 With a usable writable index, verification records corrupt or unreadable indexed
 assets as corrupt in one final transaction. It restores previously corrupt rows
