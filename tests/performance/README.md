@@ -136,3 +136,25 @@ A periodic measurement still needs an explicit storage label and an appropriate 
 the CTest registration uses `unspecified` and writes only to `.cache/perf/scale-result.json`.
 
 `operator_notes` optionally records observed execution conditions (for example, operator-reported laptop sleep). These annotations do not alter raw samples; affected wall-clock statistics must be interpreted with that limitation.
+
+## Second measurement: T-025
+
+[The second Windows Release NVMe measurement](results/2026-11-20-windows-release-nvme.json)
+was collected on 2026-11-20–21 using source commit `e70c51c`, the same storage class,
+and the unchanged runner. All six volumes (100, 1000, 10000, 50000, 100000, 250000)
+contain five process samples for each operation. The first sample is separate from
+the four-sample warm statistics; cold caches and performance thresholds remain unmeasured.
+
+The first five volumes reuse T-024 ZIPs. `zip_reuse` records matching before/after
+SHA-256 fingerprints of all ZIP contents and relative names. `index_upgrade` separately
+measures the first writable sync, including the automatic version-2 index rebuild.
+Allocated/logical library bytes include the preserved stale index files. For reused
+volumes, generation fields retain their original T-024 meaning; they are not new
+creation timings. `fresh_generation` records new 10000- and 50000-asset generations.
+
+The fresh 50000 rate estimated 250000 generation at 18667.613 seconds, below the
+T-025 six-hour budget. Generation of 250000 actually took 16954.256 seconds; its
+volume was then measured with the same five-process protocol. See the
+[executor report](../../docs/tasks/T-025-scale-fixes.md) for before/after tables,
+per-asset costs, validation and the final read-only compatibility warning fix.
+K-112 remains partial.

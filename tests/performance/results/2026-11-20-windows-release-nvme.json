@@ -1,0 +1,1479 @@
+{
+  "schema": "am.perf.scale.v1",
+  "date": "2026-11-20T15:54:25.202649+00:00",
+  "program": {
+    "version": "am 0.1.0 (asset format v1)",
+    "commit": "e70c51c4c0d58b2894bab4df08bbd4985eea2c02",
+    "build_type": "Release"
+  },
+  "environment": {
+    "os": "Windows",
+    "os_version": "10.0.19045",
+    "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+    "logical_cores": 12,
+    "ram_bytes": 119992246272,
+    "gpu": null,
+    "storage": "nvme-ssd",
+    "filesystem": "NTFS",
+    "assume_capabilities": false
+  },
+  "cold_cache": "not_measured",
+  "repeat": 5,
+  "version_baseline": {
+    "seconds": 0.0136896,
+    "peak_memory_bytes": 7266304
+  },
+  "volumes": [
+    {
+      "status": "measured",
+      "assets": 100,
+      "parameters": {
+        "plan_version": 1,
+        "count": 100,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 861,
+      "trash": 1,
+      "generation_seconds": 6.9839708,
+      "assets_per_second": 14.318502018937423,
+      "plan_sha256": "ff6dad951f904b063f1388ad1fa39b3c0764bfb75ec26af3b4ddf6ab5f23f767",
+      "library_bytes": 10801408,
+      "library_file_bytes": 10604203,
+      "estimated_generation_seconds": null,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0114155,
+            "peak_memory_bytes": 7290880
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0120195,
+                "peak_memory_bytes": 7278592
+              },
+              {
+                "seconds": 0.0116121,
+                "peak_memory_bytes": 7282688
+              },
+              {
+                "seconds": 0.0117953,
+                "peak_memory_bytes": 7294976
+              },
+              {
+                "seconds": 0.0117312,
+                "peak_memory_bytes": 7303168
+              }
+            ],
+            "median_seconds": 0.01176325,
+            "p95_seconds": 0.0120195,
+            "min_seconds": 0.0116121,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7303168
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0367841,
+            "peak_memory_bytes": 11497472
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0398557,
+                "peak_memory_bytes": 11624448
+              },
+              {
+                "seconds": 0.0324739,
+                "peak_memory_bytes": 11608064
+              },
+              {
+                "seconds": 0.0317275,
+                "peak_memory_bytes": 11567104
+              },
+              {
+                "seconds": 0.0315392,
+                "peak_memory_bytes": 11501568
+              }
+            ],
+            "median_seconds": 0.032100699999999996,
+            "p95_seconds": 0.0398557,
+            "min_seconds": 0.0315392,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 11624448
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.035154,
+            "peak_memory_bytes": 11735040
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0333655,
+                "peak_memory_bytes": 11743232
+              },
+              {
+                "seconds": 0.0334167,
+                "peak_memory_bytes": 11739136
+              },
+              {
+                "seconds": 0.0385003,
+                "peak_memory_bytes": 11710464
+              },
+              {
+                "seconds": 0.0333198,
+                "peak_memory_bytes": 11673600
+              }
+            ],
+            "median_seconds": 0.0333911,
+            "p95_seconds": 0.0385003,
+            "min_seconds": 0.0333198,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 11743232
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0591348,
+            "peak_memory_bytes": 12238848
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0546471,
+                "peak_memory_bytes": 12263424
+              },
+              {
+                "seconds": 0.0567716,
+                "peak_memory_bytes": 12238848
+              },
+              {
+                "seconds": 0.0654912,
+                "peak_memory_bytes": 12255232
+              },
+              {
+                "seconds": 0.0662243,
+                "peak_memory_bytes": 12259328
+              }
+            ],
+            "median_seconds": 0.0611314,
+            "p95_seconds": 0.0662243,
+            "min_seconds": 0.0546471,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 12263424
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 1.8450417,
+            "peak_memory_bytes": 18202624
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 1.9688448,
+                "peak_memory_bytes": 18210816
+              },
+              {
+                "seconds": 1.7998724,
+                "peak_memory_bytes": 18214912
+              },
+              {
+                "seconds": 1.9997907,
+                "peak_memory_bytes": 18038784
+              },
+              {
+                "seconds": 2.0274613,
+                "peak_memory_bytes": 18063360
+              }
+            ],
+            "median_seconds": 1.98431775,
+            "p95_seconds": 2.0274613,
+            "min_seconds": 1.7998724,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 18214912
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 2.1493217,
+            "peak_memory_bytes": 18034688
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 1.9149362,
+                "peak_memory_bytes": 17936384
+              },
+              {
+                "seconds": 2.1797749,
+                "peak_memory_bytes": 17936384
+              },
+              {
+                "seconds": 1.8607423,
+                "peak_memory_bytes": 17932288
+              },
+              {
+                "seconds": 1.8788201,
+                "peak_memory_bytes": 17805312
+              }
+            ],
+            "median_seconds": 1.89687815,
+            "p95_seconds": 2.1797749,
+            "min_seconds": 1.8607423,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 17936384
+          }
+        }
+      },
+      "generation_source": {
+        "task": "T-024",
+        "reused": true,
+        "commit": "2581afaca6a4cf050efa0bdc73e6d52ae175dbbc"
+      },
+      "index_upgrade": {
+        "command": "library sync",
+        "includes_automatic_rebuild": true,
+        "sample": {
+          "seconds": 2.2274107,
+          "peak_memory_bytes": 18706432
+        }
+      },
+      "zip_reuse": {
+        "before": {
+          "count": 100,
+          "sha256": "ae3cc7b9ea12f80e097622c9957ba0442d135d85c9695460e455c3dd7d209c7b"
+        },
+        "after": {
+          "count": 100,
+          "sha256": "ae3cc7b9ea12f80e097622c9957ba0442d135d85c9695460e455c3dd7d209c7b"
+        }
+      }
+    },
+    {
+      "status": "measured",
+      "assets": 1000,
+      "parameters": {
+        "plan_version": 1,
+        "count": 1000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 7895,
+      "trash": 10,
+      "generation_seconds": 78.1827516,
+      "assets_per_second": 12.790544967209877,
+      "plan_sha256": "91bff2065450d8d054f55e963c378ebf358dc76a7f110cac533b936aa5f82458",
+      "library_bytes": 94118144,
+      "library_file_bytes": 92079895,
+      "estimated_generation_seconds": null,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.012567,
+            "peak_memory_bytes": 7307264
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0116652,
+                "peak_memory_bytes": 7270400
+              },
+              {
+                "seconds": 0.0122295,
+                "peak_memory_bytes": 7311360
+              },
+              {
+                "seconds": 0.0114649,
+                "peak_memory_bytes": 7286784
+              },
+              {
+                "seconds": 0.0113287,
+                "peak_memory_bytes": 7262208
+              }
+            ],
+            "median_seconds": 0.01156505,
+            "p95_seconds": 0.0122295,
+            "min_seconds": 0.0113287,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7311360
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0439836,
+            "peak_memory_bytes": 13578240
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0387645,
+                "peak_memory_bytes": 13553664
+              },
+              {
+                "seconds": 0.0449691,
+                "peak_memory_bytes": 13598720
+              },
+              {
+                "seconds": 0.0446056,
+                "peak_memory_bytes": 13545472
+              },
+              {
+                "seconds": 0.0388749,
+                "peak_memory_bytes": 13565952
+              }
+            ],
+            "median_seconds": 0.04174025,
+            "p95_seconds": 0.0449691,
+            "min_seconds": 0.0387645,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 13598720
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0523285,
+            "peak_memory_bytes": 14663680
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.1510504,
+                "peak_memory_bytes": 14708736
+              },
+              {
+                "seconds": 0.0498593,
+                "peak_memory_bytes": 14708736
+              },
+              {
+                "seconds": 0.0519694,
+                "peak_memory_bytes": 14614528
+              },
+              {
+                "seconds": 0.16729,
+                "peak_memory_bytes": 14733312
+              }
+            ],
+            "median_seconds": 0.1015099,
+            "p95_seconds": 0.16729,
+            "min_seconds": 0.0498593,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 14733312
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0835856,
+            "peak_memory_bytes": 15192064
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0915396,
+                "peak_memory_bytes": 15159296
+              },
+              {
+                "seconds": 0.0885862,
+                "peak_memory_bytes": 15294464
+              },
+              {
+                "seconds": 0.0804098,
+                "peak_memory_bytes": 15179776
+              },
+              {
+                "seconds": 0.0883266,
+                "peak_memory_bytes": 15212544
+              }
+            ],
+            "median_seconds": 0.0884564,
+            "p95_seconds": 0.0915396,
+            "min_seconds": 0.0804098,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 15294464
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 17.9736902,
+            "peak_memory_bytes": 21061632
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 16.8464654,
+                "peak_memory_bytes": 21086208
+              },
+              {
+                "seconds": 16.6603148,
+                "peak_memory_bytes": 21188608
+              },
+              {
+                "seconds": 24.2787665,
+                "peak_memory_bytes": 21094400
+              },
+              {
+                "seconds": 17.3492028,
+                "peak_memory_bytes": 20996096
+              }
+            ],
+            "median_seconds": 17.0978341,
+            "p95_seconds": 24.2787665,
+            "min_seconds": 16.6603148,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 21188608
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 21.2879305,
+            "peak_memory_bytes": 20176896
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 21.0950958,
+                "peak_memory_bytes": 20205568
+              },
+              {
+                "seconds": 17.8890426,
+                "peak_memory_bytes": 20348928
+              },
+              {
+                "seconds": 19.3870923,
+                "peak_memory_bytes": 20107264
+              },
+              {
+                "seconds": 18.2350908,
+                "peak_memory_bytes": 20357120
+              }
+            ],
+            "median_seconds": 18.81109155,
+            "p95_seconds": 21.0950958,
+            "min_seconds": 17.8890426,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 20357120
+          }
+        }
+      },
+      "generation_source": {
+        "task": "T-024",
+        "reused": true,
+        "commit": "2581afaca6a4cf050efa0bdc73e6d52ae175dbbc"
+      },
+      "index_upgrade": {
+        "command": "library sync",
+        "includes_automatic_rebuild": true,
+        "sample": {
+          "seconds": 17.7447899,
+          "peak_memory_bytes": 21061632
+        }
+      },
+      "zip_reuse": {
+        "before": {
+          "count": 1000,
+          "sha256": "8b461fbefbc13a48500cd9f28119e0108406c11d310faa363000175d18e4dd75"
+        },
+        "after": {
+          "count": 1000,
+          "sha256": "8b461fbefbc13a48500cd9f28119e0108406c11d310faa363000175d18e4dd75"
+        }
+      }
+    },
+    {
+      "status": "measured",
+      "assets": 10000,
+      "parameters": {
+        "plan_version": 1,
+        "count": 10000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 84455,
+      "trash": 100,
+      "generation_seconds": 919.9179859,
+      "assets_per_second": 10.870534279440704,
+      "plan_sha256": "544790a0c50e0034068625b3dd756a0158338697cca4675f565c699e665076aa",
+      "library_bytes": 988152064,
+      "library_file_bytes": 967690953,
+      "estimated_generation_seconds": null,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0193459,
+            "peak_memory_bytes": 7262208
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0121082,
+                "peak_memory_bytes": 7278592
+              },
+              {
+                "seconds": 0.012609,
+                "peak_memory_bytes": 7278592
+              },
+              {
+                "seconds": 0.1191869,
+                "peak_memory_bytes": 7258112
+              },
+              {
+                "seconds": 0.012454,
+                "peak_memory_bytes": 7274496
+              }
+            ],
+            "median_seconds": 0.012531500000000001,
+            "p95_seconds": 0.1191869,
+            "min_seconds": 0.0121082,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7278592
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0974227,
+            "peak_memory_bytes": 13561856
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0840332,
+                "peak_memory_bytes": 13574144
+              },
+              {
+                "seconds": 0.0897803,
+                "peak_memory_bytes": 13590528
+              },
+              {
+                "seconds": 0.135109,
+                "peak_memory_bytes": 13524992
+              },
+              {
+                "seconds": 0.0880547,
+                "peak_memory_bytes": 13422592
+              }
+            ],
+            "median_seconds": 0.0889175,
+            "p95_seconds": 0.135109,
+            "min_seconds": 0.0840332,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 13590528
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.2094563,
+            "peak_memory_bytes": 31907840
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.2074061,
+                "peak_memory_bytes": 31830016
+              },
+              {
+                "seconds": 0.210319,
+                "peak_memory_bytes": 31789056
+              },
+              {
+                "seconds": 0.2141177,
+                "peak_memory_bytes": 31895552
+              },
+              {
+                "seconds": 0.2080877,
+                "peak_memory_bytes": 31920128
+              }
+            ],
+            "median_seconds": 0.20920335,
+            "p95_seconds": 0.2141177,
+            "min_seconds": 0.2074061,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 31920128
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.3224742,
+            "peak_memory_bytes": 25628672
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.3198959,
+                "peak_memory_bytes": 25772032
+              },
+              {
+                "seconds": 0.2993871,
+                "peak_memory_bytes": 25731072
+              },
+              {
+                "seconds": 0.3054091,
+                "peak_memory_bytes": 25579520
+              },
+              {
+                "seconds": 0.300857,
+                "peak_memory_bytes": 25665536
+              }
+            ],
+            "median_seconds": 0.30313305,
+            "p95_seconds": 0.3198959,
+            "min_seconds": 0.2993871,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 25772032
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 165.867136,
+            "peak_memory_bytes": 35282944
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 171.6364918,
+                "peak_memory_bytes": 35950592
+              },
+              {
+                "seconds": 187.5577861,
+                "peak_memory_bytes": 35287040
+              },
+              {
+                "seconds": 165.7426816,
+                "peak_memory_bytes": 35393536
+              },
+              {
+                "seconds": 182.0572105,
+                "peak_memory_bytes": 35139584
+              }
+            ],
+            "median_seconds": 176.84685115,
+            "p95_seconds": 187.5577861,
+            "min_seconds": 165.7426816,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 35950592
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 189.1862719,
+            "peak_memory_bytes": 27549696
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 218.3750014,
+                "peak_memory_bytes": 27267072
+              },
+              {
+                "seconds": 192.9044833,
+                "peak_memory_bytes": 27512832
+              },
+              {
+                "seconds": 197.320288,
+                "peak_memory_bytes": 27381760
+              },
+              {
+                "seconds": 219.8280815,
+                "peak_memory_bytes": 27615232
+              }
+            ],
+            "median_seconds": 207.8476447,
+            "p95_seconds": 219.8280815,
+            "min_seconds": 192.9044833,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 27615232
+          }
+        }
+      },
+      "generation_source": {
+        "task": "T-024",
+        "reused": true,
+        "commit": "2581afaca6a4cf050efa0bdc73e6d52ae175dbbc"
+      },
+      "index_upgrade": {
+        "command": "library sync",
+        "includes_automatic_rebuild": true,
+        "sample": {
+          "seconds": 193.8481545,
+          "peak_memory_bytes": 31342592
+        }
+      },
+      "zip_reuse": {
+        "before": {
+          "count": 10000,
+          "sha256": "3c06b1839f45c2b2fe95b7d4dcaf586eca75a6751ba9dc8265bc0b1a93d08b8b"
+        },
+        "after": {
+          "count": 10000,
+          "sha256": "3c06b1839f45c2b2fe95b7d4dcaf586eca75a6751ba9dc8265bc0b1a93d08b8b"
+        }
+      }
+    },
+    {
+      "status": "measured",
+      "assets": 50000,
+      "parameters": {
+        "plan_version": 1,
+        "count": 50000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 426067,
+      "trash": 500,
+      "generation_seconds": 7466.9974378,
+      "assets_per_second": 6.6961319347568296,
+      "plan_sha256": "c8ecdaa65994fc2fa661ed7ac599172ffdbd1e74398b08e19be358bb8fabea79",
+      "library_bytes": 4991942912,
+      "library_file_bytes": 4889538130,
+      "estimated_generation_seconds": null,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0142816,
+            "peak_memory_bytes": 7270400
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.013575,
+                "peak_memory_bytes": 7278592
+              },
+              {
+                "seconds": 0.0121181,
+                "peak_memory_bytes": 7282688
+              },
+              {
+                "seconds": 0.0121373,
+                "peak_memory_bytes": 7286784
+              },
+              {
+                "seconds": 0.011599,
+                "peak_memory_bytes": 7299072
+              }
+            ],
+            "median_seconds": 0.0121277,
+            "p95_seconds": 0.013575,
+            "min_seconds": 0.011599,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7299072
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.2915499,
+            "peak_memory_bytes": 13545472
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.4778146,
+                "peak_memory_bytes": 13631488
+              },
+              {
+                "seconds": 0.3995775,
+                "peak_memory_bytes": 13594624
+              },
+              {
+                "seconds": 0.4336919,
+                "peak_memory_bytes": 13623296
+              },
+              {
+                "seconds": 0.2780651,
+                "peak_memory_bytes": 13590528
+              }
+            ],
+            "median_seconds": 0.4166347,
+            "p95_seconds": 0.4778146,
+            "min_seconds": 0.2780651,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 13631488
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.8713358,
+            "peak_memory_bytes": 120516608
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.9112575,
+                "peak_memory_bytes": 120606720
+              },
+              {
+                "seconds": 0.8958484,
+                "peak_memory_bytes": 120619008
+              },
+              {
+                "seconds": 0.8666837,
+                "peak_memory_bytes": 120627200
+              },
+              {
+                "seconds": 0.8962303,
+                "peak_memory_bytes": 120565760
+              }
+            ],
+            "median_seconds": 0.89603935,
+            "p95_seconds": 0.9112575,
+            "min_seconds": 0.8666837,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 120627200
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 1.355855,
+            "peak_memory_bytes": 71057408
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 1.2842478,
+                "peak_memory_bytes": 71049216
+              },
+              {
+                "seconds": 1.2961719,
+                "peak_memory_bytes": 70922240
+              },
+              {
+                "seconds": 1.2696585,
+                "peak_memory_bytes": 70787072
+              },
+              {
+                "seconds": 1.2858326,
+                "peak_memory_bytes": 70778880
+              }
+            ],
+            "median_seconds": 1.2850402,
+            "p95_seconds": 1.2961719,
+            "min_seconds": 1.2696585,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 71049216
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 775.8748582,
+            "peak_memory_bytes": 97509376
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 867.0259071,
+                "peak_memory_bytes": 97751040
+              },
+              {
+                "seconds": 1001.4562839,
+                "peak_memory_bytes": 97406976
+              },
+              {
+                "seconds": 930.0744118,
+                "peak_memory_bytes": 98238464
+              },
+              {
+                "seconds": 904.6110368,
+                "peak_memory_bytes": 97378304
+              }
+            ],
+            "median_seconds": 917.3427243,
+            "p95_seconds": 1001.4562839,
+            "min_seconds": 867.0259071,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 98238464
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 1505.0814975,
+            "peak_memory_bytes": 56320000
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 1164.1468749,
+                "peak_memory_bytes": 56369152
+              },
+              {
+                "seconds": 978.2882531,
+                "peak_memory_bytes": 56279040
+              },
+              {
+                "seconds": 1133.0592247,
+                "peak_memory_bytes": 56250368
+              },
+              {
+                "seconds": 1162.8529605,
+                "peak_memory_bytes": 56328192
+              }
+            ],
+            "median_seconds": 1147.9560926,
+            "p95_seconds": 1164.1468749,
+            "min_seconds": 978.2882531,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 56369152
+          }
+        }
+      },
+      "generation_source": {
+        "task": "T-024",
+        "reused": true,
+        "commit": "2581afaca6a4cf050efa0bdc73e6d52ae175dbbc"
+      },
+      "index_upgrade": {
+        "command": "library sync",
+        "includes_automatic_rebuild": true,
+        "sample": {
+          "seconds": 959.4721951,
+          "peak_memory_bytes": 77352960
+        }
+      },
+      "zip_reuse": {
+        "before": {
+          "count": 50000,
+          "sha256": "54295757c7a46deebfe6e368dfd726ce280e2bf1ca8ce454676156b5e7d74b4a"
+        },
+        "after": {
+          "count": 50000,
+          "sha256": "54295757c7a46deebfe6e368dfd726ce280e2bf1ca8ce454676156b5e7d74b4a"
+        }
+      }
+    },
+    {
+      "status": "measured",
+      "assets": 100000,
+      "parameters": {
+        "plan_version": 1,
+        "count": 100000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 843407,
+      "trash": 1000,
+      "generation_seconds": 21213.4300839,
+      "assets_per_second": 4.7139948421587565,
+      "plan_sha256": "2be01a6649966a6f6fa0042c145d7f6d3bdf40959e84c81ecf4ad72f0e6f8c51",
+      "library_bytes": 9948184832,
+      "library_file_bytes": 9743229591,
+      "estimated_generation_seconds": null,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0133263,
+            "peak_memory_bytes": 7278592
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0138863,
+                "peak_memory_bytes": 7266304
+              },
+              {
+                "seconds": 0.0127345,
+                "peak_memory_bytes": 7266304
+              },
+              {
+                "seconds": 0.0134714,
+                "peak_memory_bytes": 7286784
+              },
+              {
+                "seconds": 0.0115261,
+                "peak_memory_bytes": 7299072
+              }
+            ],
+            "median_seconds": 0.013102949999999999,
+            "p95_seconds": 0.0138863,
+            "min_seconds": 0.0115261,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7299072
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.545388,
+            "peak_memory_bytes": 13611008
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.5330742,
+                "peak_memory_bytes": 13574144
+              },
+              {
+                "seconds": 0.5578407,
+                "peak_memory_bytes": 13631488
+              },
+              {
+                "seconds": 0.5219056,
+                "peak_memory_bytes": 13602816
+              },
+              {
+                "seconds": 0.5556267,
+                "peak_memory_bytes": 13602816
+              }
+            ],
+            "median_seconds": 0.54435045,
+            "p95_seconds": 0.5578407,
+            "min_seconds": 0.5219056,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 13631488
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 1.5911372,
+            "peak_memory_bytes": 231186432
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 1.6113164,
+                "peak_memory_bytes": 231817216
+              },
+              {
+                "seconds": 1.621147,
+                "peak_memory_bytes": 230932480
+              },
+              {
+                "seconds": 1.72668,
+                "peak_memory_bytes": 231985152
+              },
+              {
+                "seconds": 1.5911115,
+                "peak_memory_bytes": 231636992
+              }
+            ],
+            "median_seconds": 1.6162317,
+            "p95_seconds": 1.72668,
+            "min_seconds": 1.5911115,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 231985152
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 2.4097021,
+            "peak_memory_bytes": 127852544
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 2.4231006,
+                "peak_memory_bytes": 127705088
+              },
+              {
+                "seconds": 2.5635175,
+                "peak_memory_bytes": 127713280
+              },
+              {
+                "seconds": 2.4716706,
+                "peak_memory_bytes": 127770624
+              },
+              {
+                "seconds": 2.4238796,
+                "peak_memory_bytes": 127680512
+              }
+            ],
+            "median_seconds": 2.4477751,
+            "p95_seconds": 2.5635175,
+            "min_seconds": 2.4231006,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 127770624
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 1522.2553807,
+            "peak_memory_bytes": 180490240
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 1500.0819972,
+                "peak_memory_bytes": 180494336
+              },
+              {
+                "seconds": 1470.533803,
+                "peak_memory_bytes": 179965952
+              },
+              {
+                "seconds": 1473.62651,
+                "peak_memory_bytes": 180731904
+              },
+              {
+                "seconds": 1563.347837,
+                "peak_memory_bytes": 179933184
+              }
+            ],
+            "median_seconds": 1486.8542536,
+            "p95_seconds": 1563.347837,
+            "min_seconds": 1470.533803,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 180731904
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 1764.6727825,
+            "peak_memory_bytes": 101818368
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 2015.1925069,
+                "peak_memory_bytes": 101761024
+              },
+              {
+                "seconds": 2033.7050451,
+                "peak_memory_bytes": 101675008
+              },
+              {
+                "seconds": 1774.4289269,
+                "peak_memory_bytes": 102002688
+              },
+              {
+                "seconds": 2025.1489135,
+                "peak_memory_bytes": 101769216
+              }
+            ],
+            "median_seconds": 2020.1707102,
+            "p95_seconds": 2033.7050451,
+            "min_seconds": 1774.4289269,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 102002688
+          }
+        }
+      },
+      "generation_source": {
+        "task": "T-024",
+        "reused": true,
+        "commit": "2581afaca6a4cf050efa0bdc73e6d52ae175dbbc"
+      },
+      "index_upgrade": {
+        "command": "library sync",
+        "includes_automatic_rebuild": true,
+        "sample": {
+          "seconds": 2100.2138998,
+          "peak_memory_bytes": 136269824
+        }
+      },
+      "zip_reuse": {
+        "before": {
+          "count": 100000,
+          "sha256": "fb6414b817505d65823df72ce9874781c5040b0d34d0426cc299e949dc8ae28c"
+        },
+        "after": {
+          "count": 100000,
+          "sha256": "fb6414b817505d65823df72ce9874781c5040b0d34d0426cc299e949dc8ae28c"
+        }
+      }
+    },
+    {
+      "status": "measured",
+      "assets": 250000,
+      "parameters": {
+        "plan_version": 1,
+        "count": 250000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "files": 2110779,
+      "trash": 2500,
+      "generation_seconds": 16954.2555756,
+      "assets_per_second": 14.745560421997629,
+      "plan_sha256": "26a08a6bf5264c582459e3b7b16626b18f5281f64105fb626449c5e1d5af2b77",
+      "library_bytes": 21808455944,
+      "library_file_bytes": 21296559630,
+      "estimated_generation_seconds": null,
+      "operations": {
+        "version": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 0.0155973,
+            "peak_memory_bytes": 7270400
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 0.0163426,
+                "peak_memory_bytes": 7270400
+              },
+              {
+                "seconds": 0.0122763,
+                "peak_memory_bytes": 7274496
+              },
+              {
+                "seconds": 0.1145858,
+                "peak_memory_bytes": 7270400
+              },
+              {
+                "seconds": 0.0128664,
+                "peak_memory_bytes": 7282688
+              }
+            ],
+            "median_seconds": 0.0146045,
+            "p95_seconds": 0.1145858,
+            "min_seconds": 0.0122763,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 7282688
+          }
+        },
+        "info": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 2.3684757,
+            "peak_memory_bytes": 13729792
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 2.3035981,
+                "peak_memory_bytes": 13836288
+              },
+              {
+                "seconds": 2.2669608,
+                "peak_memory_bytes": 13844480
+              },
+              {
+                "seconds": 2.2718591,
+                "peak_memory_bytes": 13836288
+              },
+              {
+                "seconds": 2.2534504,
+                "peak_memory_bytes": 13856768
+              }
+            ],
+            "median_seconds": 2.26940995,
+            "p95_seconds": 2.3035981,
+            "min_seconds": 2.2534504,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 13856768
+          }
+        },
+        "list": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 5.0305535,
+            "peak_memory_bytes": 564707328
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 4.9541488,
+                "peak_memory_bytes": 564658176
+              },
+              {
+                "seconds": 4.9617813,
+                "peak_memory_bytes": 564719616
+              },
+              {
+                "seconds": 4.935853,
+                "peak_memory_bytes": 564490240
+              },
+              {
+                "seconds": 4.9485379,
+                "peak_memory_bytes": 564502528
+              }
+            ],
+            "median_seconds": 4.95134335,
+            "p95_seconds": 4.9617813,
+            "min_seconds": 4.935853,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 564719616
+          }
+        },
+        "sync": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 7.3265783,
+            "peak_memory_bytes": 301006848
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 7.4900935,
+                "peak_memory_bytes": 301281280
+              },
+              {
+                "seconds": 7.2945745,
+                "peak_memory_bytes": 301039616
+              },
+              {
+                "seconds": 7.3404078,
+                "peak_memory_bytes": 301129728
+              },
+              {
+                "seconds": 7.309971,
+                "peak_memory_bytes": 301330432
+              }
+            ],
+            "median_seconds": 7.3251894,
+            "p95_seconds": 7.4900935,
+            "min_seconds": 7.2945745,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 301330432
+          }
+        },
+        "verify": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 4111.4895687,
+            "peak_memory_bytes": 407404544
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 4693.5972312,
+                "peak_memory_bytes": 407465984
+              },
+              {
+                "seconds": 5255.5439808,
+                "peak_memory_bytes": 408219648
+              },
+              {
+                "seconds": 4189.5672169,
+                "peak_memory_bytes": 407756800
+              },
+              {
+                "seconds": 4082.3484169,
+                "peak_memory_bytes": 407322624
+              }
+            ],
+            "median_seconds": 4441.58222405,
+            "p95_seconds": 5255.5439808,
+            "min_seconds": 4082.3484169,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 408219648
+          }
+        },
+        "rebuild": {
+          "status": "measured",
+          "first_after_generation": {
+            "seconds": 4838.8514935,
+            "peak_memory_bytes": 231428096
+          },
+          "statistics": {
+            "samples": [
+              {
+                "seconds": 5384.407654,
+                "peak_memory_bytes": 231415808
+              },
+              {
+                "seconds": 5281.9121262,
+                "peak_memory_bytes": 231211008
+              },
+              {
+                "seconds": 5096.5271257,
+                "peak_memory_bytes": 231235584
+              },
+              {
+                "seconds": 6866.6192625,
+                "peak_memory_bytes": 231329792
+              }
+            ],
+            "median_seconds": 5333.1598901,
+            "p95_seconds": 6866.6192625,
+            "min_seconds": 5096.5271257,
+            "p95_method": "maximum_small_sample",
+            "peak_memory_bytes": 231415808
+          }
+        }
+      },
+      "generation_source": {
+        "task": "T-025",
+        "reused": false
+      }
+    }
+  ],
+  "fresh_generation": [
+    {
+      "assets": 10000,
+      "created": 10000,
+      "files": 84455,
+      "trash": 100,
+      "generation_seconds": 669.214924,
+      "assets_per_second": 14.942882534998578,
+      "parameters": {
+        "plan_version": 1,
+        "count": 10000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "plan_sha256": "544790a0c50e0034068625b3dd756a0158338697cca4675f565c699e665076aa"
+    },
+    {
+      "assets": 50000,
+      "created": 50000,
+      "files": 426067,
+      "trash": 500,
+      "generation_seconds": 3733.5226731,
+      "assets_per_second": 13.39217794504091,
+      "parameters": {
+        "plan_version": 1,
+        "count": 50000,
+        "seed": 1,
+        "content_scale": 1,
+        "trash_ppm": 10000
+      },
+      "plan_sha256": "c8ecdaa65994fc2fa661ed7ac599172ffdbd1e74398b08e19be358bb8fabea79"
+    }
+  ],
+  "estimated_250000_generation_seconds": 18667.613365499998,
+  "generation_estimate_basis": {
+    "assets": 50000,
+    "budget_seconds": 21600,
+    "fresh_generation": true
+  },
+  "operator_notes": [
+    {
+      "kind": "index_upgrade",
+      "detail": "Reused T-024 ZIPs are fingerprinted before/after. First writable sync is measured separately and includes automatic index-v2 rebuild. The runner then measures all operations with five processes each."
+    },
+    {
+      "kind": "disk_accounting",
+      "detail": "Library allocated/logical bytes include preserved stale index files after the schema upgrade, as reported by the unchanged runner. first_after_generation is the runner first sample; reused libraries were not freshly generated and no cold-cache measurement is claimed."
+    },
+    {
+      "kind": "generation_reuse",
+      "detail": "Generation fields on reused volumes describe the original T-024 invocation. New 10000/50000 generation rates are in fresh_generation; reused generations are not represented as new writes."
+    }
+  ]
+}

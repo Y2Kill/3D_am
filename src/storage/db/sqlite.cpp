@@ -10,7 +10,9 @@
 namespace am::db {
 namespace {
 Error error(sqlite3* db, std::string id, int code = SQLITE_ERROR) {
-  const auto kind = code == SQLITE_READONLY                        ? Errc::read_only
+  const auto primary = code & 0xff;
+  const auto kind = primary == SQLITE_CORRUPT || primary == SQLITE_NOTADB ? Errc::corrupt_data
+                    : code == SQLITE_READONLY                        ? Errc::read_only
                     : code == SQLITE_BUSY || code == SQLITE_LOCKED ? Errc::locked
                                                                    : Errc::io_error;
   return Error::make(kind, "SQLite operation failed", db ? sqlite3_errmsg(db) : "No database connection")

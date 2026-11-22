@@ -111,12 +111,18 @@ index produces a warning and still returns 0. Use `sync` for disk changes or
 
 ### Recovery and library verification
 
-Opening a library for writing first recovers pending operations and refreshes
-the affected index rows. After an unclosed writer session, it also runs a
-stat-based sync. An unavailable index is reported for rebuilding; ZIP recovery
-still runs. A journal failure prevents opening for writing. Individual blocked
-or unresolved operations produce warnings with their operation IDs and paths.
-Read-only opening reports pending operations without recovering them.
+Ordinary library opening checks SQLite headers, schema versions and required
+schema tables without scanning database contents. An incompatible disposable
+index is rebuilt from ZIPs when a catalog is opened for writing. ZIP bytes are
+preserved; index schema version 2 replaces version 1 without migration.
+
+After an unclosed writer session (including a missing session marker), writable
+catalog opening runs `integrity_check` on state, userdata and index before
+journal recovery. Damage in state or userdata prevents writable opening. A
+damaged index is discarded and rebuilt. Recovery then refreshes affected index
+rows and runs stat-based sync where appropriate. Individual blocked or unresolved
+operations produce warnings with their operation IDs and paths. Read-only opening
+reports pending recovery without running database checks or recovery writes.
 
 `am library verify <dir>` checks the ZIP candidates on disk, including trash,
 independently of index contents. The default quick check runs V1–V3 without
@@ -125,12 +131,21 @@ reading payload streams. `--full` also checks stream size, CRC, and SHA-256;
 
 JSON contains `level`, `total`, `checked`, `ok`, `warn`, `corrupt`, `unsupported`,
 `unreadable`, `cancelled`, `duration_ms`, `index_updated`, `items`, `skipped`,
-`ignored`, and `recovery`. Items include the asset ID, relative path, trash and
+`ignored`, `recovery`, and `databases`. Items include the asset ID, relative path, trash and
 index flags, status, message ID, and an optional JSON pointer or failed stream.
 Only non-OK items appear by default; `--verbose` includes every checked asset.
 Recovery reports recovered operations, reindexed IDs, the previous session
 state, and optional startup sync. The service opening report also exposes the
 read-only pending count.
+
+Database verification runs `quick_check` by default and `integrity_check` with
+`--full` on all three databases. The `databases` object has `index`, `userdata`,
+and `state` entries, each with `status` (`ok`, `corrupt`, or `unavailable`), `check`,
+`detail`, and `message_id`. Text output includes the same findings. A damaged
+index produces a warning. Writable verification persists a rebuild marker; the
+next writable catalog open rebuilds it. Read-only verification reports findings
+without persisting changes. State or userdata damage produces exit code 1, including
+when it prevents recovery during writable opening.
 
 With a usable writable index, verification records corrupt or unreadable indexed
 assets as corrupt in one final transaction. It restores previously corrupt rows
@@ -139,7 +154,7 @@ missing ZIPs. An unchanged ZIP retains its corruption mark during stat-based syn
 On Linux or storage without supported production writes, verification retries
 read-only and reports `index_updated: false`; verification still runs.
 
-Exit codes are 0 for OK/warnings, 1 for corrupt or unreadable assets, 3 for
+Exit codes are 0 for OK/warnings, 1 for corrupt or unreadable assets or damaged state/userdata databases, 3 for
 unsupported assets or cancellation, and 4 for opening or operation errors.
 The service API supports progress and cancellation between assets, committing
 index results for the assets already checked. The CLI has no cancellation flag.

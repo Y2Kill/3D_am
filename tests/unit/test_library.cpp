@@ -93,7 +93,7 @@ TEST(Library, InitLayoutConfigAndDatabasePragmas) {
   EXPECT_EQ(library.config().library_id, c.library_id);
   for (auto kind : {DatabaseKind::index, DatabaseKind::userdata, DatabaseKind::state}) {
     EXPECT_EQ(library.database_info(kind).state, DatabaseState::ok);
-    EXPECT_EQ(library.database_info(kind).user_version, 1);
+    EXPECT_EQ(library.database_info(kind).user_version, kind == DatabaseKind::index ? 2 : 1);
     EXPECT_EQ(scalar(library.database(kind), "PRAGMA journal_mode"), "wal");
     EXPECT_EQ(scalar(library.database(kind), "PRAGMA foreign_keys"), "1");
     EXPECT_EQ(scalar(library.database(kind), "PRAGMA synchronous"), kind == DatabaseKind::index ? "1" : "2");
@@ -184,7 +184,7 @@ TEST(Library, ImmutableFallbackAndPendingWal) {
     auto reader = value(lib::Library::open(root, o));
     for (auto k : {DatabaseKind::index, DatabaseKind::userdata, DatabaseKind::state}) {
       EXPECT_EQ(reader.database_info(k).state, DatabaseState::ok); EXPECT_EQ(reader.database_info(k).read_mode, "immutable");
-      EXPECT_EQ(scalar(reader.database(k), "PRAGMA user_version"), "1");
+      EXPECT_EQ(scalar(reader.database(k), "PRAGMA user_version"), k == DatabaseKind::index ? "2" : "1");
     }
   }
   EXPECT_EQ(snapshot(root, false), before);
@@ -216,13 +216,13 @@ TEST(Library, DatabaseVersionsAndIndexRecreation) {
   for (const auto* variant : {"newer", "corrupt", "missing"}) {
     const auto root = initialized(); const auto index = root / ".am/index.sqlite";
     write(root / "assets/preserved", "asset data"); const auto data = bytes(root / ".am/userdata.sqlite");
-    if (std::string(variant) == "newer") { Raw db(index); db.exec("PRAGMA user_version=2"); }
+    if (std::string(variant) == "newer") { Raw db(index); db.exec("PRAGMA user_version=3"); }
     else if (std::string(variant) == "corrupt") write(index, "corrupt database");
     else fs::remove(index);
     { auto ro = value(lib::Library::open(root, options(lib::Mode::read_only)));
       EXPECT_EQ(ro.database_info(DatabaseKind::index).state, std::string(variant) == "missing" ? DatabaseState::missing : DatabaseState::incompatible); }
     { auto rw = value(lib::Library::open(root, options()));
-      EXPECT_EQ(rw.database_info(DatabaseKind::index).user_version, 1); EXPECT_EQ(rw.database_info(DatabaseKind::index).rebuild_required, true); }
+      EXPECT_EQ(rw.database_info(DatabaseKind::index).user_version, 2); EXPECT_EQ(rw.database_info(DatabaseKind::index).rebuild_required, true); }
     std::size_t stale = 0;
     for (const auto& e : fs::directory_iterator(root / ".am")) if (e.path().filename().string().starts_with("index.sqlite.stale-")) ++stale;
     EXPECT_EQ(stale > 0, std::string(variant) != "missing");
@@ -265,7 +265,7 @@ TEST(Library, EmptyDatabasesInitializeButNonemptyVersionZeroIsRejected) {
     fs::remove(file);
     { Raw empty(file); }
     auto opened = value(lib::Library::open(root, options()));
-    EXPECT_EQ(opened.database_info(kind).state, DatabaseState::ok); EXPECT_EQ(opened.database_info(kind).user_version, 1);
+    EXPECT_EQ(opened.database_info(kind).state, DatabaseState::ok); EXPECT_EQ(opened.database_info(kind).user_version, kind == DatabaseKind::index ? 2 : 1);
   }
 }
 TEST(Library, IndexRecreationPreservesWalFileSet) {
@@ -274,7 +274,7 @@ TEST(Library, IndexRecreationPreservesWalFileSet) {
   {
     Raw db(path); int persist = 1;
     ASSERT_EQ(sqlite3_file_control(db.db, "main", SQLITE_FCNTL_PERSIST_WAL, &persist), SQLITE_OK);
-    db.exec("PRAGMA user_version=2");
+    db.exec("PRAGMA user_version=1");
   }
   ASSERT_TRUE(fs::exists(root / ".am/index.sqlite-wal"));
   const bool shm = fs::exists(root / ".am/index.sqlite-shm");
@@ -289,7 +289,7 @@ TEST(Library, IndexRecreationPreservesWalFileSet) {
   if (shm) {
     EXPECT_TRUE(fs::exists(fs::path(mains[0].native() + fs::path("-shm").native())));
   }
-  EXPECT_EQ(opened.database_info(DatabaseKind::index).user_version, 1);
+  EXPECT_EQ(opened.database_info(DatabaseKind::index).user_version, 2);
 }
 TEST(Library, JournalAndAssetRepositoryShareLibraryState) {
   RecordProperty("req", "ADR-0006|ADR-0007|ADR-0025|ADR-0031");

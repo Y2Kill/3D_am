@@ -9,7 +9,7 @@
 -- Перестроение индекса при смене схемы не меняет ZIP и его ревизию.
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
@@ -144,6 +144,19 @@ CREATE INDEX asset_fields_num ON asset_fields(field_id, num);
 CREATE INDEX asset_fields_txt ON asset_fields(field_id, txt);
 
 -- Полнотекст: название, описание, авторы, теги, источники
+-- FTS rowids are addressed directly. Multi-row FTS tables use indexed ownership maps.
+-- Insert the owner first; use its fts_rowid for the corresponding FTS row.
+CREATE TABLE fts_names_owner (
+  fts_rowid INTEGER PRIMARY KEY,
+  asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE
+);
+CREATE INDEX fts_names_owner_asset ON fts_names_owner(asset_id);
+CREATE TABLE fts_docs_owner (
+  fts_rowid INTEGER PRIMARY KEY,
+  asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE
+);
+CREATE INDEX fts_docs_owner_asset ON fts_docs_owner(asset_id);
+
 CREATE VIRTUAL TABLE fts_assets USING fts5(asset_id UNINDEXED, title, description, authors, tags, sources, tokenize = 'unicode61 remove_diacritics 2');
 -- Подстрочный поиск по именам файлов/архивов (ТЗ 10.4.1, критерий 62)
 CREATE VIRTUAL TABLE fts_names USING fts5(asset_id UNINDEXED, name, tokenize = 'trigram');

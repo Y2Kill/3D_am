@@ -55,7 +55,7 @@ class LibraryCli(unittest.TestCase):
         self.assertEqual(info["schema_version"], 1)
         for name in ("index", "userdata", "state"):
             self.assertEqual(info["databases"][name]["state"], "ok")
-            self.assertEqual(info["databases"][name]["user_version"], 1)
+            self.assertEqual(info["databases"][name]["user_version"], 2 if name == "index" else 1)
             self.assertIn(info["databases"][name]["read_mode"], ("wal", "immutable"))
         self.assertTrue(info["databases"]["index"]["rebuild_required"])
         self.assertIn("writable", info["capabilities"])
@@ -238,6 +238,30 @@ class LibraryCli(unittest.TestCase):
         self.assertEqual(len(self.run_am("log", 0, "--after", str(result["entries"][0]["seq"]), "--limit", "1")["entries"]), 1)
         (CONFIG.root / "t023-log-writes-example.json").write_text(json.dumps(result), encoding="utf-8")
 
+    def test_verify_database_pages(self):
+        """K-22: corrupt data pages produce per-database findings and exit 1."""
+        self.run_am("init")
+        path = self.root / ".am/userdata.sqlite"
+        with sqlite3.connect(path) as connection:
+            connection.executescript("CREATE TABLE corruption_probe(value); INSERT INTO corruption_probe VALUES('payload');")
+            page = connection.execute("SELECT rootpage FROM sqlite_schema WHERE name='corruption_probe'").fetchone()[0]
+            page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.close()
+        with path.open("r+b") as output:
+            output.seek((page - 1) * page_size)
+            output.write(b"\0")
+        for flags, check in [((), "quick_check"), (("--full",), "integrity_check")]:
+            report = self.run_am("verify", 1, *flags)
+            self.assertEqual(set(report["databases"]), {"index", "state", "userdata"})
+            self.assertEqual(report["databases"]["userdata"]["status"], "corrupt")
+            self.assertTrue(all(database["check"] == check for database in report["databases"].values()))
+        text = subprocess.run([str(CONFIG.am), "library", "verify", str(self.root)], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(text.returncode, 1, text.stderr)
+        self.assertIn("Databases:", text.stdout)
+        self.assertIn('"userdata"', text.stdout)
+        self.assertIn('"corrupt"', text.stdout)
+
     def test_verify(self):
         self.run_am("init")
         timestamp = "2026-11-17T00:00:00.000Z"
@@ -286,6 +310,9 @@ class LibraryCli(unittest.TestCase):
         healthy = self.run_am("verify")
         self.assertEqual((healthy["level"], healthy["total"], healthy["checked"], healthy["ok"]), ("quick", 1, 1, 1))
         self.assertEqual(healthy["items"], [])
+        self.assertEqual(set(healthy["databases"]), {"index", "userdata", "state"})
+        for database in healthy["databases"].values():
+            self.assertEqual((database["status"], database["check"]), ("ok", "quick_check"))
         self.assertIn("recovery", healthy)
         self.assertEqual(healthy["index_updated"], os.name == "nt")
         (CONFIG.root / "t022-verify-success.json").write_text(json.dumps(healthy), encoding="utf-8")
@@ -295,6 +322,8 @@ class LibraryCli(unittest.TestCase):
         self.assertEqual(quick["corrupt"], 0)
         full = self.run_am("verify", 1, "--full")
         self.assertEqual(full["corrupt"], 1)
+        for database in full["databases"].values():
+            self.assertEqual((database["status"], database["check"]), ("ok", "integrity_check"))
         self.assertEqual(full["items"][0]["status"], "corrupt")
         self.assertTrue(full["items"][0]["message_id"])
         self.assertEqual(full["items"][0]["stream"]["id"], manifest["files"][0]["id"])

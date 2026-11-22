@@ -4,6 +4,13 @@ All notable user-visible changes are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Library opening avoids full database scans during clean sessions. Verification
+  checks all three databases; unclosed writer sessions check integrity before recovery.
+- FTS row deletion uses indexed ownership keys. Index schema version 2 is rebuilt
+  from unchanged ZIPs, avoiding full FTS scans during writes and rebuilds.
+
 ### Added
 
 - Deterministic synthetic library generation and process-based catalog scale measurements,

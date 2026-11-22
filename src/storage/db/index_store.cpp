@@ -28,6 +28,20 @@ Result<T> guard(F&& f) {
     return Error::make(Errc::internal, "Index operation failed").id("am.db.index");
   }
 }
+void flag_corrupt_index(const Connection& connection) noexcept {
+  try {
+    (void)connection.exec("INSERT INTO meta(key,value) VALUES('rebuild_required','1') "
+                          "ON CONFLICT(key) DO UPDATE SET value='1'; "
+                          "INSERT INTO meta(key,value) VALUES('database_check_failed','1') "
+                          "ON CONFLICT(key) DO UPDATE SET value='1'");
+  } catch (...) {}
+}
+template <class T, class F>
+Result<T> guard(const Connection& connection, F&& f) {
+  auto result = guard<T>(std::forward<F>(f));
+  if (!result && result.error().code == Errc::corrupt_data) flag_corrupt_index(connection);
+  return result;
+}
 using Cell = std::variant<std::monostate, std::string, std::int64_t, double>;
 Cell cell(const std::optional<std::string>& s) { return s ? Cell(*s) : Cell{}; }
 Cell cell(const std::optional<double>& d) { return d ? Cell(*d) : Cell{}; }
@@ -54,17 +68,21 @@ void insert(Connection& c, std::string_view table, std::string_view columns, std
   take(s.step());
 }
 void erase(Connection& c, std::string_view id) {
-  // Foreign keys cascade the ordinary child rows; FTS tables have no FK.
-  for (const auto* table : {"fts_assets", "fts_names", "fts_docs", "assets"}) {
-    auto s = take(c.prepare("DELETE FROM " + std::string(table) + " WHERE asset_id=?"));
+  // Foreign keys cascade ordinary children and ownership maps after the FTS rows are removed.
+  for (const auto* sql : {
+      "DELETE FROM fts_assets WHERE rowid=(SELECT rowid FROM assets WHERE asset_id=?)",
+      "DELETE FROM fts_names WHERE rowid IN (SELECT fts_rowid FROM fts_names_owner WHERE asset_id=?)",
+      "DELETE FROM fts_docs WHERE rowid IN (SELECT fts_rowid FROM fts_docs_owner WHERE asset_id=?)",
+      "DELETE FROM assets WHERE asset_id=?"}) {
+    auto s = take(c.prepare(sql));
     take(s.bind(1, id));
     take(s.step());
   }
 }
-void put(Connection& c, const IndexRecord& r) {
+void put(Connection& c, const IndexRecord& r, bool replace = true) {
   const auto& a = r.summary;
   const auto& id = a.asset_id;
-  erase(c, id);
+  if (replace) erase(c, id);
   insert(c, "assets",
          "asset_id,revision,rel_path,in_trash,zip_size,zip_mtime_ns,manifest_sha256,format_major,format_minor,title,"
          "description,created_at,modified_at,incomplete,health,health_detail,primary_preview,file_count,content_bytes,"
@@ -108,9 +126,16 @@ void put(Connection& c, const IndexRecord& r) {
   for (const auto& f : r.fields)
     insert(c, "asset_fields", "asset_id,scope,owner_id,field_id,type_id,num,txt,unit",
            {id, f.scope, f.owner_id, f.field_id, cell(f.type_id), cell(f.num), cell(f.txt), cell(f.unit)});
-  insert(c, "fts_assets", "asset_id,title,description,authors,tags,sources",
-         {id, cell(a.title), cell(r.description), r.authors_text, r.tags_text, r.sources_text});
-  for (const auto& n : r.names) insert(c, "fts_names", "asset_id,name", {id, n});
+  auto asset_row = take(c.prepare("SELECT rowid FROM assets WHERE asset_id=?"));
+  take(asset_row.bind(1, id)); take(asset_row.step());
+  insert(c, "fts_assets", "rowid,asset_id,title,description,authors,tags,sources",
+         {asset_row.integer(0), id, cell(a.title), cell(r.description), r.authors_text, r.tags_text, r.sources_text});
+  for (const auto& n : r.names) {
+    auto owner = take(c.prepare("INSERT INTO fts_names_owner(asset_id) VALUES(?) RETURNING fts_rowid"));
+    take(owner.bind(1, id)); take(owner.step());
+    const auto rowid = owner.integer(0); take(owner.step());
+    insert(c, "fts_names", "rowid,asset_id,name", {rowid, id, n});
+  }
 }
 void meta(Connection& c, std::string_view key, std::string_view value) {
   auto s =
@@ -135,7 +160,7 @@ void mark_row(Connection& c, const IndexMark& mark) {
 }
 }  // namespace
 Result<void> IndexStore::replace(const IndexRecord& r) {
-  return guard<void>([&]() -> Result<void> {
+  return guard<void>(db_, [&]() -> Result<void> {
     auto tx = take(Transaction::begin(db_));
     put(db_, r);
     take(tx.commit());
@@ -143,7 +168,7 @@ Result<void> IndexStore::replace(const IndexRecord& r) {
   });
 }
 Result<void> IndexStore::remove(std::string_view id) {
-  return guard<void>([&]() -> Result<void> {
+  return guard<void>(db_, [&]() -> Result<void> {
     auto tx = take(Transaction::begin(db_));
     erase(db_, id);
     take(tx.commit());
@@ -151,46 +176,72 @@ Result<void> IndexStore::remove(std::string_view id) {
   });
 }
 Result<IndexTransaction> IndexStore::begin_rebuild() {
-  return guard<IndexTransaction>([&]() -> Result<IndexTransaction> {
+  return guard<IndexTransaction>(db_, [&]() -> Result<IndexTransaction> {
     auto tx = take(Transaction::begin(db_));
     take(db_.exec("DELETE FROM fts_assets; DELETE FROM fts_names; DELETE FROM fts_docs; DELETE FROM assets"));
-    return IndexTransaction(*this, std::move(tx));
+    return IndexTransaction(*this, std::move(tx), true);
   });
 }
 Result<IndexTransaction> IndexStore::begin_sync() {
-  return guard<IndexTransaction>(
+  return guard<IndexTransaction>(db_,
       [&]() -> Result<IndexTransaction> { return IndexTransaction(*this, take(Transaction::begin(db_))); });
 }
-IndexTransaction::IndexTransaction(IndexStore& s, Transaction&& t) : store_(&s), transaction_(std::move(t)) {}
+IndexTransaction::IndexTransaction(IndexStore& s, Transaction&& t, bool empty)
+    : store_(&s), transaction_(std::move(t)), empty_rebuild_(empty) {}
+IndexTransaction::IndexTransaction(IndexTransaction&& other) noexcept
+    : store_(std::exchange(other.store_, nullptr)), transaction_(std::move(other.transaction_)),
+      empty_rebuild_(other.empty_rebuild_), corrupt_(other.corrupt_) {}
+IndexTransaction& IndexTransaction::operator=(IndexTransaction&& other) noexcept {
+  if (this != &other) {
+    finish();
+    store_ = std::exchange(other.store_, nullptr); transaction_ = std::move(other.transaction_);
+    empty_rebuild_ = other.empty_rebuild_; corrupt_ = other.corrupt_;
+  }
+  return *this;
+}
+void IndexTransaction::finish() noexcept {
+  // Roll back first: the durable corruption marker must survive the failed transaction.
+  transaction_.reset();
+  if (store_ && corrupt_) flag_corrupt_index(store_->db_);
+}
+IndexTransaction::~IndexTransaction() { finish(); }
+Result<void> IndexTransaction::observed(Result<void> result) {
+  if (!result && result.error().code == Errc::corrupt_data) corrupt_ = true;
+  return result;
+}
 Result<void> IndexTransaction::insert(const IndexRecord& r) {
-  return guard<void>([&]() -> Result<void> {
-    put(store_->db_, r);
+  return observed(guard<void>([&]() -> Result<void> {
+    put(store_->db_, r, !empty_rebuild_);
     return {};
-  });
+  }));
 }
 Result<void> IndexTransaction::mark(const IndexMark& mark) {
-  return guard<void>([&]() -> Result<void> {
+  return observed(guard<void>([&]() -> Result<void> {
     mark_row(store_->db_, mark);
     return {};
-  });
+  }));
 }
-Result<void> IndexTransaction::commit() { return transaction_.commit(); }
+Result<void> IndexTransaction::commit() {
+  if (corrupt_) return Error::make(Errc::corrupt_data, "Index transaction is damaged").id("am.db.index");
+  return observed(transaction_->commit());
+}
 Result<void> IndexTransaction::commit(std::string_view time) {
-  return guard<void>([&]() -> Result<void> {
+  if (corrupt_) return Error::make(Errc::corrupt_data, "Index transaction is damaged").id("am.db.index");
+  return observed(guard<void>([&]() -> Result<void> {
     meta(store_->db_, "rebuild_required", "0");
     meta(store_->db_, "rebuilt_at", time);
-    take(transaction_.commit());
+    take(transaction_->commit());
     return {};
-  });
+  }));
 }
 Result<void> IndexStore::mark_rebuild_required() {
-  return guard<void>([&]() -> Result<void> {
+  return guard<void>(db_, [&]() -> Result<void> {
     meta(db_, "rebuild_required", "1");
     return {};
   });
 }
 Result<std::optional<std::string>> IndexStore::get_meta(std::string_view key) const {
-  return guard<std::optional<std::string>>([&]() -> Result<std::optional<std::string>> {
+  return guard<std::optional<std::string>>(db_, [&]() -> Result<std::optional<std::string>> {
     auto s = take(db_.prepare("SELECT value FROM meta WHERE key=?"));
     take(s.bind(1,key));
     if (take(s.step()) != Step::row) return std::optional<std::string>{};
@@ -198,10 +249,10 @@ Result<std::optional<std::string>> IndexStore::get_meta(std::string_view key) co
   });
 }
 Result<void> IndexStore::set_meta(std::string_view key, std::string_view value) {
-  return guard<void>([&]() -> Result<void> { meta(db_,key,value); return {}; });
+  return guard<void>(db_, [&]() -> Result<void> { meta(db_,key,value); return {}; });
 }
 Result<void> IndexStore::mark(const IndexMark& mark) {
-  return guard<void>([&]() -> Result<void> {
+  return guard<void>(db_, [&]() -> Result<void> {
     auto tx = take(Transaction::begin(db_));
     mark_row(db_, mark);
     take(tx.commit());
@@ -209,7 +260,7 @@ Result<void> IndexStore::mark(const IndexMark& mark) {
   });
 }
 Result<std::vector<IndexState>> IndexStore::sync_state() const {
-  return guard<std::vector<IndexState>>([&]() -> Result<std::vector<IndexState>> {
+  return guard<std::vector<IndexState>>(db_, [&]() -> Result<std::vector<IndexState>> {
     auto statement =
         take(db_.prepare("SELECT asset_id,rel_path,zip_size,health,zip_mtime_ns FROM assets ORDER BY asset_id"));
     std::vector<IndexState> rows;
@@ -239,7 +290,7 @@ Result<TrashSummary> summarize_trash(const std::vector<std::string>& sizes) {
   });
 }
 Result<TrashSummary> IndexStore::trash_summary() const {
-  return guard<TrashSummary>([&]() -> Result<TrashSummary> {
+  return guard<TrashSummary>(db_, [&]() -> Result<TrashSummary> {
     auto s = take(db_.prepare("SELECT zip_size FROM assets WHERE in_trash=1 ORDER BY asset_id"));
     std::vector<std::string> sizes;
     while (take(s.step()) == Step::row) sizes.push_back(take(s.text(0)));
@@ -247,20 +298,20 @@ Result<TrashSummary> IndexStore::trash_summary() const {
   });
 }
 Result<bool> IndexStore::rebuild_required() const {
-  return guard<bool>([&]() -> Result<bool> {
+  return guard<bool>(db_, [&]() -> Result<bool> {
     auto s = take(db_.prepare("SELECT value FROM meta WHERE key='rebuild_required'"));
     return take(s.step()) != Step::row || take(s.text(0)) != "0";
   });
 }
 Result<std::int64_t> IndexStore::count() const {
-  return guard<std::int64_t>([&]() -> Result<std::int64_t> {
+  return guard<std::int64_t>(db_, [&]() -> Result<std::int64_t> {
     auto s = take(db_.prepare("SELECT count(*) FROM assets"));
     take(s.step());
     return s.integer(0);
   });
 }
 Result<std::vector<IndexSummary>> IndexStore::list(bool trash) const {
-  return guard<std::vector<IndexSummary>>([&]() -> Result<std::vector<IndexSummary>> {
+  return guard<std::vector<IndexSummary>>(db_, [&]() -> Result<std::vector<IndexSummary>> {
     auto s =
         take(db_.prepare("SELECT asset_id,revision,title,health,file_count,content_bytes,in_trash FROM assets WHERE ? "
                          "OR in_trash=0 ORDER BY asset_id"));
