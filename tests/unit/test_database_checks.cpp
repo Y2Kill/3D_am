@@ -190,7 +190,10 @@ TEST(DatabaseChecks, OldIndexIsUntouchedReadOnlyAndRebuiltFromZipByWriter) {
   {
     auto catalog = take(cat::Catalog::open(root, options(lib::Mode::read_only)));
     EXPECT_EQ(catalog.library().database_info(Kind::index).state, lib::DatabaseState::incompatible);
-    EXPECT_FALSE(catalog.open_report().warnings.empty());
+    bool rebuild_warning = false;
+    for (const auto& warning : catalog.open_report().warnings)
+      rebuild_warning = rebuild_warning || warning.message_id == "am.catalog.rebuild_required";
+    EXPECT_TRUE(rebuild_warning);
   }
   EXPECT_EQ(bytes(index), before);
   {

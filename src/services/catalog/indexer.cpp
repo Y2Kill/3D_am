@@ -794,6 +794,8 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
     }
     p->indexer = std::make_unique<Indexer>(fs::absolute(root).lexically_normal(), *p->library, std::move(hooks));
     if (options.mode == library::Mode::read_only) {
+      if (!index_available)
+        p->opened.warnings.push_back(error(Errc::incomplete,"am.catalog.rebuild_required").with_severity(Severity::warning));
       if (p->opened.previous_session_unclosed)
         p->opened.warnings.push_back(error(Errc::incomplete,"am.library.recovery_pending","writer_session").with_severity(Severity::warning));
       if (p->library->database_info(library::DatabaseKind::state).state == library::DatabaseState::ok) {
