@@ -1,0 +1,333 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:am:log-record:v1",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "level": {
+      "enum": [
+        "trace",
+        "debug",
+        "info",
+        "warning",
+        "error",
+        "critical"
+      ]
+    },
+    "component": {
+      "type": "string"
+    },
+    "event": {
+      "type": "string"
+    },
+    "msg": {
+      "type": "string"
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tid": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ctx": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "asset_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "library_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "job_id",
+        "asset_id",
+        "library_id",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "fields": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": [
+          "string",
+          "integer",
+          "number",
+          "boolean"
+        ]
+      }
+    },
+    "kinds": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "enum": [
+          "path",
+          "name"
+        ]
+      }
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "errc": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error",
+            "critical"
+          ]
+        },
+        "component": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "ctx": {
+          "type": "object",
+          "properties": {
+            "job_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "asset_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "library_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "operation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "job_id",
+            "asset_id",
+            "library_id",
+            "operation"
+          ],
+          "additionalProperties": false
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "retry",
+              "skip",
+              "decide",
+              "abort",
+              "open_read_only",
+              "free_space"
+            ]
+          }
+        },
+        "cause": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/cause"
+          }
+        },
+        "cause_truncated": {
+          "const": true
+        }
+      },
+      "required": [
+        "code",
+        "errc",
+        "severity",
+        "component",
+        "operation",
+        "message_id",
+        "message",
+        "detail",
+        "ctx",
+        "actions",
+        "cause"
+      ],
+      "additionalProperties": false
+    },
+    "utf8_repaired": {
+      "const": true
+    },
+    "truncated": {
+      "const": true
+    }
+  },
+  "required": [
+    "v",
+    "ts",
+    "level",
+    "component",
+    "event",
+    "msg",
+    "pid",
+    "tid",
+    "ctx",
+    "fields",
+    "kinds"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "cause": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "errc": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error",
+            "critical"
+          ]
+        },
+        "component": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "ctx": {
+          "type": "object",
+          "properties": {
+            "job_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "asset_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "library_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "operation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "job_id",
+            "asset_id",
+            "library_id",
+            "operation"
+          ],
+          "additionalProperties": false
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "retry",
+              "skip",
+              "decide",
+              "abort",
+              "open_read_only",
+              "free_space"
+            ]
+          }
+        }
+      },
+      "required": [
+        "code",
+        "errc",
+        "severity",
+        "component",
+        "operation",
+        "message_id",
+        "message",
+        "detail",
+        "ctx",
+        "actions"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

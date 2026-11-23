@@ -35,7 +35,7 @@
 | zlib | 1.3.2#2 | fmt | 12.2.0#1 |
 | cli11 | 2.7.2 | gtest | 1.18.0 |
 
-OpenSSL 3.6 — не LTS-ветка (в таблице 17.6 ориентир 3.5 LTS). Выбор ветки пересматривается при обновлении baseline, отдельного решения сейчас не требуется: используется только SHA-256 через EVP.
+OpenSSL 3.6 — не LTS-ветка (в таблице 17.6 ориентир 3.5 LTS). Выбор ветки пересматривается при обновлении baseline, отдельного решения сейчас не требуется: используются SHA-256 и, начиная с T-027, HMAC-SHA-256 через EVP.
 
 ## 17.1 Архивы
 
@@ -144,7 +144,7 @@ OpenSSL 3.6 — не LTS-ветка (в таблице 17.6 ориентир 3.5
 | Зависимости | **vcpkg (manifest mode, builtin-baseline, binary + asset cache в каталоге проекта)** | — | MIT | ✅ (ADR-0002) |
 | Юнит-тесты | **GoogleTest/GMock** | 1.17 | BSD-3 | ✅ |
 | Бенчмарки | Google Benchmark | 1.9 | Apache-2.0 | 🔵 |
-| Логи | **spdlog** (+fmt) | 1.15+ | MIT | ✅ |
+| Логи | **spdlog 1.17.0** (+fmt 12.2.0) | baseline 1.17.0#1 [fmt, tz-offset] | MIT | ✅ — T-027: только rotating_file_sink_mt, flush_on(warning), flush_every (гипотеза 2 с), шаблон %v. JSON сериализует foundation без fmt: точные uint64, UTF-8, ограничения длины и схема. HMAC-SHA-256 экспорта — существующий OpenSSL EVP; новых портов нет. |
 | CLI | **CLI11** | 2.7.2 (vcpkg baseline) | BSD-3 | ✅ — сверено для T-012: только заголовки; `App::ensure_utf8(argv)` (2.3+) даёт аргументы в UTF-8 на Windows из `GetCommandLineW`, поэтому ручной `CommandLineToArgvW` в `main.cpp` удаляется; подкоманды, группы опций и собственный форматтер справки. В минимальной сборке без vcpkg недоступна — исполняемый `am` собирается только при `AM_WITH_CONTAINER` (T-012). |
 | Fuzzing парсеров (STL, DXF, манифест, имена в ZIP) | libFuzzer (clang) / MSVC `/fsanitize=fuzzer` | — | Apache-2.0 | 🔵 |
 | Санитайзеры | ASan (MSVC и clang), UBSan (clang/gcc) | — | — | ✅ preset `win-asan` |
