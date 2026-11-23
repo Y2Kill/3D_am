@@ -1,6 +1,8 @@
 #pragma once
 #include "am/storage/db/index_store.hpp"
 #include "am/storage/library/library.hpp"
+#include "am/storage/db/job_store.hpp"
+#include "am/storage/db/operation_log.hpp"
 
 namespace am::catalog {
 struct Location {
@@ -122,6 +124,8 @@ class Catalog {
   Indexer& indexer() noexcept;
   const OpenReport& open_report() const noexcept;
   const std::vector<Error>& operation_warnings() const noexcept;
+  db::StateJobStore& job_store() noexcept;
+  db::OperationLog& operation_log() noexcept;
   Result<LibraryVerifyReport> verify(const LibraryVerifyOptions& = {});
   Result<SyncReport> sync(const SyncOptions& = {});
   Result<CatalogChange> create(const repository::CreateRequest&);

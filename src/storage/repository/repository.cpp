@@ -15,8 +15,14 @@
 #include <mutex>
 #include <set>
 #include <sstream>
+#include <fstream>
 #ifdef _WIN32
 #include <windows.h>
+#include <winioctl.h>
+#else
+#include <sys/stat.h>
+#include <sys/statfs.h>
+#include <sys/sysmacros.h>
 #endif
 
 namespace am::repository {
@@ -207,6 +213,114 @@ Result<StorageCapabilities> detect_storage_capabilities(const Path& root) {
   });
 }
 
+namespace detail {
+MediaKind media_from_sysfs(const std::filesystem::path& sysfs_root, const std::filesystem::path& entry) noexcept {
+  try {
+    const auto boundary = std::filesystem::weakly_canonical(sysfs_root);
+    auto current = std::filesystem::weakly_canonical(entry);
+    auto detected = MediaKind::unknown;
+    if (!std::filesystem::exists(current)) return MediaKind::unknown;
+    auto read = [](const std::filesystem::path& p) {
+      std::ifstream input(paths::native(p));
+      std::string value;
+      input >> value;
+      return value;
+    };
+    for (;;) {
+      const auto relative = current.lexically_relative(boundary);
+      if (relative.empty() || *relative.begin() == "..") break;
+      if (read(current / "removable") == "1") return MediaKind::removable;
+      const auto rotational = read(current / "queue/rotational");
+      if (detected == MediaKind::unknown) {
+        if (rotational == "1") detected = MediaKind::hdd;
+        if (rotational == "0") detected = MediaKind::ssd;
+      }
+      if (current == boundary || current == current.parent_path()) break;
+      current = current.parent_path();
+    }
+    return detected;
+  } catch (...) {
+  }
+  return MediaKind::unknown;
+}
+}  // namespace detail
+MediaInfo detect_media(const std::filesystem::path& root) noexcept {
+  MediaInfo result;
+  try {
+    const auto absolute = paths::native(std::filesystem::absolute(root));
+#ifdef _WIN32
+    std::vector<wchar_t> volume(absolute.native().size() + MAX_PATH + 1), name(MAX_PATH + 1);
+    if (!GetVolumePathNameW(absolute.c_str(), volume.data(), static_cast<DWORD>(volume.size()))) return result;
+    auto utf8 = [](const wchar_t* text) {
+      const auto p = std::filesystem::path(text).u8string();
+      return std::string(p.begin(), p.end());
+    };
+    result.device_id = utf8(volume.data());
+    if (GetVolumeNameForVolumeMountPointW(volume.data(), name.data(), static_cast<DWORD>(name.size())))
+      result.device_id = utf8(name.data());
+    const auto drive = GetDriveTypeW(volume.data());
+    if (drive == DRIVE_REMOTE) {
+      result.kind = MediaKind::network;
+      return result;
+    }
+    if (drive == DRIVE_REMOVABLE) {
+      result.kind = MediaKind::removable;
+      return result;
+    }
+    if (drive != DRIVE_FIXED) return result;
+    std::wstring device = name[0] ? name.data() : volume.data();
+    if (!device.empty() && device.back() == L'\\') device.pop_back();
+    const auto handle = CreateFileW(device.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                    OPEN_EXISTING, 0, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return result;
+    STORAGE_PROPERTY_QUERY query{};
+    query.PropertyId = StorageDeviceSeekPenaltyProperty;
+    query.QueryType = PropertyStandardQuery;
+    DEVICE_SEEK_PENALTY_DESCRIPTOR descriptor{};
+    DWORD returned = 0;
+    const auto ok = DeviceIoControl(handle, IOCTL_STORAGE_QUERY_PROPERTY, &query, sizeof(query), &descriptor,
+                                    sizeof(descriptor), &returned, nullptr);
+    CloseHandle(handle);
+    if (ok && returned >= sizeof(descriptor))
+      result.kind = descriptor.IncursSeekPenalty ? MediaKind::hdd : MediaKind::ssd;
+#else
+    struct stat device{};
+    if (::stat(absolute.c_str(), &device) != 0) return result;
+    result.device_id = std::to_string(major(device.st_dev)) + ":" + std::to_string(minor(device.st_dev));
+    struct statfs filesystem{};
+    if (::statfs(absolute.c_str(), &filesystem) == 0) {
+      const auto type = static_cast<unsigned long>(filesystem.f_type);
+      if (type == 0x6969UL || type == 0xff534d42UL || type == 0xfe534d42UL) {
+        result.kind = MediaKind::network;
+        return result;
+      }
+      if (type == 0x65735546UL) {
+        std::ifstream mounts("/proc/self/mountinfo");
+        std::string line;
+        while (std::getline(mounts, line)) {
+          std::istringstream input(line);
+          std::string id, parent, mount_device, mount_root, mount_point;
+          input >> id >> parent >> mount_device >> mount_root >> mount_point;
+          if (mount_device != result.device_id) continue;
+          const auto separator = line.find(" - ");
+          if (separator == std::string::npos) continue;
+          std::istringstream suffix(line.substr(separator + 3));
+          std::string kind;
+          suffix >> kind;
+          if (kind == "fuse.sshfs" || kind == "fuse.rclone" || kind == "fuse.gvfsd-fuse") {
+            result.kind = MediaKind::network;
+            return result;
+          }
+        }
+      }
+    }
+    result.kind = detail::media_from_sysfs("/sys", std::filesystem::path("/sys/dev/block") / result.device_id);
+#endif
+  } catch (...) {
+    result.kind = MediaKind::unknown;
+  }
+  return result;
+}
 
 namespace {
 manifest::SchemaValidator container_schema() {

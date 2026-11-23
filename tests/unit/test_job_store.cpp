@@ -55,7 +55,7 @@ void expect_error(const auto& result,std::string_view mid) { ASSERT_FALSE(result
 TEST(JobContract, NamesAndAllTransitionsMatchIndependentTable) {
   RecordProperty("req","NFR-14.4.3");
   const std::array<std::string,10> names{"queued","running","paused","needs_decision","waiting_resources","resource_error","cannot_continue_safely","succeeded","failed","cancelled"};
-  const std::array<std::set<int>,10> allowed{{{1,9},{0,2,3,4,5,6,7,8,9},{0,9},{0,9},{0,9},{0,8,9},{0,9},{},{0},{}}};
+  const std::array<std::set<int>,10> allowed{{{1,2,9},{0,2,3,4,5,6,7,8,9},{0,9},{0,9},{0,9},{0,8,9},{0,9},{},{0},{}}};
   const auto schema=bytes(AM_STATE_JOB_SCHEMA);
   for(int from=0;from<10;++from) {
     const auto state=static_cast<JobState>(from); EXPECT_EQ(c::job_state_name(state),names[static_cast<std::size_t>(from)]);
@@ -106,7 +106,7 @@ TEST(StateJobs, ForbiddenTransitionsAndConcurrentCompareAndSwap) {
   }
   ASSERT_TRUE(a); ASSERT_TRUE(b); EXPECT_EQ(static_cast<int>(a->ok())+static_cast<int>(b->ok()),1);
   expect_error(a->ok() ? *b : *a,"am.jobs.state_conflict");
-  expect_error(store.transition(job.job_id,JobState::running,JobState::queued),"am.jobs.transition_invalid");
+  EXPECT_EQ(value(store.transition(job.job_id,JobState::running,JobState::queued)).state,JobState::queued);
 }
 TEST(StateJobs, InputValidationDoesNotWriteAndOpaqueFieldsStayExact) {
   RecordProperty("req","NFR-14.4.3"); Database db; StateJobStore store(db.raw,false,db.clock());

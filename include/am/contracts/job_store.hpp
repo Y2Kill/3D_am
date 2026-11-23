@@ -22,7 +22,7 @@ constexpr bool job_terminal(JobState state) noexcept { return state == JobState:
 constexpr bool job_transition_allowed(JobState from, JobState to) noexcept {
   using enum JobState;
   switch (from) {
-    case queued: return to == running || to == cancelled;
+    case queued: return to == running || to == paused || to == cancelled;
     case running: return to == paused || to == needs_decision || to == waiting_resources || to == resource_error ||
       to == cannot_continue_safely || to == succeeded || to == failed || to == cancelled || to == queued;
     case paused: case needs_decision: case waiting_resources: case cannot_continue_safely:
@@ -50,7 +50,13 @@ struct JobRecord {
   std::string created_at;
   std::optional<std::string> started_at, finished_at;
 };
-struct JobPatch { std::optional<std::string> decision_json, result_json, error_json; bool clear_decision = false; };
+// queued -> running consumes an attempt. A cooperative shutdown may release it
+// only on running -> queued; crash recovery keeps the previous attempt count.
+// A decision answer is the original question plus {"answer":{"option":"..."}}.
+struct JobPatch {
+  std::optional<std::string> decision_json, result_json, error_json;
+  bool clear_decision = false, release_attempt = false;
+};
 struct JobFilter { std::vector<JobState> states; std::optional<std::string> parent_id; bool top_level_only = false; };
 class IJobStore {
  public:

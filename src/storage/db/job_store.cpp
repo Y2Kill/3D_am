@@ -130,7 +130,7 @@ Result<JobRecord> StateJobStore::enqueue(const JobSpec& spec) {
 Result<JobRecord> StateJobStore::transition(std::string_view id,JobState from,JobState to,const JobPatch& patch) {
   return guard<JobRecord>([&]() -> Result<JobRecord> {
     const std::lock_guard lock(mutex_); const ConnectionLock connection_lock(raw_); writable(); validate_id(id);
-    if(!job_transition_allowed(from,to) || (from==JobState::running && to==JobState::queued) ||
+    if(!job_transition_allowed(from,to) || (patch.release_attempt && (from!=JobState::running || to!=JobState::queued)) ||
        (to==JobState::needs_decision && (!patch.decision_json || patch.clear_decision)) ||
        (patch.decision_json && to!=JobState::needs_decision && from!=JobState::needs_decision))
       throw error("am.jobs.transition_invalid");
@@ -138,8 +138,8 @@ Result<JobRecord> StateJobStore::transition(std::string_view id,JobState from,Jo
     const bool starting=to==JobState::running;
     const bool finished=job_terminal(to) || to==JobState::failed;
     const auto at=timestamp(clock_());
-    auto q=take(db_.prepare(std::string("UPDATE jobs SET state=?,attempt=attempt+?,started_at=CASE WHEN ? THEN ? ELSE started_at END,finished_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE finished_at END,decision_json=CASE WHEN ? THEN ? ELSE COALESCE(?,decision_json) END,result_json=COALESCE(?,result_json),error_json=COALESCE(?,error_json) WHERE job_id=? AND state=? RETURNING ")+columns));
-    take(q.bind(1,job_state_name(to))); take(q.bind(2,static_cast<std::int64_t>(starting)));
+    auto q=take(db_.prepare(std::string("UPDATE jobs SET state=?,attempt=max(0,attempt+?),started_at=CASE WHEN ? THEN ? ELSE started_at END,finished_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE finished_at END,decision_json=CASE WHEN ? THEN ? ELSE COALESCE(?,decision_json) END,result_json=COALESCE(?,result_json),error_json=COALESCE(?,error_json) WHERE job_id=? AND state=? RETURNING ")+columns));
+    take(q.bind(1,job_state_name(to))); take(q.bind(2,static_cast<std::int64_t>(starting ? 1 : patch.release_attempt ? -1 : 0)));
     take(q.bind(3,static_cast<std::int64_t>(starting))); take(q.bind(4,at));
     take(q.bind(5,static_cast<std::int64_t>(finished))); take(q.bind(6,at)); take(q.bind(7,static_cast<std::int64_t>(starting)));
     take(q.bind(8,static_cast<std::int64_t>(patch.clear_decision || from==JobState::needs_decision)));

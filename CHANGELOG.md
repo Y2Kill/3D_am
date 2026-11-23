@@ -13,6 +13,10 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Cooperative background job execution, bounded resource profiles, safe pause and
+  shutdown, decisions, parent jobs, and isolated failures. `am jobs` manages the
+  queue; `am library verify --enqueue` schedules verification and `am media`
+  reports the detected storage type.
 - Deterministic synthetic library generation and process-based catalog scale measurements,
   with resumable public-API writes and checks for ZIP-free clean catalog startup.
 

@@ -2,5 +2,6 @@
 # points, recovery. Depends only on foundation + contracts; persistence comes
 # through contracts::IJobStore implemented in storage (ADR-0024). M3.
 am_add_module(jobs
+  SOURCES resources.cpp executor.cpp
   DEPENDS am::foundation am::contracts
   FORBID storage services automation import)

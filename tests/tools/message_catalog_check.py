@@ -7,6 +7,7 @@ import tomllib
 # These exact literals are prefixes/classifiers, never complete user messages.
 EXCEPTIONS = {
     "am.app.label.": "Presentation prefix; complete label keys are in en.toml.",
+    "am.jobs.label.": "Job presentation prefix; complete label keys are in en.toml.",
     "am.commit.": "Lower-layer error-family classifier in repository guard.",
     "am.json.": "Codec classifier used to translate strict-JSON error IDs.",
     "am.manifest.": "Semantic/error-family prefix; assembled V3 IDs are checked by the unit test.",

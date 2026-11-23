@@ -1,4 +1,5 @@
 #include "am/services/catalog/indexer.hpp"
+#include "am/services/catalog/verify_job.hpp"
 #include "am/storage/db/job_store.hpp"
 #include "am/storage/db/operation_log.hpp"
 
@@ -703,6 +704,8 @@ struct Catalog::Impl {
   std::recursive_mutex mutex;
   std::optional<library::Library> library;
   std::unique_ptr<Indexer> indexer;
+  std::unique_ptr<db::StateJobStore> jobs;
+  std::unique_ptr<db::OperationLog> operations;
   std::vector<Error> warnings;
   OpenReport opened;
   std::function<Result<void>(std::string_view)> before_log;
@@ -771,6 +774,9 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
       if (downstream) downstream(e);
     };
     p->library.emplace(take(library::Library::open(root, options)));
+    const bool read_only=options.mode==library::Mode::read_only;
+    p->jobs=std::make_unique<db::StateJobStore>(p->library->database(library::DatabaseKind::state),read_only,db::StateJobStore::Clock{},options.max_attempts);
+    p->operations=std::make_unique<db::OperationLog>(p->library->database(library::DatabaseKind::state),read_only);
     p->before_log=hooks.before_log;
     const auto index_kind = library::DatabaseKind::index;
     const bool index_available = p->library->database_info(index_kind).state == library::DatabaseState::ok && p->library->database(index_kind);
@@ -849,8 +855,7 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
         p->log("library.recovery",failed ? "error" : skipped ? "warn" : "info",asset,
                repository::Json{{"op_id",item.op_id},{"outcome",commit::outcome_name(item.outcome)}},p->opened.warnings);
       }
-      db::StateJobStore jobs(p->library->database(library::DatabaseKind::state),false,{},options.max_attempts);
-      auto recovered_jobs=jobs.recover_running();
+      auto recovered_jobs=p->jobs->recover_running();
       if (!recovered_jobs) p->opened.warnings.push_back(error(Errc::incomplete,"am.jobs.recovery_failed").with_severity(Severity::warning).caused_by(recovered_jobs.error()));
       else {
         p->opened.jobs_requeued=std::move(recovered_jobs->requeued); p->opened.jobs_failed=std::move(recovered_jobs->failed);
@@ -882,6 +887,8 @@ library::Library& Catalog::library() noexcept { return *impl_->library; }
 Indexer& Catalog::indexer() noexcept { return *impl_->indexer; }
 const OpenReport& Catalog::open_report() const noexcept { return impl_->opened; }
 const std::vector<Error>& Catalog::operation_warnings() const noexcept { return impl_->warnings; }
+db::StateJobStore& Catalog::job_store() noexcept { return *impl_->jobs; }
+db::OperationLog& Catalog::operation_log() noexcept { return *impl_->operations; }
 Result<LibraryVerifyReport> Catalog::verify(const LibraryVerifyOptions& options) {
   return guard<LibraryVerifyReport>([&]() -> Result<LibraryVerifyReport> {
     const std::lock_guard lock(impl_->mutex);
@@ -986,5 +993,79 @@ Result<repository::ImportReadyResult> Catalog::import_ready(const repository::Im
     for (auto& warning : impl_->warnings) imported->warnings.push_back(std::move(warning));
     return imported;
   });
+}
+}  // namespace am::catalog
+
+namespace am::catalog {
+namespace {
+class VerifyJob final : public jobs::JobHandler {
+ public:
+  VerifyJob(Catalog& catalog, std::string device, std::function<void(Error)> warning)
+      : catalog_(catalog), device_(std::move(device)), warning_(std::move(warning)) {}
+  jobs::JobOutcome run(jobs::JobContext& context) override {
+    LibraryVerifyOptions options;
+    try {
+      const auto params = repository::Json::parse(context.record().params_json);
+      if (!params.is_object()) return invalid();
+      for (const auto& [key, value] : params.items()) {
+        if (key == "resource_profile") continue;
+        if (key == "level") {
+          if (!value.is_string() || (value != "quick" && value != "full")) return invalid();
+          options.level = value == "full" ? LibraryVerifyLevel::full : LibraryVerifyLevel::quick;
+        } else if (key == "include_trash") {
+          if (!value.is_boolean()) return invalid();
+          options.include_trash = value.get<bool>();
+        } else
+          return invalid();
+      }
+    } catch (const repository::Json::exception&) {
+      return invalid();
+    }
+    const std::array<jobs::ResourceRequest, 1> request{{{jobs::ResourceKind::read, device_}}};
+    auto lease = context.acquire(request);
+    if (!lease)
+      return context.stop().stop_requested() ? jobs::JobOutcome::interrupted()
+                                             : jobs::JobOutcome::failure(lease.error());
+    options.progress = [&](std::size_t done, std::size_t total) {
+      context.report({static_cast<std::uint64_t>(done), static_cast<std::uint64_t>(total), "assets", "verify"});
+    };
+    options.cancelled = [&] { return context.stop().stop_requested(); };
+    auto report = catalog_.verify(options);
+    if (!report) return jobs::JobOutcome::failure(report.error());
+    if (warning_)
+      for (const auto& warning : report->warnings) {
+        try {
+          warning_(warning);
+        } catch (...) {
+        }
+      }
+    if (report->cancelled) return jobs::JobOutcome::interrupted();
+    return jobs::JobOutcome::success(repository::Json{
+        {"total", report->total},
+        {"checked", report->checked},
+        {"ok", report->ok},
+        {"warn", report->warn},
+        {"corrupt", report->corrupt},
+        {"unsupported", report->unsupported},
+        {"unreadable",
+         report->unreadable}}.dump());
+  }
+
+ private:
+  Catalog& catalog_;
+  std::string device_;
+  std::function<void(Error)> warning_;
+  static jobs::JobOutcome invalid() {
+    return jobs::JobOutcome::failure(
+        Error::make(Errc::invalid_argument, "Invalid verification job parameters").id("am.jobs.params_invalid"));
+  }
+};
+}  // namespace
+Result<void> register_verify_job(jobs::HandlerRegistry& registry, Catalog& catalog, std::string device,
+                                 std::function<void(Error)> warning) {
+  return registry.add("library.verify",
+                      [&catalog, device = std::move(device), warning = std::move(warning)](const auto&) {
+                        return std::make_unique<VerifyJob>(catalog, device, warning);
+                      });
 }
 }  // namespace am::catalog
