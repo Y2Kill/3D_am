@@ -13,6 +13,9 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Explicitly enabled JSON Lines process logs with rotation, job and library
+  context, and local diagnostic ZIP export with per-export path tokens and
+  identity redaction. Logging failures do not change command results.
 - Cooperative background job execution, bounded resource profiles, safe pause and
   shutdown, decisions, parent jobs, and isolated failures. `am jobs` manages the
   queue; `am library verify --enqueue` schedules verification and `am media`

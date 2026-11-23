@@ -1,3 +1,4 @@
+#include "am/foundation/log.hpp"
 #include "am/application/library_service.hpp"
 #include "am/application/job_service.hpp"
 #include "am/services/catalog/verify_job.hpp"
@@ -686,7 +687,7 @@ Result<jc::JobRecord> JobService::enqueue(const jc::JobSpec& spec) {
   if (result) impl_->executor->wake();
   return result;
 }
-Result<jobs::RunSummary> JobService::run(std::stop_token stop) { return impl_->executor->run_until_idle(stop); }
+Result<jobs::RunSummary> JobService::run(std::stop_token stop) { log::Scope scope({{},{},impl_->catalog->library().config().library_id,{}}); return impl_->executor->run_until_idle(stop); }
 Result<void> JobService::control(std::string_view command, std::string_view id) {
   if (command == "pause") return impl_->executor->pause(id);
   if (command == "resume") return impl_->executor->resume(id);

@@ -1,3 +1,5 @@
+#include "am/application/logging.hpp"
+#include "am/foundation/version.hpp"
 #include "am/application/asset_service.hpp"
 #include "am/application/library_service.hpp"
 #include "am/application/job_service.hpp"
@@ -191,6 +193,7 @@ void print_job_event(const am::jobs::JobEvent& event) {
   std::cerr << '\n';
 }
 void print_error(const am::Error& e, bool verbose) {
+  if(e.severity>=am::Severity::error)AM_LOG(error,"cli","cli.error","Command error",{},&e);
   std::cerr << app::message_text(e) << '\n';
   if (verbose) std::cerr << am::to_log_string(e) << '\n';
 }
@@ -272,6 +275,42 @@ int main(int argc, char** argv) {
   bool json = false, verbose = false;
   std::string selected_command = "asset";
   int code = 0;
+  struct LogLifetime {
+    int& code;
+    std::chrono::steady_clock::time_point start=std::chrono::steady_clock::now();
+    ~LogLifetime(){AM_LOG(info,"cli","app.exit","CLI exited",{{"exit_code",static_cast<std::int64_t>(code)},{"duration_ms",static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count())}});am::log::set_sink(nullptr);}
+  } log_lifetime{code};
+  std::string log_directory,log_level="info";
+  auto* log_dir_option=cli.add_option("--log-dir",log_directory,"Enable a process log in this directory")->envname("AM_LOG_DIR");
+  cli.add_option("--log-level",log_level,"Minimum process log level")->envname("AM_LOG_LEVEL")->check(CLI::IsMember({"trace","debug","info","warning","error","critical"}));
+  bool logging_initialized=false,diagnostic_dry_run=false;
+  const bool explicit_log_directory=std::any_of(argv+1,argv+argc,[](const char* value){const auto option=std::string_view(value);return option=="--log-dir" || option.starts_with("--log-dir=");});
+  auto initialize_logging=[&]{
+    if(logging_initialized)return;
+    logging_initialized=true;
+    if(!diagnostic_dry_run && (log_dir_option->count() || !log_directory.empty())){
+      app::LoggingOptions options;options.directory=path(log_directory);
+      for(unsigned i=0;i<6;++i)if(am::log::level_name(static_cast<am::log::Level>(i))==log_level)options.level=static_cast<am::log::Level>(i);
+      auto opened=app::open_file_log(options);if(!opened)print_error(opened.error(),verbose);
+    }
+    std::string command;auto* current=&cli;
+    while(!current->get_subcommands().empty()){current=current->get_subcommands().front();if(!command.empty())command+=' ';command+=current->get_name();}
+    selected_command=command;
+#ifdef _WIN32
+    const std::string os="windows";
+#else
+    const std::string os="linux";
+#endif
+#if defined(_M_ARM64) || defined(__aarch64__)
+    const std::string arch="arm64";
+#elif defined(_M_X64) || defined(__x86_64__)
+    const std::string arch="x86_64";
+#else
+    const std::string arch="other";
+#endif
+    AM_LOG(info,"cli","app.start","CLI started",{{"version",std::string(am::kAppVersion)},{"command",command},{"os",os},{"arch",arch}});
+  };
+  cli.parse_complete_callback(initialize_logging);
   auto render = [&](const std::string& command, am::Result<app::AssetOutcome> result) {
     selected_command = command;
     if (!result) {
@@ -427,6 +466,26 @@ int main(int argc, char** argv) {
   media->add_option("path", media_path)->required();
   presentation(media);
   media->callback([&] { render_jobs("media", app::inspect_media(path(media_path))); });
+  auto* diag=cli.add_subcommand("diag","Export local diagnostics without personal data");diag->require_subcommand(1);
+  auto* export_command=diag->add_subcommand("export","Export redacted diagnostics as a ZIP");
+  std::string diagnostic_output,diagnostic_logs,diagnostic_library,diagnostic_since;
+  export_command->add_option("out.zip",diagnostic_output)->required();
+  auto* diagnostic_source=export_command->add_option("--log-dir",diagnostic_logs,"Source log directory");
+  auto* diagnostic_lib=export_command->add_option("--library",diagnostic_library,"Include a read-only library summary");
+  auto* diagnostic_time=export_command->add_option("--since",diagnostic_since,"RFC3339 lower timestamp boundary");
+  export_command->add_flag("--dry-run",diagnostic_dry_run,"Show entries and replacement counts without writing files");
+  presentation(export_command);
+  export_command->callback([&]{
+    app::DiagnosticOptions options;options.output=path(diagnostic_output);options.dry_run=diagnostic_dry_run;
+    if(diagnostic_source->count())options.log_directory=path(diagnostic_logs);else if(explicit_log_directory && !log_directory.empty())options.log_directory=path(log_directory);
+    if(diagnostic_lib->count())options.library=path(diagnostic_library);
+    if(diagnostic_time->count())options.since=diagnostic_since;
+    auto result=app::export_diagnostics(options);
+    if(!result){code=result.error().code==am::Errc::invalid_argument?2:4;if(json)std::cout<<Json{{"command","diag export"},{"error",error_value(result.error())}}.dump()<<'\n';print_error(result.error(),verbose);return;}
+    Json value{{"command","diag export"},{"entries",result->entries},{"logs_available",result->logs_available},{"dry_run",diagnostic_dry_run},{"replacements",{{"path",result->path_replacements},{"name",result->name_replacements},{"user",result->user_replacements},{"host",result->host_replacements}}}};
+    if(json)std::cout<<value.dump()<<'\n';else std::cout<<app::message_text("am.diag.exported")<<": "<<value.dump()<<'\n';
+    code=0;
+  });
   auto* library = cli.add_subcommand("library", "Create a library or read its status");
   library->require_subcommand(1);
   std::string library_root, library_name, library_info_root;
@@ -640,18 +699,22 @@ int main(int argc, char** argv) {
     dev("exclude", excluded->count() ? std::vector<std::string>{excluded_path, excluded_file}
                                      : std::vector<std::string>{excluded_path});
   });
+  std::function<void(CLI::App*)> inherit_options=[&](CLI::App* app){for(auto* child:app->get_subcommands([](CLI::App*){return true;})){child->fallthrough();inherit_options(child);}};
+  inherit_options(&cli);
   try {
     cli.parse(argc, argv);
     return code;
   } catch (const CLI::ParseError& e) {
-    return cli.exit(e) == 0 ? 0 : 2;
+    code=cli.exit(e)==0?0:2;
+    if(code){try{initialize_logging();auto error=am::Error::make(am::Errc::invalid_argument,"Invalid command arguments",e.what()).id("am.diag.arguments_invalid");AM_LOG(error,"cli","cli.error","Invalid command arguments",{},&error);}catch(...) {}}
+    return code;
   } catch (const std::exception& e) {
     auto error = am::Error::make(am::Errc::internal, "Command failed", e.what()).id("am.app.internal");
     if (json) std::cout << Json{{"command", selected_command}, {"error", error_value(error)}}.dump() << '\n';
     print_error(error, verbose);
-    return 4;
+    return code=4;
   } catch (...) {
     std::cerr << app::message_text("am.app.internal") << '\n';
-    return 4;
+    return code=4;
   }
 }

@@ -520,4 +520,32 @@ for path in expected_files:
         print(f"FAIL expected schema: {path.parent.name}: {error.json_path}: {error.message}")
     failures += len(errors)
 print(f"expected schema: {len(expected_files)} golden expectations checked")
+# T-027 diagnostics are independently versioned; the published manifest stays unchanged.
+log_example = {"v": 1, "ts": "2026-11-23T10:15:30.123Z", "level": "info", "component": "test",
+               "event": "test.event", "msg": "Example", "pid": 1, "tid": 2,
+               "ctx": dict.fromkeys(("job_id", "asset_id", "library_id", "operation")),
+               "fields": {"maximum": 18446744073709551615}, "kinds": {}}
+diag_example = {"format": "am-diagnostics", "version": 1, "created_at": "2026-11-23T10:15:30.123Z",
+                "app": {"version": "0.1.0", "build": "C++20"},
+                "system": {"os": "test", "os_version": "1", "arch": "test", "cpu_count": 1},
+                "logs": [], "redaction": {"salted": True, "rules": ["path_hmac_sha256"]}}
+for name, positive, fixture_dir in (("log-record", log_example, ".cache/log-record-tests"),
+                                     ("diagnostics", diag_example, ".cache/diag-export-cases")):
+    current_schema = json.loads((Path(args.root) / f"schemas/{name}.v1.schema.json").read_text("utf8"))
+    jsonschema.Draft202012Validator.check_schema(current_schema)
+    current = jsonschema.Draft202012Validator(current_schema, format_checker=jsonschema.FormatChecker())
+    cases = [("positive", positive, True), ("extra", dict(positive, unexpected=True), False)]
+    if name == "log-record":
+        missing = dict(positive)
+        del missing["ctx"]
+        cases += [("level", dict(positive, level="invalid"), False), ("ctx", missing, False)]
+    else:
+        cases += [("format", dict(positive, format="invalid"), False)]
+    for label, value, expected in cases:
+        report(name + ":" + label, "NFR-14.4.9", "diagnostic schema", expected, current.is_valid(value))
+    actual = list((Path(args.root) / fixture_dir).glob("*.json"))
+    for path in actual:
+        report(name + ":" + path.stem, "NFR-14.4.9", "actual serialized record", True,
+               current.is_valid(json.loads(path.read_text("utf8"))))
+    print(f"{name} schema: {len(cases)} contract cases and {len(actual)} actual records checked")
 sys.exit(1 if failures else 0)

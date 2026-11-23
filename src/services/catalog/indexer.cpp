@@ -1,3 +1,4 @@
+#include "am/foundation/log.hpp"
 #include "am/services/catalog/indexer.hpp"
 #include "am/services/catalog/verify_job.hpp"
 #include "am/storage/db/job_store.hpp"
@@ -719,7 +720,10 @@ struct Catalog::Impl {
       entry.asset_id=std::move(asset); entry.job_id=std::move(job); entry.message="Library operation completed";
       entry.detail_json=detail.dump(); take(log.append(entry)); return {};
     });
-    if (!written) output.push_back(error(Errc::io_error,"am.catalog.log_failed").with_severity(Severity::warning).caused_by(written.error()));
+    if (!written) {
+      AM_LOG(warning,"catalog","library.warning","Library operation log failed",{},&written.error());
+      output.push_back(error(Errc::io_error,"am.catalog.log_failed").with_severity(Severity::warning).caused_by(written.error()));
+    }
   }
   bool opening = true, session_marked = false;
   void lifecycle_log(const repository::AssetRef& ref, std::string kind, const Result<repository::LifecycleResult>& result) {
@@ -735,6 +739,7 @@ struct Catalog::Impl {
     }
   }
   void index_warning(const std::string& id, const Error& cause, std::vector<Error>& output) {
+    AM_LOG(warning,"catalog","library.warning","Library index update failed",{},&cause);
     auto marked = indexer->mark_rebuild_required();
     output.push_back(error(Errc::io_error,"am.catalog.index_update_failed",id).with_severity(Severity::warning).caused_by(cause));
     if (!marked) { auto warning = marked.error(); warning.severity = Severity::warning; output.push_back(std::move(warning)); }
@@ -747,6 +752,7 @@ struct Catalog::Impl {
     auto indexed = event.kind == "remove" || event.kind == "purge" ? indexer->remove(event.ref.asset_id)
                                                                    : indexer->update(event.ref, event.kind == "trash");
     if (!indexed) {
+      AM_LOG(warning,"catalog","library.warning","Library index update failed",{},&indexed.error());
       auto marked = indexer->mark_rebuild_required();
       auto warning = error(Errc::io_error, "am.catalog.index_update_failed", event.ref.asset_id)
                          .with_severity(Severity::warning)
@@ -765,7 +771,7 @@ Catalog::Catalog(Catalog&&) noexcept = default;
 Catalog& Catalog::operator=(Catalog&&) noexcept = default;
 Catalog::~Catalog() = default;
 Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options, IndexerHooks hooks) {
-  return guard<Catalog>([&]() -> Result<Catalog> {
+  auto opened=guard<Catalog>([&]() -> Result<Catalog> {
     auto p = std::make_unique<Impl>();
     auto* observer = p.get();
     auto downstream = std::move(options.on_indexed);
@@ -774,6 +780,7 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
       if (downstream) downstream(e);
     };
     p->library.emplace(take(library::Library::open(root, options)));
+    log::Scope scope({{},{},p->library->config().library_id,{}});
     const bool read_only=options.mode==library::Mode::read_only;
     p->jobs=std::make_unique<db::StateJobStore>(p->library->database(library::DatabaseKind::state),read_only,db::StateJobStore::Clock{},options.max_attempts);
     p->operations=std::make_unique<db::OperationLog>(p->library->database(library::DatabaseKind::state),read_only);
@@ -879,9 +886,13 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
       }
       if (!ready) p->opened.warnings.push_back(error(Errc::incomplete,"am.catalog.rebuild_required").with_severity(Severity::warning));
     }
+    AM_LOG(info,"catalog","library.open","Library opened",{{"mode",std::string(options.mode==library::Mode::read_only?"read_only":"read_write")},{"recovered",static_cast<std::uint64_t>(p->opened.recovered.size())},{"jobs_requeued",static_cast<std::uint64_t>(p->opened.jobs_requeued.size())},{"jobs_failed",static_cast<std::uint64_t>(p->opened.jobs_failed.size())},{"unclosed_session",p->opened.previous_session_unclosed}});
+    for(const auto& warning:p->opened.warnings)AM_LOG(warning,"catalog","library.warning","Library warning",{},&warning);
     p->opening = false;
     return Catalog(std::move(p));
   });
+  if(!opened)AM_LOG(error,"catalog","library.open_failed","Library opening failed",{},&opened.error());
+  return opened;
 }
 library::Library& Catalog::library() noexcept { return *impl_->library; }
 Indexer& Catalog::indexer() noexcept { return *impl_->indexer; }
@@ -892,6 +903,7 @@ db::OperationLog& Catalog::operation_log() noexcept { return *impl_->operations;
 Result<LibraryVerifyReport> Catalog::verify(const LibraryVerifyOptions& options) {
   return guard<LibraryVerifyReport>([&]() -> Result<LibraryVerifyReport> {
     const std::lock_guard lock(impl_->mutex);
+    log::Scope scope({{},{},impl_->library->config().library_id,{}});
     auto result=impl_->indexer->verify(options);
     if (result) {
       const auto& r=*result;
@@ -905,12 +917,14 @@ Result<LibraryVerifyReport> Catalog::verify(const LibraryVerifyOptions& options)
 Result<SyncReport> Catalog::sync(const SyncOptions& options) {
   return guard<SyncReport>([&]() -> Result<SyncReport> {
     const std::lock_guard lock(impl_->mutex);
+    log::Scope scope({{},{},impl_->library->config().library_id,{}});
     return impl_->indexer->sync(options);
   });
 }
 Result<CatalogChange> Catalog::create(const repository::CreateRequest& request) {
   return guard<CatalogChange>([&]() -> Result<CatalogChange> {
     const std::lock_guard lock(impl_->mutex);
+    log::Scope scope({{},{},impl_->library->config().library_id,{}});
     impl_->warnings.clear();
     auto changed = take(impl_->library->assets().create(request));
     return CatalogChange{std::move(changed), std::move(impl_->warnings)};
@@ -919,6 +933,7 @@ Result<CatalogChange> Catalog::create(const repository::CreateRequest& request) 
 Result<CatalogChange> Catalog::change(const repository::ChangeRequest& request) {
   return guard<CatalogChange>([&]() -> Result<CatalogChange> {
     const std::lock_guard lock(impl_->mutex);
+    log::Scope scope({{},{},impl_->library->config().library_id,{}});
     impl_->warnings.clear();
     auto changed = take(impl_->library->assets().change(request));
     return CatalogChange{std::move(changed), std::move(impl_->warnings)};
@@ -927,6 +942,7 @@ Result<CatalogChange> Catalog::change(const repository::ChangeRequest& request) 
 Result<CatalogLifecycle> Catalog::trash(const repository::AssetRef& ref) {
   return guard<CatalogLifecycle>([&]() -> Result<CatalogLifecycle> {
     const std::lock_guard lock(impl_->mutex);
+    log::Scope scope({{},{},impl_->library->config().library_id,{}});
     impl_->warnings.clear();
     auto changed = impl_->library->assets().trash(ref);
     impl_->lifecycle_log(ref,"trash",changed);
@@ -937,6 +953,7 @@ Result<CatalogLifecycle> Catalog::trash(const repository::AssetRef& ref) {
 Result<CatalogCopy> Catalog::copy_independent(const repository::CopyRequest& request) {
   return guard<CatalogCopy>([&]() -> Result<CatalogCopy> {
     const std::lock_guard lock(impl_->mutex);
+    log::Scope scope({{},{},impl_->library->config().library_id,{}});
     impl_->warnings.clear();
     auto copied = impl_->library->assets().copy_independent(request);
     repository::Json detail{{"source_asset",{{"asset_id",request.source.asset_id}}}};
@@ -952,6 +969,7 @@ Result<CatalogCopy> Catalog::copy_independent(const repository::CopyRequest& req
 Result<CatalogLifecycle> Catalog::restore(const repository::AssetRef& ref) {
   return guard<CatalogLifecycle>([&]() -> Result<CatalogLifecycle> {
     const std::lock_guard lock(impl_->mutex);
+    log::Scope scope({{},{},impl_->library->config().library_id,{}});
     impl_->warnings.clear();
     auto changed = impl_->library->assets().restore(ref);
     impl_->lifecycle_log(ref,"restore",changed);
@@ -962,6 +980,7 @@ Result<CatalogLifecycle> Catalog::restore(const repository::AssetRef& ref) {
 Result<CatalogLifecycle> Catalog::purge(const repository::AssetRef& ref) {
   return guard<CatalogLifecycle>([&]() -> Result<CatalogLifecycle> {
     const std::lock_guard lock(impl_->mutex);
+    log::Scope scope({{},{},impl_->library->config().library_id,{}});
     impl_->warnings.clear();
     auto changed = impl_->library->assets().purge(ref);
     impl_->lifecycle_log(ref,"purge",changed);
@@ -973,6 +992,7 @@ Result<repository::ImportReadyResult> Catalog::import_ready(const repository::Im
                                                             repository::ImportReadyResult* failure) {
   return guard<repository::ImportReadyResult>([&]() -> Result<repository::ImportReadyResult> {
     const std::lock_guard lock(impl_->mutex);
+    log::Scope scope({{},{},impl_->library->config().library_id,{}});
     impl_->warnings.clear();
     repository::ImportReadyResult failed;
     auto imported = impl_->library->assets().import_ready(request, &failed);

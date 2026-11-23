@@ -401,3 +401,14 @@
 "am.jobs.label.jobs" = "Jobs"
 
 "am.jobs.label.ok" = "Applied"
+
+"am.log.options_invalid" = "The logging configuration is invalid."
+"am.log.open_failed" = "File logging is unavailable; the command will continue."
+"am.diag.random_failed" = "A private diagnostic export key could not be created."
+"am.diag.publish_failed" = "The diagnostic archive could not be published without replacement."
+"am.diag.arguments_invalid" = "The diagnostic arguments or timestamp are invalid."
+"am.diag.logs_unavailable" = "The diagnostic log directory is unavailable."
+"am.diag.export_failed" = "The diagnostic archive could not be created."
+"am.diag.output_exists" = "The diagnostic output already exists."
+"am.diag.exported" = "Diagnostic export"
+"am.diag.local_only" = "Diagnostic export accepts local paths without symbolic links or reparse points."

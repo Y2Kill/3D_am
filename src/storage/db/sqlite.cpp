@@ -1,3 +1,4 @@
+#include "am/foundation/log.hpp"
 #include "am/storage/db/sqlite.hpp"
 
 #include <sqlite3.h>
@@ -15,9 +16,13 @@ Error error(sqlite3* db, std::string id, int code = SQLITE_ERROR) {
                     : code == SQLITE_READONLY                        ? Errc::read_only
                     : code == SQLITE_BUSY || code == SQLITE_LOCKED ? Errc::locked
                                                                    : Errc::io_error;
-  return Error::make(kind, "SQLite operation failed", db ? sqlite3_errmsg(db) : "No database connection")
+  const char* database="unknown";
+  if(db)if(const char* path=sqlite3_db_filename(db,"main")){const auto text=std::string_view(path);const auto slash=text.find_last_of("/\\");const auto file=slash==std::string_view::npos?text:text.substr(slash+1);if(file=="state.sqlite")database="state";else if(file=="userdata.sqlite")database="userdata";else if(file=="index.sqlite")database="index";}
+  auto result=Error::make(kind, "SQLite operation failed", db ? sqlite3_errmsg(db) : "No database connection")
       .in("storage.db")
       .id(std::move(id));
+  if(kind==Errc::corrupt_data)AM_LOG(error,"storage.db","db.corrupt","Database corruption",{{"database",std::string(database)}},&result);
+  return result;
 }
 template <class T, class F>
 Result<T> guard(F&& f) {
