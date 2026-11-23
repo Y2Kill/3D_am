@@ -286,7 +286,7 @@ TEST(ImportScan, RawInvalidNamesArePreservedWhenTheFilesystemRetainsThem) {
       EXPECT_EQ(n["name_raw"], "626164ff2e62696e");
       EXPECT_EQ(n["raw_encoding"], "posix");
 #endif
-      EXPECT_EQ(n["path_raw"],n["name_raw"]);
+      EXPECT_EQ(n["path_raw"], n["name_raw"]);
     }
   EXPECT_TRUE(raw);
 }
@@ -485,6 +485,44 @@ TEST(ImportScan, ReadyAssetsAreSeparatedEvenWithSingleAndInvalidAssetsAsk) {
   ASSERT_EQ(p["candidates"].size(), 2u);
   for (const auto& c : p["candidates"]) EXPECT_EQ(c["kind"], "ready_asset");
 }
+TEST(ImportScan, ReadyAssetExclusionConflictsAskAndKeepTheRule) {
+  RecordProperty("req", "SC-14|SC-3|SC-2|ADR-0011");
+  for (const auto* fixture : {"pos-minimal", "neg-v2-dimension"}) {
+    for (const auto* filename : {"desktop.ini", ".DS_Store"}) {
+      const auto root = fresh();
+      fs::copy_file(fs::path(AM_GOLDEN_FIXTURES) / fixture / "asset.zip", root / filename);
+      write(root / "part.bin", "payload");
+      for (bool single : {false, true}) {
+        auto r = request({root});
+        r.single_candidate = single;
+        auto p = run(r);
+        ASSERT_EQ(p["candidates"].size(), 2u);
+        unsigned ready = 0, remainder = 0;
+        for (const auto& c : p["candidates"]) {
+          if (c["kind"] == "ready_asset") {
+            ++ready;
+            EXPECT_EQ(c["action"], "ask");
+            EXPECT_TRUE(reason(c, "ready_asset_exclusion_conflict"));
+            EXPECT_TRUE(
+                reason(c, std::string_view(fixture) == "pos-minimal" ? "ready_asset_manifest" : "ready_asset_invalid"));
+            ASSERT_EQ(c["entries"].size(), 1u);
+            EXPECT_EQ(c["entries"][0]["decision"], "ask");
+            EXPECT_EQ(c["entries"][0]["rule_id"],
+                      std::string_view(filename) == "desktop.ini" ? "windows.desktop_ini" : "macos.ds_store");
+            EXPECT_EQ(c["entries"][0]["confidence"],
+                      std::string_view(filename) == "desktop.ini" ? "certain" : "probable");
+          } else {
+            ++remainder;
+            EXPECT_TRUE(reason(c, "ready_asset_separated"));
+            EXPECT_EQ(c["action"], "import");
+          }
+        }
+        EXPECT_EQ(ready, 1u);
+        EXPECT_EQ(remainder, 1u);
+      }
+    }
+  }
+}
 TEST(ImportScan, ProfilesAreEmbeddedStrictAndKeepTheirOriginalByteHash) {
   RecordProperty("req", "SC-3");
   const auto root = fresh();
@@ -577,6 +615,48 @@ TEST(ImportScan, ReadOnlyMatchingUsesNamesHashesAndNeverTouchesLibraryAssets) {
   EXPECT_EQ(incomplete["candidates"][0]["action"], "ask");
   r.hash_inputs = false;
   EXPECT_FALSE(imp::scan(r));
+}
+TEST(ImportScan, ExactInputMatchDoesNotOverrideReadyAssetExclusionConflict) {
+  RecordProperty("req", "SC-14|SC-15|ADR-0011");
+  const auto work = fresh(), source = work / "source", library = work / "library";
+  const auto payload = bytes(fs::path(AM_GOLDEN_FIXTURES) / "pos-minimal" / "asset.zip");
+  write(source / "desktop.ini", payload);
+  take(am::library::Library::init(library));
+  {
+    auto catalog = take(am::catalog::Catalog::open(library, capabilities()));
+    am::repository::CreateRequest create;
+    am::repository::AddFiles add;
+    add.input = {{"id", am::Uuid::v4().to_string()},
+                 {"imported_at", "2026-11-23T00:00:00.000Z"},
+                 {"mode", "strict"},
+                 {"completeness", "complete"},
+                 {"objects", am::repository::Json::array({{{"id", am::Uuid::v4().to_string()},
+                                                           {"kind", "file"},
+                                                           {"name", "desktop.ini"},
+                                                           {"size_bytes", std::to_string(payload.size())},
+                                                           {"sha256", hash(payload)}}})},
+                 {"entries", am::repository::Json::array()}};
+    am::repository::FileInput file;
+    file.path = "asset.bin";
+    file.source = source / "desktop.ini";
+    file.file_id = am::Uuid::v4().to_string();
+    add.files.push_back(file);
+    create.files.push_back(add);
+    take(catalog.create(create));
+  }
+  auto r = request({source});
+  r.library = library;
+  r.hash_inputs = r.skip_identical = true;
+  const auto p = run(r);
+  ASSERT_EQ(p["candidates"].size(), 1u);
+  const auto& c = p["candidates"][0];
+  EXPECT_EQ(c["kind"], "ready_asset");
+  EXPECT_EQ(c["action"], "ask");
+  EXPECT_TRUE(reason(c, "ready_asset_exclusion_conflict"));
+  EXPECT_EQ(c["entries"][0]["decision"], "ask");
+  bool exact = false;
+  for (const auto& match : c["matches"]) exact = exact || match["kind"] == "sha256_input";
+  EXPECT_TRUE(exact);
 }
 TEST(ImportScan, LibraryOverlapIsRejectedInBothDirectionsBeforeTraversal) {
   RecordProperty("req", "SC-3|SC-15|K-1");

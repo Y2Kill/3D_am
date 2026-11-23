@@ -445,3 +445,4 @@
 "am.import.reason.ready_asset_manifest" = "An existing asset was recognized."
 "am.import.reason.ready_asset_invalid" = "An existing asset requires review after validation failed."
 "am.import.reason.ready_asset_separated" = "Existing assets were separated from the remaining inputs."
+"am.import.reason.ready_asset_exclusion_conflict" = "An existing asset conflicts with an exclusion rule and requires review."

@@ -312,7 +312,8 @@
                 "volume_set_kept_together",
                 "ready_asset_manifest",
                 "ready_asset_invalid",
-                "ready_asset_separated"
+                "ready_asset_separated",
+                "ready_asset_exclusion_conflict"
               ]
             }
           },

@@ -235,7 +235,7 @@ struct Scanner {
       if (input.bad() || total != size) throw error("am.import.node_unavailable", {}, Errc::io_error);
       n.value["sha256"] = hex(take(hash_state.finish()));
     }
-    if (n.kind == FileKind::zip && n.rule.confidence != Confidence::certain) {
+    if (n.kind == FileKind::zip) {
       io(n.actual, ScanIo::zip_probe);
       if (request.hooks.on_open) request.hooks.on_open(n.actual, false);
       auto source = take(asset_zip::file_source(n.actual, true));
@@ -589,6 +589,10 @@ std::vector<Candidate> Scanner::candidates() {
                              : n.rule.confidence == Confidence::certain                   ? "exclude"
                              : n.rule.confidence == Confidence::probable                  ? "ask"
                                                                                           : "include";
+      if (n.ready && n.rule.confidence != Confidence::none) {
+        decision = "ask";
+        reason(c.value, "ready_asset_exclusion_conflict");
+      }
       J entry = {{"node", id}, {"decision", decision}};
       if (n.value["kind"] == "symlink") entry["explanation_id"] = "am.import.link_not_followed";
       if (n.rule.confidence != Confidence::none) {
@@ -789,7 +793,10 @@ void Scanner::matching(std::vector<Candidate>& candidates) {
             all = all && exact.contains(id);
           }
         }
-      if (all && any) c.value["action"] = "skip";
+      const auto& reasons = c.value["reasons"];
+      const bool exclusion_conflict =
+          std::find(reasons.begin(), reasons.end(), "ready_asset_exclusion_conflict") != reasons.end();
+      if (all && any && !exclusion_conflict) c.value["action"] = "skip";
     }
   }
 }
