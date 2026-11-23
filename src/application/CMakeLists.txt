@@ -14,7 +14,15 @@ if(AM_WITH_CONTAINER)
   string(REPLACE "\n" "\n)AMMSG\",\nR\"AMMSG(" AM_MESSAGE_PARTS "${AM_MESSAGE_TEXT}")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/messages_resource.hpp"
     CONTENT "#pragma once\ninline constexpr const char* message_parts[] = {R\"AMMSG(${AM_MESSAGE_PARTS})AMMSG\"};\n")
-  am_add_module(application SOURCES common/asset_service.cpp common/library_service.cpp common/development.cpp common/messages.cpp common/logging.cpp common/diagnostics.cpp
+  foreach(AM_PROFILE_ID default telegram)
+    set(AM_PROFILE_PATH "${PROJECT_SOURCE_DIR}/profiles/${AM_PROFILE_ID}.toml")
+    file(READ "${AM_PROFILE_PATH}" AM_PROFILE_HEX HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," AM_PROFILE_BYTES "${AM_PROFILE_HEX}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${AM_PROFILE_PATH}")
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/profile_${AM_PROFILE_ID}.hpp"
+      CONTENT "#pragma once\ninline constexpr unsigned char profile_${AM_PROFILE_ID}[] = {${AM_PROFILE_BYTES}};\n")
+  endforeach()
+  am_add_module(application SOURCES common/asset_service.cpp common/library_service.cpp common/development.cpp common/messages.cpp common/logging.cpp common/diagnostics.cpp common/import_service.cpp
     DEPENDS ${AM_APP_DEPS})
   set_property(SOURCE common/messages.cpp APPEND PROPERTY OBJECT_DEPENDS
     "${AM_MESSAGES};${CMAKE_CURRENT_BINARY_DIR}/generated/messages_resource.hpp")

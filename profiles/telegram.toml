@@ -27,6 +27,7 @@ zip_split = true
 copy_suffix = true                        # "X (2).rar": Telegram/браузеры переименовывают тома
 copy_suffix_extensions = ["rar", "zip", "7z"]
 [limits]                                  # ТЗ §13.3.5, ADR-0029: превышение = статус incomplete:{limit}
+# Resource limit values are configurable hypotheses, not normative thresholds.
 max_entries = 100000
 max_unpacked_bytes = 214748364800        # 200 ГиБ
 max_ratio = 200                           # коэффициент распаковки (zip-бомбы)

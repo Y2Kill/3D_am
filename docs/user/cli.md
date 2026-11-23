@@ -7,6 +7,24 @@ Run `am --help` or `am asset <command> --help` for command help.
 
 ## Commands
 
+### Scan source inputs
+
+```text
+am import scan <path>... [--profile <id|file.toml>] [--library <dir>] [--hash] [--skip-identical] [--single] --plan <out.json> [--json]
+```
+
+Scan reads files and directories and proposes an editable `am-import-plan` v1 JSON file. It does not modify sources or create assets. Archives remain opaque inputs; existing asset ZIPs are validated and proposed separately. A 3MF project remains a file. Applying the plan is a later command.
+
+The built-in `default` profile proposes one candidate per selected root. `telegram` treats the first directory level as unconfirmed source context and proposes model directories at the next level. Custom TOML profiles can change these version 1 suggestions. `--single` combines remaining inputs; recognized ready assets, including invalid ones requiring review, always stay separate. You can explicitly move a ready ZIP into a `new_asset` candidate as an ordinary file when editing the plan.
+
+`--library` reads the library index without opening its asset ZIPs. Name/size matches are weak hints. `--hash` computes input SHA-256; `--skip-identical` requires it and skips only candidates whose every input object matches a stored input hash. Other matches require review. Library and source paths must not overlap in either direction. SQLite may maintain its normal library WAL/SHM files; database, asset and configuration contents are unchanged.
+
+Put `--plan` outside every source root. The output must be new: publication never overwrites an existing file. With `--json`, stdout contains one summary object with node/candidate counts, kinds/actions, exclusions, questions, matches and completeness; status and errors go to stderr. Exit codes: 0 for a completed scan (also when explicitly marked incomplete), 2 for usage/profile/overlap errors, 3 for interruption, 4 for unavailable sources/library/output. Ctrl+C stops at a safe point and leaves no plan or temporary output.
+
+Nested links are recorded and skipped; an explicitly selected root link is resolved. Unknown types, empty files and possible duplicates are retained unless a profile rule says otherwise. Exclusions and boundaries are suggestions. Profiles do not confirm inferred provenance or authorize partial import. Profile sections for nested archives, previews and groups are validated but deferred. Large-tree limits are configurable hypotheses, not performance guarantees.
+
+### Asset and library commands
+
 ```text
 am asset create <files...> -o <out.zip> [--title <text>] [--json] [--verbose]
 am asset inspect <zip> [--json] [--verbose]

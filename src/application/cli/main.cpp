@@ -1,19 +1,21 @@
-#include "am/application/logging.hpp"
-#include "am/foundation/version.hpp"
-#include "am/application/asset_service.hpp"
-#include "am/application/library_service.hpp"
-#include "am/application/job_service.hpp"
+#include <CLI/CLI.hpp>
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <filesystem>
+#include <iostream>
 #include <map>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+
+#include "am/application/asset_service.hpp"
 #include "am/application/development.hpp"
-#include <CLI/CLI.hpp>
-#include <filesystem>
-#include <iostream>
+#include "am/application/import_service.hpp"
+#include "am/application/job_service.hpp"
+#include "am/application/library_service.hpp"
+#include "am/application/logging.hpp"
+#include "am/foundation/version.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -224,7 +226,9 @@ void print_diagnostics(const app::AssetOutcome& result, bool verbose) {
 }
 void print_text(const std::string& command, const app::AssetOutcome& result, bool verbose) {
   const auto& j = result.value;
-  if (command.starts_with("library ")) {
+  if (command == "import scan") {
+    std::cout << app::message_text("am.import.scan_summary") << ": " << j.dump() << '\n';
+  } else if (command.starts_with("library ")) {
     for (const auto& [key, value] : j.items()) {
       std::cout << app::message_text(std::string("am.app.label.") + key) << ": ";
       if (value.is_string()) std::cout << value.get<std::string>();
@@ -466,6 +470,48 @@ int main(int argc, char** argv) {
   media->add_option("path", media_path)->required();
   presentation(media);
   media->callback([&] { render_jobs("media", app::inspect_media(path(media_path))); });
+  auto* import_command = cli.add_subcommand("import", "Scan sources and propose an editable import plan");
+  import_command->require_subcommand(1);
+  auto* import_scan = import_command->add_subcommand("scan", "Read sources without modifying them or creating assets");
+  std::vector<std::string> import_sources;
+  std::string import_profile = "default", import_library, import_plan;
+  bool import_hash = false, import_skip = false, import_single = false;
+  import_scan->add_option("paths", import_sources)->required()->expected(-1);
+  import_scan->add_option("--profile", import_profile, "Built-in profile ID or TOML file");
+  auto* scan_library = import_scan->add_option("--library", import_library, "Match inputs against a read-only library");
+  auto* scan_hash = import_scan->add_flag("--hash", import_hash, "Compute SHA-256 for source files");
+  import_scan->add_flag("--skip-identical", import_skip, "Skip candidates with exact matches for every input object")
+      ->needs(scan_hash);
+  import_scan->add_flag("--single", import_single, "Combine remaining inputs; ready assets stay separate");
+  import_scan->add_option("--plan", import_plan, "Publish a new import plan without replacing an existing file")
+      ->required();
+  presentation(import_scan);
+  import_scan->callback([&] {
+    JobSignals signals;
+    auto run = [&]() -> am::Result<app::AssetOutcome> {
+      auto profile = app::load_import_profile(import_profile);
+      if (!profile) return profile.error();
+      am::import::ScanRequest request;
+      request.profile = std::move(*profile);
+      for (const auto& source : import_sources) request.roots.push_back(path(source));
+      request.hash_inputs = import_hash;
+      request.skip_identical = import_skip;
+      request.single_candidate = import_single;
+      if (scan_library->count()) request.library = path(import_library);
+      request.cancelled = [&] { return signals.token().stop_requested(); };
+      std::cerr << app::message_text("am.import.scanning") << '\n';
+      return app::scan_import(std::move(request), path(import_plan));
+    };
+    auto result = run();
+    if (!result) {
+      const auto& error = result.error();
+      code = error.code == am::Errc::cancelled ? 3 : error.code == am::Errc::invalid_argument ? 2 : 4;
+      if (json) std::cout << Json{{"command", "import scan"}, {"error", error_value(error)}}.dump() << '\n';
+      print_error(error, verbose);
+      return;
+    }
+    render("import scan", std::move(result));
+  });
   auto* diag=cli.add_subcommand("diag","Export local diagnostics without personal data");diag->require_subcommand(1);
   auto* export_command=diag->add_subcommand("export","Export redacted diagnostics as a ZIP");
   std::string diagnostic_output,diagnostic_logs,diagnostic_library,diagnostic_since;

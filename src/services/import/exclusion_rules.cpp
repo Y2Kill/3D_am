@@ -90,6 +90,16 @@ RuleMatch ExclusionEngine::evaluate(const EntryFacts& entry) const {
   return best;
 }
 
+RuleMatch ExclusionEngine::evaluate(const EntryFacts& entry, std::span<const std::string> enabled_rules) const {
+  RuleMatch best;
+  for (const auto& rule : rules_) {
+    if (std::find(enabled_rules.begin(), enabled_rules.end(), rule.id) == enabled_rules.end()) continue;
+    auto match = rule.fn(entry);
+    if (rank(match.confidence) > rank(best.confidence)) best = std::move(match);
+  }
+  return best;
+}
+
 std::vector<std::string> ExclusionEngine::rule_ids() const {
   std::vector<std::string> ids;
   for (const auto& r : rules_) ids.push_back(r.id);

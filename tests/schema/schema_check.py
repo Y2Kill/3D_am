@@ -548,4 +548,23 @@ for name, positive, fixture_dir in (("log-record", log_example, ".cache/log-reco
         report(name + ":" + path.stem, "NFR-14.4.9", "actual serialized record", True,
                current.is_valid(json.loads(path.read_text("utf8"))))
     print(f"{name} schema: {len(cases)} contract cases and {len(actual)} actual records checked")
+import_plan_schema = json.loads((Path(args.root) / "schemas/import-plan.v1.schema.json").read_text("utf8"))
+jsonschema.Draft202012Validator.check_schema(import_plan_schema)
+import_plan_validator = jsonschema.Draft202012Validator(import_plan_schema)
+import_example = {"format": "am-import-plan", "version": 1, "created_at": "2026-11-23T00:00:00.000Z",
+                  "generator": {"name": "am", "version": "test"},
+                  "profile": {"id": "default", "version": 1, "sha256": "0" * 64, "not_applied": []},
+                  "mode": "strict", "roots": [{"path": "/synthetic"}],
+                  "scan": {"completeness": "complete", "limits_hit": [], "counts": {"nodes": 0, "files": 0, "unavailable": 0}},
+                  "nodes": [], "candidates": []}
+for label, value, expected in (("positive", import_example, True),
+                               ("version", dict(import_example, version=2), False),
+                               ("extra", dict(import_example, extra=True), False),
+                               ("missing", {key: value for key, value in import_example.items() if key != "roots"}, False)):
+    report("import-plan:" + label, "SC-1", "import plan schema", expected, import_plan_validator.is_valid(value))
+actual_plans = sorted((Path(args.root) / ".cache/import-plan-cases").glob("*.json"))
+for path in actual_plans:
+    report("import-plan:" + path.stem, "SC-1", "actual scan plan", True,
+           import_plan_validator.is_valid(json.loads(path.read_text("utf8"))))
+print(f"import plan schema: 4 contract cases and {len(actual_plans)} actual plans checked")
 sys.exit(1 if failures else 0)
