@@ -196,7 +196,7 @@
   - `am export`;
   - `am jobs list|pause|resume|cancel|retry`.
 - Тестовый корпус: синтетические fixtures по матрице 16 сценариев (в части без RAR/7z).
-- Декомпозиция (ориентир): [T-026](../tasks/T-026-job-executor.md) — исполнитель заданий, `ResourceManager`, `am jobs` (выполнено 2026-11-23); далее — журналы spdlog, `import scan`, `import run`, ZIP как вход, `export`, корпус 16 сценариев.
+- Декомпозиция (ориентир): [T-026](../tasks/T-026-job-executor.md) — исполнитель заданий, `ResourceManager`, `am jobs` (выполнено 2026-11-23); [T-027](../tasks/T-027-logging-diagnostics.md) — журналы и экспорт диагностики; далее — `import scan`, `import run`, ZIP как вход, `export`, корпус 16 сценариев.
 
 ## P0.8 — Итоговые испытания ядра (после M1, M2, M3a)
 - Сквозные фикстуры: импорт → ZIP → индекс → экспорт → перенос в чистую библиотеку.
