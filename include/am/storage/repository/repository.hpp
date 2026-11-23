@@ -6,6 +6,7 @@
 #include "am/domain/manifest/codec.hpp"
 #include "am/domain/manifest/semantics.hpp"
 #include "am/storage/commit/protocol.hpp"
+#include "am/storage/repository/media.hpp"
 
 namespace am::repository {
 using Json = nlohmann::ordered_json;

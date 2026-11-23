@@ -1,4 +1,10 @@
 #include "am/application/library_service.hpp"
+#include "am/application/job_service.hpp"
+#include "am/services/catalog/verify_job.hpp"
+#include "am/foundation/json_text.hpp"
+#include <array>
+#include <limits>
+#include <mutex>
 #include "am/storage/library/library.hpp"
 #include "am/services/catalog/indexer.hpp"
 #include "am/foundation/version.hpp"
@@ -440,5 +446,445 @@ Result<LibraryLogOutcome> library_log(const std::filesystem::path& root,const db
     return out;
   } catch(const std::bad_alloc&) { return Error::make(Errc::resource_exhausted,"Allocation failed").id("am.app.out_of_memory"); }
   catch(...) { return Error::make(Errc::internal,"Log presentation failed").id("am.app.internal"); }
+}
+}  // namespace am::application
+
+namespace am::application {
+namespace {
+namespace jc = contracts;
+using JobState = jc::JobState;
+Error job_error(std::string id, Errc code = Errc::invalid_argument) {
+  return Error::make(code, "Job service operation failed").in("application.jobs").id(std::move(id));
+}
+template <class T>
+T job_take(Result<T> result) {
+  if (!result) throw result.error();
+  return std::move(*result);
+}
+void job_take(Result<void> result) {
+  if (!result) throw result.error();
+}
+template <class T, class F>
+Result<T> job_guard(F&& function) {
+  try {
+    return function();
+  } catch (const Error& e) {
+    return e;
+  } catch (const std::bad_alloc&) {
+    return job_error("am.app.out_of_memory", Errc::resource_exhausted);
+  } catch (const std::exception& e) {
+    return Error::make(Errc::internal, "Job service failed", e.what()).id("am.app.internal");
+  } catch (...) {
+    return job_error("am.app.internal", Errc::internal);
+  }
+}
+jobs::MediaKind job_media(repository::MediaKind kind) {
+  switch (kind) {
+    case repository::MediaKind::hdd:
+      return jobs::MediaKind::hdd;
+    case repository::MediaKind::ssd:
+      return jobs::MediaKind::ssd;
+    case repository::MediaKind::network:
+      return jobs::MediaKind::network;
+    case repository::MediaKind::removable:
+      return jobs::MediaKind::removable;
+    default:
+      return jobs::MediaKind::unknown;
+  }
+}
+std::optional<std::string> job_message_id(const std::optional<std::string>& encoded) {
+  if (!encoded) return {};
+  const auto parsed = json::parse_strict(*encoded);
+  if (!parsed || parsed->nodes[0].kind != json::Kind::object) return {};
+  for (auto index : parsed->nodes[0].children)
+    if (parsed->nodes[index].edge == "message_id" && parsed->nodes[index].kind == json::Kind::string)
+      return parsed->nodes[index].decoded;
+  return {};
+}
+class ProbeJob final : public jobs::JobHandler {
+ public:
+  jobs::JobOutcome run(jobs::JobContext& context) override {
+    std::uint64_t steps = 1;
+    bool ask = false;
+    std::optional<std::string> failure;
+    try {
+      const auto params = Json::parse(context.record().params_json);
+      if (!params.is_object()) return invalid();
+      for (const auto& [key, value] : params.items()) {
+        if (key == "resource_profile") continue;
+        if (key == "steps") {
+          if (!value.is_number_unsigned() && (!value.is_number_integer() || value.get<std::int64_t>() < 0))
+            return invalid();
+          steps = value.get<std::uint64_t>();
+          if (steps > static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) return invalid();
+        } else if (key == "ask") {
+          if (!value.is_boolean()) return invalid();
+          ask = value.get<bool>();
+        } else if (key == "fail") {
+          if (!value.is_null()) {
+            if (!value.is_string() || value == "") return invalid();
+            failure = value.get<std::string>();
+          }
+        } else
+          return invalid();
+      }
+    } catch (const Json::exception&) {
+      return invalid();
+    }
+    if (context.stop().stop_requested()) return jobs::JobOutcome::interrupted();
+    if (ask && !context.answer()) return jobs::JobOutcome::ask({"probe", {"continue", "stop"}, "{}"});
+    if (context.answer() == "stop")
+      return jobs::JobOutcome::failure(
+          Error::make(Errc::cancelled, "Development probe stopped").id("am.jobs.probe_stopped"));
+    const std::array<jobs::ResourceRequest, 1> request{{{jobs::ResourceKind::cpu, ""}}};
+    auto lease = context.acquire(request);
+    if (!lease)
+      return context.stop().stop_requested() ? jobs::JobOutcome::interrupted()
+                                             : jobs::JobOutcome::failure(lease.error());
+    for (auto done = std::min(steps, context.record().progress.done.value_or(0)); done < steps; ++done) {
+      if (context.stop().stop_requested()) return jobs::JobOutcome::interrupted();
+      context.report({done + 1, steps, "steps", "probe"});
+    }
+    if (failure) return jobs::JobOutcome::failure(Error::make(Errc::internal, "Development probe failed").id(*failure));
+    return jobs::JobOutcome::success(Json{{"steps", steps}}.dump());
+  }
+
+ private:
+  static jobs::JobOutcome invalid() { return jobs::JobOutcome::failure(job_error("am.jobs.params_invalid")); }
+};
+Json progress_json(const jc::JobProgress& progress) {
+  return {{"done", progress.done ? Json(*progress.done) : Json(nullptr)},
+          {"total", progress.total ? Json(*progress.total) : Json(nullptr)},
+          {"unit", progress.unit},
+          {"stage", progress.stage}};
+}
+Json job_row(const jc::JobRecord& record, const jobs::ChildrenSummary* children = nullptr) {
+  Json row{{"job_id", record.job_id},
+           {"type", record.type},
+           {"state", jc::job_state_name(record.state)},
+           {"priority", record.priority},
+           {"position", record.position},
+           {"attempt", record.attempt},
+           {"progress", progress_json(children ? children->progress : record.progress)},
+           {"parent_id", record.parent_id ? Json(*record.parent_id) : Json(nullptr)},
+           {"created_at", record.created_at},
+           {"started_at", record.started_at ? Json(*record.started_at) : Json(nullptr)},
+           {"finished_at", record.finished_at ? Json(*record.finished_at) : Json(nullptr)}};
+  if (children) {
+    row["children"] = Json::object();
+    for (const auto& [state, count] : children->counts) row["children"][jc::job_state_name(state)] = count;
+  }
+  return row;
+}
+std::string full_job_json(const jc::JobRecord& record, Json row) {
+  std::string encoded = row.dump();
+  encoded.pop_back();
+  const std::array<std::pair<std::string_view, std::optional<std::string>>, 4> fields{
+      {{"params", record.params_json},
+       {"decision", record.decision_json},
+       {"result", record.result_json},
+       {"error", record.error_json}}};
+  for (const auto& [key, value] : fields) {
+    if (value && !json::parse_strict(*value)) throw job_error("am.jobs.json_invalid", Errc::corrupt_data);
+    encoded += "," + Json(key).dump() + ":" + value.value_or("null");
+  }
+  return encoded + "}";
+}
+JobCommandOutcome failed_open(const Error& error) {
+  JobCommandOutcome out;
+  out.status = ExitCode::operation_failed;
+  out.value["error"] = job_take(error_json(error));
+  out.diagnostics.push_back(error);
+  out.json = out.value.dump();
+  return out;
+}
+}  // namespace
+struct JobService::Impl final : jobs::JobObserver {
+  std::optional<am::catalog::Catalog> catalog;
+  JobServiceOptions options;
+  mutable std::mutex diagnostics_mutex;
+  std::vector<Error> diagnostics;
+  jobs::HandlerRegistry registry;
+  std::unique_ptr<jobs::ResourceManager> resources;
+  std::unique_ptr<jobs::Executor> executor;
+  void warn(Error warning) noexcept {
+    try {
+      const std::lock_guard lock(diagnostics_mutex);
+      diagnostics.push_back(std::move(warning));
+    } catch (...) {
+    }
+  }
+  void on_event(const jobs::JobEvent& event) noexcept override {
+    try {
+      if (event.kind == jobs::EventKind::started || event.kind == jobs::EventKind::finished) {
+        const auto& job = event.job;
+        db::LogEntry entry;
+        entry.job_id = job.job_id;
+        entry.code = event.kind == jobs::EventKind::started ? "job.started" : "job.finished";
+        entry.message = event.kind == jobs::EventKind::started ? "Job started" : "Job finished";
+        entry.level = event.kind == jobs::EventKind::started || job.state == JobState::succeeded ? "info"
+                      : job.state == JobState::failed || job.state == JobState::resource_error ||
+                              job.state == JobState::cannot_continue_safely
+                          ? "error"
+                          : "warn";
+        Json detail{{"type", job.type}, {"state", jc::job_state_name(job.state)}, {"attempt", job.attempt}};
+        if (auto message = job_message_id(job.error_json)) detail["message_id"] = *message;
+        entry.detail_json = detail.dump();
+        auto written = catalog->operation_log().append(entry);
+        if (!written)
+          warn(Error::make(Errc::io_error, "Job log write failed")
+                   .id("am.catalog.log_failed")
+                   .with_severity(Severity::warning)
+                   .caused_by(written.error()));
+      }
+      if (options.on_event) options.on_event(event);
+    } catch (...) {
+      try {
+        warn(Error::make(Errc::internal, "Job event could not be presented")
+                 .id("am.catalog.log_failed")
+                 .with_severity(Severity::warning));
+      } catch (...) {
+      }
+    }
+  }
+};
+JobService::JobService(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+JobService::JobService(JobService&&) noexcept = default;
+JobService& JobService::operator=(JobService&&) noexcept = default;
+JobService::~JobService() = default;
+Result<JobService> JobService::open(const std::filesystem::path& root, const JobServiceOptions& options,
+                                    library::OpenOptions library_options, am::catalog::IndexerHooks hooks) {
+  return job_guard<JobService>([&]() -> Result<JobService> {
+    auto p = std::make_unique<Impl>();
+    p->options = options;
+    if (library_options.application_version.empty()) library_options.application_version = kAppVersion;
+    p->catalog.emplace(job_take(am::catalog::Catalog::open(root, std::move(library_options), std::move(hooks))));
+    p->diagnostics = p->catalog->open_report().warnings;
+    auto limits = options.limits.value_or(jobs::profile_limits(options.profile, std::thread::hardware_concurrency()));
+    if (options.parallel_jobs) limits.jobs = *options.parallel_jobs;
+    job_take(jobs::validate_limits(limits));
+    p->resources = std::make_unique<jobs::ResourceManager>(limits);
+    const auto media = repository::detect_media(root);
+    p->resources->set_media(media.device_id, job_media(media.kind));
+    auto* target = p.get();
+    job_take(am::catalog::register_verify_job(p->registry, *p->catalog, media.device_id,
+                                              [target](Error warning) { target->warn(std::move(warning)); }));
+    job_take(p->registry.add("dev.probe", [](const auto&) { return std::make_unique<ProbeJob>(); }));
+    jobs::ExecutorOptions executor;
+    executor.limits = limits;
+    executor.profile = options.profile;
+    executor.report_interval = options.report_interval;
+    executor.retry_interval = options.retry_interval;
+    executor.auto_retries = options.auto_retries;
+    p->executor =
+        std::make_unique<jobs::Executor>(p->catalog->job_store(), *p->resources, p->registry, executor, p.get());
+    return JobService(std::move(p));
+  });
+}
+Result<jc::JobRecord> JobService::enqueue(const jc::JobSpec& spec) {
+  auto result = impl_->catalog->job_store().enqueue(spec);
+  if (result) impl_->executor->wake();
+  return result;
+}
+Result<jobs::RunSummary> JobService::run(std::stop_token stop) { return impl_->executor->run_until_idle(stop); }
+Result<void> JobService::control(std::string_view command, std::string_view id) {
+  if (command == "pause") return impl_->executor->pause(id);
+  if (command == "resume") return impl_->executor->resume(id);
+  if (command == "cancel") return impl_->executor->cancel(id);
+  if (command == "retry") return impl_->executor->retry(id);
+  return job_error("am.jobs.transition_invalid");
+}
+Result<void> JobService::answer(std::string_view id, std::string_view option) {
+  return impl_->executor->answer(id, option);
+}
+Result<void> JobService::move(std::string_view id, std::optional<std::string_view> before) {
+  auto result = impl_->catalog->job_store().move_before(id, before);
+  if (result) impl_->executor->wake();
+  return result;
+}
+jc::IJobStore& JobService::store() noexcept { return impl_->catalog->job_store(); }
+am::catalog::Catalog& JobService::catalog() noexcept { return *impl_->catalog; }
+std::vector<Error> JobService::diagnostics() const {
+  const std::lock_guard lock(impl_->diagnostics_mutex);
+  return impl_->diagnostics;
+}
+Result<JobCommandOutcome> list_jobs(const std::filesystem::path& root, const jc::JobFilter& selected, bool all) {
+  return job_guard<JobCommandOutcome>([&]() -> Result<JobCommandOutcome> {
+    library::OpenOptions options;
+    options.mode = library::Mode::read_only;
+    auto service = JobService::open(root, {}, options);
+    if (!service) return failed_open(service.error());
+    auto filter = selected;
+    if (!filter.parent_id && !all) filter.top_level_only = true;
+    auto records = job_take(service->store().list(filter));
+    const auto every = job_take(service->store().list());
+    std::map<std::string, std::vector<jc::JobRecord>> children;
+    for (const auto& record : every)
+      if (record.parent_id) children[*record.parent_id].push_back(record);
+    JobCommandOutcome out;
+    out.value["jobs"] = Json::array();
+    out.diagnostics = service->diagnostics();
+    for (auto& record : records) {
+      if (!all && selected.states.empty() && jc::job_terminal(record.state)) continue;
+      const auto at = children.find(record.job_id);
+      if (at != children.end()) {
+        const auto summary = jobs::summarize_children(at->second);
+        out.value["jobs"].push_back(job_row(record, &summary));
+      } else
+        out.value["jobs"].push_back(job_row(record));
+      out.records.push_back(std::move(record));
+    }
+    out.json = out.value.dump();
+    return out;
+  });
+}
+Result<JobCommandOutcome> show_job(const std::filesystem::path& root, std::string_view id) {
+  return job_guard<JobCommandOutcome>([&]() -> Result<JobCommandOutcome> {
+    library::OpenOptions options;
+    options.mode = library::Mode::read_only;
+    auto service = JobService::open(root, {}, options);
+    if (!service) return failed_open(service.error());
+    const auto record = job_take(service->store().get(id));
+    if (!record) return job_error("am.jobs.not_found", Errc::not_found);
+    JobCommandOutcome out;
+    out.value = job_row(*record);
+    out.json = full_job_json(*record, out.value);
+    out.records.push_back(*record);
+    out.diagnostics = service->diagnostics();
+    return out;
+  });
+}
+Result<JobCommandOutcome> run_jobs(const std::filesystem::path& root, const JobServiceOptions& options,
+                                   std::stop_token stop) {
+  return job_guard<JobCommandOutcome>([&]() -> Result<JobCommandOutcome> {
+    auto service = JobService::open(root, options);
+    if (!service) return failed_open(service.error());
+    const auto result = job_take(service->run(stop));
+    JobCommandOutcome out;
+    out.records = result.jobs;
+    out.diagnostics = service->diagnostics();
+    out.status = result.failed                            ? ExitCode::check_failed
+                 : result.attention || result.interrupted ? ExitCode::partial
+                                                          : ExitCode::success;
+    out.value = {{"processed", result.processed}, {"succeeded", result.succeeded},     {"failed", result.failed},
+                 {"attention", result.attention}, {"interrupted", result.interrupted}, {"jobs", Json::array()}};
+    for (const auto& record : result.jobs) {
+      Json row{{"job_id", record.job_id}, {"type", record.type}, {"state", jc::job_state_name(record.state)}};
+      if (auto message = job_message_id(record.error_json)) row["message_id"] = *message;
+      out.value["jobs"].push_back(std::move(row));
+    }
+    out.json = out.value.dump();
+    return out;
+  });
+}
+Result<JobCommandOutcome> control_jobs(const std::filesystem::path& root, std::string_view command,
+                                       const std::vector<std::string>& ids) {
+  return job_guard<JobCommandOutcome>([&]() -> Result<JobCommandOutcome> {
+    auto service = JobService::open(root);
+    if (!service) return failed_open(service.error());
+    JobCommandOutcome out;
+    out.value["results"] = Json::array();
+    for (const auto& id : ids) {
+      auto applied = service->control(command, id);
+      Json row{{"job_id", id}, {"ok", applied.ok()}};
+      if (applied) {
+        const auto record = job_take(service->store().get(id));
+        if (record) row["state"] = jc::job_state_name(record->state);
+      } else {
+        row["message_id"] = applied.error().message_id;
+        out.status = ExitCode::operation_failed;
+        out.diagnostics.push_back(applied.error());
+      }
+      out.value["results"].push_back(std::move(row));
+    }
+    auto warnings = service->diagnostics();
+    out.diagnostics.insert(out.diagnostics.end(), warnings.begin(), warnings.end());
+    out.json = out.value.dump();
+    return out;
+  });
+}
+Result<JobCommandOutcome> answer_job(const std::filesystem::path& root, std::string_view id, std::string_view option) {
+  return job_guard<JobCommandOutcome>([&]() -> Result<JobCommandOutcome> {
+    auto service = JobService::open(root);
+    if (!service) return failed_open(service.error());
+    job_take(service->answer(id, option));
+    const auto record = job_take(service->store().get(id));
+    JobCommandOutcome out;
+    out.value = job_row(*record);
+    out.json = out.value.dump();
+    out.diagnostics = service->diagnostics();
+    return out;
+  });
+}
+Result<JobCommandOutcome> move_job(const std::filesystem::path& root, std::string_view id,
+                                   std::optional<std::string_view> before) {
+  return job_guard<JobCommandOutcome>([&]() -> Result<JobCommandOutcome> {
+    auto service = JobService::open(root);
+    if (!service) return failed_open(service.error());
+    job_take(service->move(id, before));
+    const auto record = job_take(service->store().get(id));
+    JobCommandOutcome out;
+    out.value = job_row(*record);
+    out.json = out.value.dump();
+    out.diagnostics = service->diagnostics();
+    return out;
+  });
+}
+Result<JobCommandOutcome> enqueue_verify(const std::filesystem::path& root, bool full, bool trash) {
+  return job_guard<JobCommandOutcome>([&]() -> Result<JobCommandOutcome> {
+    auto service = JobService::open(root);
+    if (!service) return failed_open(service.error());
+    jc::JobSpec spec;
+    spec.type = "library.verify";
+    spec.params_json = Json{{"level", full ? "full" : "quick"}, {"include_trash", trash}}.dump();
+    const auto record = job_take(service->enqueue(spec));
+    JobCommandOutcome out;
+    out.value = {{"job_id", record.job_id}};
+    out.json = out.value.dump();
+    out.diagnostics = service->diagnostics();
+    return out;
+  });
+}
+Result<JobCommandOutcome> enqueue_probe(const std::filesystem::path& root, std::uint64_t steps, bool ask,
+                                        const std::optional<std::string>& failure) {
+  return job_guard<JobCommandOutcome>([&]() -> Result<JobCommandOutcome> {
+    auto service = JobService::open(root);
+    if (!service) return failed_open(service.error());
+    jc::JobSpec spec;
+    spec.type = "dev.probe";
+    spec.params_json = Json{{"steps", steps}, {"ask", ask}, {"fail", failure ? Json(*failure) : Json(nullptr)}}.dump();
+    const auto record = job_take(service->enqueue(spec));
+    JobCommandOutcome out;
+    out.value = {{"job_id", record.job_id}};
+    out.json = out.value.dump();
+    out.diagnostics = service->diagnostics();
+    return out;
+  });
+}
+Result<JobCommandOutcome> inspect_media(const std::filesystem::path& root) {
+  return job_guard<JobCommandOutcome>([&]() -> Result<JobCommandOutcome> {
+    const auto media = repository::detect_media(root);
+    const char* kind = "unknown";
+    switch (media.kind) {
+      case repository::MediaKind::hdd:
+        kind = "hdd";
+        break;
+      case repository::MediaKind::ssd:
+        kind = "ssd";
+        break;
+      case repository::MediaKind::network:
+        kind = "network";
+        break;
+      case repository::MediaKind::removable:
+        kind = "removable";
+        break;
+      default:
+        break;
+    }
+    JobCommandOutcome out;
+    out.value = {{"device_id", media.device_id}, {"kind", kind}};
+    out.json = out.value.dump();
+    return out;
+  });
 }
 }  // namespace am::application

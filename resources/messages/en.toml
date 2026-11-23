@@ -303,3 +303,101 @@
 "library.recovery" = "Library recovery"
 
 "library.verify" = "Library verification"
+
+"am.jobs.limits_invalid" = "Every job and resource limit must be positive."
+
+"am.jobs.request_invalid" = "The resource request is invalid."
+
+"am.jobs.lease_nested" = "Release the current lease before acquiring the same resource kind."
+
+"am.jobs.resource_cancelled" = "Resource waiting was cancelled."
+
+"am.jobs.out_of_memory" = "The job executor could not allocate memory."
+
+"am.jobs.resource_error" = "The resource manager could not complete the operation."
+
+"am.jobs.type_duplicate" = "This job type is already registered."
+
+"am.jobs.type_unknown" = "No handler is registered for this job type."
+
+"am.jobs.params_invalid" = "The job parameters are invalid."
+
+"am.jobs.handler_exception" = "The job handler raised an exception."
+
+"am.jobs.executor_error" = "The job executor could not complete the operation."
+
+"am.jobs.worker_unavailable" = "A job worker could not be started."
+
+"am.jobs.answer_invalid" = "Choose one of the options offered by the pending decision."
+
+"am.jobs.not_found" = "The requested job was not found."
+
+"am.jobs.probe_stopped" = "The development probe was stopped."
+
+"am.jobs.destination_invalid" = "Choose exactly one of --before or --last."
+
+"am.jobs.waiting_safe_point" = "waiting for running jobs to reach a safe point"
+
+"am.jobs.event.started" = "Job started"
+
+"am.jobs.event.progress" = "Job progress"
+
+"am.jobs.event.finished" = "Job finished"
+
+"am.jobs.event.state_changed" = "Job state changed"
+
+"job.started" = "Job started"
+
+"job.finished" = "Job finished"
+
+"am.jobs.label.job_id" = "Job ID"
+
+"am.jobs.label.type" = "Type"
+
+"am.jobs.label.state" = "State"
+
+"am.jobs.label.priority" = "Priority"
+
+"am.jobs.label.position" = "Position"
+
+"am.jobs.label.attempt" = "Attempt"
+
+"am.jobs.label.progress" = "Progress"
+
+"am.jobs.label.parent_id" = "Parent ID"
+
+"am.jobs.label.children" = "Children"
+
+"am.jobs.label.created_at" = "Created at"
+
+"am.jobs.label.started_at" = "Started at"
+
+"am.jobs.label.finished_at" = "Finished at"
+
+"am.jobs.label.params" = "Parameters"
+
+"am.jobs.label.decision" = "Decision"
+
+"am.jobs.label.result" = "Result"
+
+"am.jobs.label.error" = "Error"
+
+"am.jobs.label.processed" = "Processed"
+
+"am.jobs.label.succeeded" = "Succeeded"
+
+"am.jobs.label.failed" = "Failed"
+
+"am.jobs.label.attention" = "Attention"
+
+"am.jobs.label.interrupted" = "Interrupted"
+
+"am.jobs.label.device_id" = "Device ID"
+
+"am.jobs.label.kind" = "Kind"
+
+"am.jobs.label.results" = "Results"
+
+"am.jobs.label.jobs" = "Jobs"
+
+"am.jobs.label.ok" = "Applied"

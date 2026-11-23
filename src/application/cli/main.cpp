@@ -1,16 +1,195 @@
 #include "am/application/asset_service.hpp"
 #include "am/application/library_service.hpp"
+#include "am/application/job_service.hpp"
+#include <array>
+#include <atomic>
+#include <cerrno>
+#include <map>
+#include <mutex>
+#include <stdexcept>
+#include <thread>
 #include "am/application/development.hpp"
 #include <CLI/CLI.hpp>
 #include <filesystem>
 #include <iostream>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <csignal>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 namespace {
 namespace app = am::application;
 using app::Json;
 std::filesystem::path path(const std::string& s) { return std::filesystem::path(std::u8string(s.begin(), s.end())); }
+std::mutex job_console_mutex;
+#ifdef _WIN32
+std::mutex job_signal_mutex;
+HANDLE job_signal_event = nullptr;
+BOOL WINAPI jobs_console_handler(DWORD signal) {
+  if (signal != CTRL_C_EVENT && signal != CTRL_BREAK_EVENT) return FALSE;
+  try {
+    const std::lock_guard lock(job_signal_mutex);
+    return job_signal_event && SetEvent(job_signal_event) ? TRUE : FALSE;
+  } catch (...) {
+    return FALSE;
+  }
+}
+#else
+volatile std::sig_atomic_t job_signal_fd = -1;
+void jobs_signal_handler(int) {
+  const int saved = errno;
+  const int fd = job_signal_fd;
+  if (fd >= 0) {
+    const char value = 1;
+    (void)::write(fd, &value, 1);
+  }
+  errno = saved;
+}
+#endif
+class JobSignals {
+ public:
+  JobSignals() {
+#ifdef _WIN32
+    event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!event_) throw std::runtime_error("Signal event could not be created");
+    {
+      const std::lock_guard lock(job_signal_mutex);
+      job_signal_event = event_;
+    }
+    if (!SetConsoleCtrlHandler(jobs_console_handler, TRUE)) {
+      close();
+      throw std::runtime_error("Console signal handler could not be installed");
+    }
+    registered_ = true;
+#else
+    if (::pipe(pipe_) != 0) throw std::runtime_error("Signal pipe could not be created");
+    const int flags = fcntl(pipe_[1], F_GETFL);
+    if (flags < 0 || fcntl(pipe_[1], F_SETFL, flags | O_NONBLOCK) < 0) {
+      close();
+      throw std::runtime_error("Signal pipe could not be configured");
+    }
+    job_signal_fd = pipe_[1];
+    struct sigaction action{};
+    action.sa_handler = jobs_signal_handler;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGINT, &action, &previous_int_) != 0) {
+      close();
+      throw std::runtime_error("Interrupt handler could not be installed");
+    }
+    int_registered_ = true;
+    if (sigaction(SIGTERM, &action, &previous_term_) != 0) {
+      close();
+      throw std::runtime_error("Termination handler could not be installed");
+    }
+    term_registered_ = true;
+#endif
+    try {
+      listener_ = std::thread([this] {
+#ifdef _WIN32
+        if (WaitForSingleObject(event_, INFINITE) != WAIT_OBJECT_0) return;
+#else
+        char value = 0;
+        ssize_t count = 0;
+        do {
+          count = ::read(pipe_[0], &value, 1);
+        } while (count < 0 && errno == EINTR);
+        if (count != 1 || value == 0) return;
+#endif
+        if (disposing_.load()) return;
+        source_.request_stop();
+        const std::lock_guard lock(job_console_mutex);
+        std::cerr << app::message_text("am.jobs.waiting_safe_point") << '\n';
+      });
+    } catch (...) {
+      close();
+      throw;
+    }
+  }
+  ~JobSignals() { close(); }
+  JobSignals(const JobSignals&) = delete;
+  JobSignals& operator=(const JobSignals&) = delete;
+  std::stop_token token() const noexcept { return source_.get_token(); }
+
+ private:
+  std::stop_source source_;
+  std::thread listener_;
+  std::atomic<bool> disposing_{false};
+#ifdef _WIN32
+  HANDLE event_ = nullptr;
+  bool registered_ = false;
+#else
+  int pipe_[2]{-1, -1};
+  struct sigaction previous_int_{}, previous_term_{};
+  bool int_registered_ = false, term_registered_ = false;
+#endif
+  void close() noexcept {
+    disposing_ = true;
+#ifdef _WIN32
+    if (registered_) {
+      SetConsoleCtrlHandler(jobs_console_handler, FALSE);
+      registered_ = false;
+    }
+    {
+      const std::lock_guard lock(job_signal_mutex);
+      job_signal_event = nullptr;
+    }
+    if (event_) SetEvent(event_);
+#else
+    if (int_registered_) {
+      sigaction(SIGINT, &previous_int_, nullptr);
+      int_registered_ = false;
+    }
+    if (term_registered_) {
+      sigaction(SIGTERM, &previous_term_, nullptr);
+      term_registered_ = false;
+    }
+    job_signal_fd = -1;
+    if (pipe_[1] >= 0) {
+      const char value = 0;
+      (void)::write(pipe_[1], &value, 1);
+    }
+#endif
+    if (listener_.joinable()) listener_.join();
+#ifdef _WIN32
+    if (event_) {
+      CloseHandle(event_);
+      event_ = nullptr;
+    }
+#else
+    for (auto& fd : pipe_)
+      if (fd >= 0) {
+        ::close(fd);
+        fd = -1;
+      }
+#endif
+  }
+};
+void print_job_event(const am::jobs::JobEvent& event) {
+  const char* key = event.kind == am::jobs::EventKind::started    ? "am.jobs.event.started"
+                    : event.kind == am::jobs::EventKind::progress ? "am.jobs.event.progress"
+                    : event.kind == am::jobs::EventKind::finished ? "am.jobs.event.finished"
+                                                                  : "am.jobs.event.state_changed";
+  const std::lock_guard lock(job_console_mutex);
+  std::cerr << app::message_text(key) << ": " << event.job.job_id << ' ' << event.job.type << ' '
+            << am::contracts::job_state_name(event.job.state);
+  if (event.kind == am::jobs::EventKind::progress) {
+    std::cerr << ' ';
+    if (event.job.progress.done)
+      std::cerr << *event.job.progress.done;
+    else
+      std::cerr << '?';
+    std::cerr << '/';
+    if (event.job.progress.total)
+      std::cerr << *event.job.progress.total;
+    else
+      std::cerr << '?';
+    std::cerr << ' ' << event.job.progress.unit;
+    if (event.rate) std::cerr << " (" << *event.rate << "/s)";
+  }
+  std::cerr << '\n';
+}
 void print_error(const am::Error& e, bool verbose) {
   std::cerr << app::message_text(e) << '\n';
   if (verbose) std::cerr << am::to_log_string(e) << '\n';
@@ -118,6 +297,136 @@ int main(int argc, char** argv) {
     cmd->add_flag("--json", json, "Print one UTF-8 JSON object");
     cmd->add_flag("--verbose", verbose, "Include technical details and causes");
   };
+  auto render_jobs = [&](const std::string& command, am::Result<app::JobCommandOutcome> result) {
+    selected_command=command;
+    if(!result){
+      render(command, result.error());
+      return;
+    }
+    code=static_cast<int>(result->status);
+    if(json){
+      auto encoded = result->json.empty() ? result->value.dump() : result->json;
+      encoded.pop_back();
+      std::cout << encoded << ",\"command\":" << Json(command).dump() << "}\n";
+    } else {
+      for (const auto& [key, value] : result->value.items()) {
+        std::cout << app::message_text("am.jobs.label." + key) << ": ";
+        if (value.is_string())
+          std::cout << value.get<std::string>();
+        else
+          std::cout << value.dump();
+        std::cout << '\n';
+      }
+      if (command == "jobs show" && !result->records.empty()) {
+        const auto& record = result->records.front();
+        for (const auto& [key, value] :
+             std::array<std::pair<std::string, std::optional<std::string>>, 4>{{{"params", record.params_json},
+                                                                                {"decision", record.decision_json},
+                                                                                {"result", record.result_json},
+                                                                                {"error", record.error_json}}})
+          std::cout << app::message_text("am.jobs.label." + key) << ": " << value.value_or("null") << '\n';
+      }
+    }
+    for (const auto& diagnostic : result->diagnostics) print_error(diagnostic, verbose);
+  };
+  auto* jobs = cli.add_subcommand("jobs", "Run and manage persistent background jobs");
+  jobs->require_subcommand(1);
+  std::string jobs_list_root, jobs_parent;
+  std::vector<std::string> jobs_states;
+  bool jobs_all = false;
+  auto* job_list = jobs->add_subcommand("list", "List queued jobs and parent progress");
+  job_list->add_option("dir", jobs_list_root)->required();
+  std::vector<std::string> state_names;
+  for (auto name : am::contracts::job_state_names) state_names.emplace_back(name);
+  job_list->add_option("--state", jobs_states)->check(CLI::IsMember(state_names));
+  job_list->add_option("--parent", jobs_parent);
+  job_list->add_flag("--all", jobs_all, "Include finished jobs and children");
+  presentation(job_list);
+  job_list->callback([&] {
+    am::contracts::JobFilter filter;
+    for (const auto& state : jobs_states) filter.states.push_back(*am::contracts::parse_job_state(state));
+    if (!jobs_parent.empty()) filter.parent_id = jobs_parent;
+    render_jobs("jobs list", app::list_jobs(path(jobs_list_root), filter, jobs_all));
+  });
+  std::string jobs_show_root, jobs_show_id;
+  auto* job_show = jobs->add_subcommand("show", "Show a complete job record");
+  job_show->add_option("dir", jobs_show_root)->required();
+  job_show->add_option("id", jobs_show_id)->required();
+  presentation(job_show);
+  job_show->callback([&] { render_jobs("jobs show", app::show_job(path(jobs_show_root), jobs_show_id)); });
+  std::string jobs_run_root, jobs_profile = "balanced";
+  unsigned jobs_parallel = 0;
+  auto* job_run = jobs->add_subcommand("run", "Run queued jobs until idle or interrupted");
+  job_run->add_option("dir", jobs_run_root)->required();
+  job_run->add_option("--profile", jobs_profile)->check(CLI::IsMember({"economy", "balanced", "performance"}));
+  auto* parallel = job_run->add_option("--jobs", jobs_parallel)->check(CLI::PositiveNumber);
+  presentation(job_run);
+  job_run->callback([&] {
+    JobSignals signals;
+    app::JobServiceOptions options;
+    options.profile = jobs_profile == "economy"       ? am::jobs::Profile::economy
+                      : jobs_profile == "performance" ? am::jobs::Profile::performance
+                                                      : am::jobs::Profile::balanced;
+    if (parallel->count()) options.parallel_jobs = jobs_parallel;
+    options.on_event = print_job_event;
+    render_jobs("jobs run", app::run_jobs(path(jobs_run_root), options, signals.token()));
+  });
+  struct JobControlArguments {
+    std::string root;
+    std::vector<std::string> ids;
+  };
+  std::map<std::string, JobControlArguments> jobs_controls;
+  for (const auto* verb : {"pause", "resume", "cancel", "retry"}) {
+    auto& args = jobs_controls[verb];
+    auto* command = jobs->add_subcommand(verb, std::string("Apply ") + verb + " to jobs at safe points");
+    command->add_option("dir", args.root)->required();
+    command->add_option("id", args.ids)->required()->expected(-1);
+    presentation(command);
+    command->callback([&, name = std::string(verb)] {
+      const auto& selected = jobs_controls.at(name);
+      render_jobs("jobs " + name, app::control_jobs(path(selected.root), name, selected.ids));
+    });
+  }
+  std::string jobs_answer_root, jobs_answer_id, jobs_answer_option;
+  auto* job_answer = jobs->add_subcommand("answer", "Answer a pending job decision");
+  job_answer->add_option("dir", jobs_answer_root)->required();
+  job_answer->add_option("id", jobs_answer_id)->required();
+  job_answer->add_option("option", jobs_answer_option)->required();
+  presentation(job_answer);
+  job_answer->callback(
+      [&] { render_jobs("jobs answer", app::answer_job(path(jobs_answer_root), jobs_answer_id, jobs_answer_option)); });
+  std::string jobs_move_root, jobs_move_id, jobs_before;
+  bool jobs_last = false;
+  auto* job_move = jobs->add_subcommand("move", "Move a queued job within its queue group");
+  job_move->add_option("dir", jobs_move_root)->required();
+  job_move->add_option("id", jobs_move_id)->required();
+  auto* before = job_move->add_option("--before", jobs_before);
+  job_move->add_flag("--last", jobs_last);
+  presentation(job_move);
+  job_move->callback([&] {
+    if ((before->count() != 0) == jobs_last)
+      throw CLI::ValidationError("destination", std::string(app::message_text("am.jobs.destination_invalid")));
+    render_jobs("jobs move", app::move_job(path(jobs_move_root), jobs_move_id,
+                                           jobs_last ? std::nullopt : std::optional<std::string_view>(jobs_before)));
+  });
+  std::string jobs_probe_root, jobs_probe_fail;
+  std::uint64_t jobs_probe_steps = 1;
+  bool jobs_probe_ask = false;
+  auto* job_probe = jobs->add_subcommand("enqueue-dev", "Enqueue a development probe")->group("Development");
+  job_probe->add_option("dir", jobs_probe_root)->required();
+  job_probe->add_option("--steps", jobs_probe_steps);
+  job_probe->add_flag("--ask", jobs_probe_ask);
+  auto* fail = job_probe->add_option("--fail", jobs_probe_fail);
+  presentation(job_probe);
+  job_probe->callback([&] {
+    render_jobs("jobs enqueue-dev", app::enqueue_probe(path(jobs_probe_root), jobs_probe_steps, jobs_probe_ask,
+                                                       fail->count() ? std::optional(jobs_probe_fail) : std::nullopt));
+  });
+  std::string media_path;
+  auto* media = cli.add_subcommand("media", "Detect a local storage device and media class")->group("Development");
+  media->add_option("path", media_path)->required();
+  presentation(media);
+  media->callback([&] { render_jobs("media", app::inspect_media(path(media_path))); });
   auto* library = cli.add_subcommand("library", "Create a library or read its status");
   library->require_subcommand(1);
   std::string library_root, library_name, library_info_root;
@@ -208,13 +517,14 @@ int main(int argc, char** argv) {
     }
     for(const auto& diagnostic:result->diagnostics) print_error(diagnostic,verbose);
   });
-  std::string library_verify_root; bool library_verify_full = false, library_verify_no_trash = false;
+  std::string library_verify_root; bool library_verify_full = false, library_verify_no_trash = false, library_verify_enqueue = false;
   auto* library_verify = library->add_subcommand("verify", "Check library databases and ZIPs; record detected corruption in the index");
   library_verify->add_option("dir",library_verify_root)->required();
   library_verify->add_flag("--full",library_verify_full,"Read and verify every payload stream");
   library_verify->add_flag("--no-trash",library_verify_no_trash,"Exclude assets in trash");
+  library_verify->add_flag("--enqueue",library_verify_enqueue,"Enqueue verification as a persistent background job");
   presentation(library_verify);
-  library_verify->callback([&] { render("library verify",app::verify_library(path(library_verify_root),library_verify_full,!library_verify_no_trash,verbose)); });
+  library_verify->callback([&] { if(library_verify_enqueue)render_jobs("library verify",app::enqueue_verify(path(library_verify_root),library_verify_full,!library_verify_no_trash));else render("library verify",app::verify_library(path(library_verify_root),library_verify_full,!library_verify_no_trash,verbose)); });
   auto* copy = library->add_subcommand("copy", "Create an independent asset with new instance IDs");
   copy->add_option("dir", copy_root)->required();
   copy->add_option("asset-id", copy_id)->required();

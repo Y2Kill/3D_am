@@ -28,10 +28,13 @@ add_executable(am_unit_tests
   unit/test_stl_probe.cpp
   unit/test_command_registry.cpp
   unit/test_plugin_abi.cpp)
+target_sources(am_unit_tests PRIVATE unit/test_jobs.cpp)
 target_link_libraries(am_unit_tests PRIVATE am::application GTest::gtest_main)
 target_compile_definitions(am_unit_tests PRIVATE
   AM_UNICODE_DATA_DIR="${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0")
 if(AM_WITH_CONTAINER)
+  target_compile_definitions(am_unit_tests PRIVATE AM_JOBS_STORAGE_TESTS=1)
+  target_sources(am_unit_tests PRIVATE unit/test_jobs_services.cpp)
   find_package(ZLIB REQUIRED)
   find_package(unofficial-sqlite3 CONFIG REQUIRED)
   target_sources(am_unit_tests PRIVATE unit/test_manifest_codec.cpp unit/test_manifest_wide.cpp
@@ -123,6 +126,20 @@ if(AM_PYTHON_TESTS)
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/tools/message_catalog_check.py --root ${PROJECT_SOURCE_DIR})
       set_tests_properties(message_catalog_check PROPERTIES LABELS "req:ADR-0032;req:ADR-0034")
       if(TARGET am_cli)
+      foreach(_am_jobs_case verify decision failure_and_controls locked read_only_and_media signal)
+        if(_am_jobs_case STREQUAL "read_only_and_media")
+          set(_am_jobs_name cli_jobs)
+        else()
+          set(_am_jobs_name cli_jobs_${_am_jobs_case})
+        endif()
+        add_test(NAME ${_am_jobs_name}
+          COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_jobs_cli.py
+            --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/jobs-cli-tests --case ${_am_jobs_case})
+        set_tests_properties(${_am_jobs_name} PROPERTIES LABELS "req:K-115;req:K-121;req:NFR-14.4.3" TIMEOUT 120)
+        if(NOT _am_jobs_case STREQUAL "read_only_and_media")
+          set_tests_properties(${_am_jobs_name} PROPERTIES SKIP_REGULAR_EXPRESSION "Production writes require a verified fixed NTFS volume")
+        endif()
+      endforeach()
       foreach(_am_library_case init_info refusals missing_databases owner_lock rebuild_list sync trash add_ready copy verify verify_database_pages log log_writes)
         add_test(NAME cli_library_${_am_library_case}
           COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_library_cli.py
