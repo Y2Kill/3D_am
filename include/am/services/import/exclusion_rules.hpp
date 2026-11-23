@@ -40,6 +40,7 @@ class ExclusionEngine {
 
   // Returns the strongest match, or confidence==none.
   RuleMatch evaluate(const EntryFacts& entry) const;
+  RuleMatch evaluate(const EntryFacts& entry, std::span<const std::string> enabled_rules) const;
 
   std::vector<std::string> rule_ids() const;
 

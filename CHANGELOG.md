@@ -13,6 +13,9 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Read-only `am import scan` with versioned profiles, editable import plans,
+  suggested boundaries, exclusions and volume hints, separate ready assets,
+  optional library matches, and safe cancellation and plan publication.
 - Explicitly enabled JSON Lines process logs with rotation, job and library
   context, and local diagnostic ZIP export with per-export path tokens and
   identity redaction. Logging failures do not change command results.

@@ -1,0 +1,34 @@
+# Version 1 suggestions; numeric limits are hypotheses, not normative thresholds.
+id = "default"
+version = 1
+[boundaries]
+candidate = "root"
+context_levels = 0
+[provenance]
+parent_as = ""
+url_files = "suggest"
+url_ad_patterns = []
+[nested]
+action = "expand"
+max_depth = 3
+[exclusions]
+rules = ["macos.appledouble", "macos.ds_store", "windows.thumbs_db", "windows.desktop_ini", "os.icon_r"]
+[previews]
+primary = ["sibling_image_largest", "archive_top_image_largest", "embedded", "render"]
+[groups]
+hints = ["scale", "presupport", "variant_nsfw"]
+[mode]
+strict = true
+[volumes]
+rar_part = true
+rar_old = true
+split_numeric = true
+zip_split = true
+copy_suffix = true
+copy_suffix_extensions = ["rar", "zip", "7z"]
+[limits]
+max_entries = 100000
+max_unpacked_bytes = 214748364800
+max_ratio = 200
+max_seconds_per_container = 3600
+max_temp_bytes = 107374182400
