@@ -661,8 +661,8 @@ TEST(AssetRepository, ExplicitIdentityRejectsActiveTrashAndDualLocations) {
     EXPECT_EQ(rejected.error().message_id,"am.repo.asset_id_exists");
     auto copy=repository.copy_independent({original.ref,request.asset_id,{}});
     ASSERT_FALSE(copy); EXPECT_EQ(copy.error().message_id,"am.repo.asset_id_exists");
-    if (location!=1) EXPECT_EQ(bytes(active),before);
-    if (location!=0) EXPECT_EQ(bytes(trash),before);
+    if (location!=1) { EXPECT_EQ(bytes(active),before); }
+    if (location!=0) { EXPECT_EQ(bytes(trash),before); }
     clean(root);
   }
   auto dual=repository.snapshot(occupied.ref,true);

@@ -123,7 +123,7 @@ struct CreateRequest {
   std::optional<Json> metadata;
   std::vector<AddFiles> files;
   std::optional<Json> origin;
-  std::stop_token stop;
+  std::stop_token stop{};
   // Set only for source errors, never for destination failures.
   // read_failure permits bounded partial retries; source changes never do.
   std::optional<SourceFailure>* source_failure = nullptr;
@@ -177,7 +177,7 @@ struct CopyResult {
 struct ImportReadyRequest {
   std::filesystem::path source;
   std::optional<std::string> replace_expected;
-  std::stop_token stop;
+  std::stop_token stop{};
 };
 struct ImportAssetInfo {
   std::string zip_size;

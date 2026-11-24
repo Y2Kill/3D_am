@@ -88,7 +88,9 @@ class ImportRun : public testing::Test {
   void clean() {
     const auto tmp = library / ".am/.am-tmp";
     EXPECT_TRUE(!fs::exists(tmp) || fs::is_empty(tmp));
-    const auto report = take(catalog->verify({am::catalog::LibraryVerifyLevel::full}));
+    am::catalog::LibraryVerifyOptions options;
+    options.level = am::catalog::LibraryVerifyLevel::full;
+    const auto report = take(catalog->verify(options));
     EXPECT_EQ(report.corrupt, 0u);
     EXPECT_EQ(report.unreadable, 0u);
     EXPECT_FALSE(report.database_failed);
@@ -391,10 +393,10 @@ TEST_P(ImportRunTrashRetry, RetryNeverDuplicatesTrashedIdentity) {
     EXPECT_EQ(after["inputs"][0]["id"], original["inputs"][0]["id"]);
     EXPECT_EQ(after["inputs"][0]["objects"], original["inputs"][0]["objects"]);
     EXPECT_EQ(after["inputs"][0]["entries"], original["inputs"][0]["entries"]);
-    if (action == "restore") EXPECT_EQ(bytes(active), before);
+    if (action == "restore") { EXPECT_EQ(bytes(active), before); }
   }
   EXPECT_EQ(writes, action == "purge" ? 1u : 0u);
-  if (action != "purge") EXPECT_EQ(reads, 0u);
+  if (action != "purge") { EXPECT_EQ(reads, 0u); }
   clean();
 }
 INSTANTIATE_TEST_SUITE_P(Decisions, ImportRunTrashRetry, testing::Values("restore", "purge", "skip"));

@@ -95,7 +95,7 @@ std::optional<J> deferred(const PlanView& p, const PlanCandidate& c) {
       std::any_of(c.entries.begin(), c.entries.end(), [](const auto& e) { return e.decision == EntryDecision::ask; });
   if (!unresolved && c.action == CandidateAction::skip) {
     row["status"] = "skipped";
-    return row;
+    return std::make_optional(std::move(row));
   }
   const auto archive =
       c.kind == CandidateKind::new_asset && std::any_of(c.inputs.begin(), c.inputs.end(), [](const auto& i) {
@@ -110,7 +110,7 @@ std::optional<J> deferred(const PlanView& p, const PlanCandidate& c) {
         row["has_unavailable"] = true;
         if (p.nodes().at(e.node).problem) row["unavailable_problem"] = problem(*p.nodes().at(e.node).problem);
       }
-  return row;
+  return std::make_optional(std::move(row));
 }
 std::vector<std::size_t> members(const PlanCandidate& c) {
   std::set<std::size_t> nodes(c.directories.begin(), c.directories.end());
@@ -444,7 +444,8 @@ class ImportAsset final : public jobs::JobHandler {
       const auto params = J::parse(ctx.record().params_json);
       row = {{"candidate_id", params.at("candidate_id")}};
       const auto plan = load(params);
-      const auto& c = candidate(plan, params.at("candidate_id"));
+      const auto candidate_id = params.at("candidate_id").get<std::string>();
+      const auto& c = candidate(plan, candidate_id);
       row = base_row(plan, c);
       const std::array resources{jobs::ResourceRequest{jobs::ResourceKind::write, s_->device},
                                  jobs::ResourceRequest{jobs::ResourceKind::cpu, {}}};
