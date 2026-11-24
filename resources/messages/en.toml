@@ -446,3 +446,7 @@
 "am.import.reason.ready_asset_invalid" = "An existing asset requires review after validation failed."
 "am.import.reason.ready_asset_separated" = "Existing assets were separated from the remaining inputs."
 "am.import.reason.ready_asset_exclusion_conflict" = "An existing asset conflicts with an exclusion rule and requires review."
+"am.import.cloud_placeholder" = "This file is only available online. Make it available locally before scanning."
+"am.paths.node_unavailable" = "File metadata is unavailable."
+"am.diag.skipped" = "Skipped {count} unavailable source(s): {reason}."
+"am.import.exclusion.signature_conflict" = "The content signature conflicts with the service filename; review this file."

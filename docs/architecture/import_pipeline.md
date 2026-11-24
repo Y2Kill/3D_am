@@ -116,6 +116,10 @@ toml++ разбирает профиль в application; services получае
 
 Применяются только правила exclusions.rules. certain даёт exclude, probable — ask. Например, `._x.3mf` вне __MACOSX без сигнатуры сохраняется по фактическому правилу движка. Путь в __MACOSX с сигнатурой AppleDouble исключается до пробы ZIP. Конфликт имён без учёта регистра даёт case_collision; исправление имени делает run.
 
+**T-029, правила исключений v2:** каждому правилу заданы expected_kinds. Если известный тип противоречит правилу, certain по одному имени понижается до probable, explanation_id — am.import.exclusion.signature_conflict. Для desktop.ini и Icon с CR сохраняются unknown и текстовые stl_ascii/obj_text/gcode_text/rtf; PNG, ZIP, бинарная 3D-модель или PDF не исключаются уверенно по этим именам. Проверки обязательных сигнатур AppleDouble/DS_Store/Thumbs.db не меняются. Правило готового ассета против исключения → ask (В-3 T-028) сохраняется.
+
+**T-029, Windows-метаданные:** общая paths::node_info разделяет получение данных ОС и чистое classify_windows_node. Только SYMLINK, MOUNT_POINT и LX_SYMLINK являются ссылками. CLOUD*, DEDUP, WCI* и неизвестные теги сохраняют вид file/directory. Файл с RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN или OFFLINE не открывается ради заголовка/SHA: status=unavailable, problem.code=cloud_placeholder, message_id=am.import.cloud_placeholder, entry=ask, причина has_unavailable. Размер/mtime берутся из метаданных; каталог с облачными атрибутами обходится. Нормализация корня-заглушки разрешает родителя, не открывая сам файл. ScanHooks.node_data подменяет только сырые атрибуты/тег и метаданные на уровне запроса; это тестовое внедрение отказов, не точка расширения плагинов. POSIX сохраняет symlink_status; схема import-plan v1 уже допускает строковый problem.code и не изменена.
+
 При url_files=suggest читаются `[InternetShortcut]`/`URL=`. Префикс (?i) снимается и превращается в флаг std::regex::icase. Обычные ссылки — suggested_links с confirmed=false; рекламные сохраняются отдельно в filtered_links с ad=true и не предлагаются. Содержимое самих .url остаётся входным файлом. Сетевых запросов к URL нет.
 
 ### Совпадения и чтение библиотеки

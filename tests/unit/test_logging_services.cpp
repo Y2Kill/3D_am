@@ -67,6 +67,19 @@ unsigned long pid() {
   return static_cast<unsigned long>(getpid());
 #endif
 }
+#ifdef _WIN32
+struct OfflineFile {
+  fs::path path;
+  DWORD original;
+  explicit OfflineFile(const fs::path& value)
+      : path(am::paths::native(value)), original(GetFileAttributesW(path.c_str())) {
+    if (original == INVALID_FILE_ATTRIBUTES || !SetFileAttributesW(path.c_str(), original | FILE_ATTRIBUTE_OFFLINE))
+      throw std::runtime_error("Cannot set the offline attribute on the fixture");
+  }
+  ~OfflineFile() { SetFileAttributesW(path.c_str(), original); }
+  OfflineFile(const OfflineFile&) = delete;
+};
+#endif
 am::library::OpenOptions capabilities() {
   am::library::OpenOptions options;
   options.capabilities.emplace();
@@ -150,6 +163,55 @@ TEST_F(FileLog, TotalQuotaKeepsForeignNamesAndCurrentProcessAndDeletesOldest) {
   EXPECT_TRUE(fs::exists(own));
   EXPECT_EQ(bytes(root / "notes.txt"), "owner notes");
   EXPECT_EQ(bytes(root / "am-foo.jsonl"), "foreign");
+}
+TEST_F(FileLog, QuotaContinuesAfterAnInjectedRemovalFailure) {
+  RecordProperty("req", "NFR-14.4.9");
+  const auto root = fresh();
+  const auto held = root / "am-20000101T000000Z-999999991.jsonl";
+  const auto next = root / "am-20010101T000000Z-999999992.jsonl";
+  write(held, std::string(64, 'h'));
+  write(next, std::string(64, 'n'));
+  fs::last_write_time(held, fs::file_time_type::clock::now() - std::chrono::hours(3));
+  fs::last_write_time(next, fs::file_time_type::clock::now() - std::chrono::hours(2));
+  std::vector<fs::path> attempted;
+  app::LoggingOptions options;
+  options.directory = root;
+  options.max_total_bytes = 64;
+  options.before_remove = [&](const auto& file) -> am::Result<void> {
+    attempted.push_back(file.filename());
+    if (file.filename() == held.filename()) return am::Error::make(am::Errc::io_error, "Injected deletion failure");
+    return {};
+  };
+  auto sink = take(app::open_file_log(options));
+  EXPECT_EQ(attempted, (std::vector<fs::path>{held.filename(), next.filename()}));
+  EXPECT_TRUE(fs::exists(held));
+  EXPECT_FALSE(fs::exists(next));
+  EXPECT_EQ(bytes(held), std::string(64, 'h'));
+}
+TEST_F(FileLog, QuotaToleratesARealWindowsFileHeldWithoutShareDelete) {
+  RecordProperty("req", "NFR-14.4.9");
+#ifdef _WIN32
+  const auto root = fresh();
+  const auto held = root / "am-20000101T000000Z-999999991.jsonl";
+  const auto next = root / "am-20010101T000000Z-999999992.jsonl";
+  write(held, std::string(64, 'h'));
+  write(next, std::string(64, 'n'));
+  fs::last_write_time(held, fs::file_time_type::clock::now() - std::chrono::hours(3));
+  fs::last_write_time(next, fs::file_time_type::clock::now() - std::chrono::hours(2));
+  const auto handle = CreateFileW(am::paths::native(held).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                  nullptr, OPEN_EXISTING, 0, nullptr);
+  ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+  const std::shared_ptr<void> close(handle, [](void* value) { CloseHandle(value); });
+  app::LoggingOptions options;
+  options.directory = root;
+  options.max_total_bytes = 64;
+  auto sink = take(app::open_file_log(options));
+  EXPECT_TRUE(fs::exists(held));
+  EXPECT_FALSE(fs::exists(next));
+  EXPECT_EQ(bytes(held), std::string(64, 'h'));
+#else
+  GTEST_SKIP() << "FILE_SHARE_DELETE denial is a Win32 sharing contract";
+#endif
 }
 TEST_F(FileLog, WriteFailureCountsDroppedAndRecoveryReportsItWithoutThrowing) {
   RecordProperty("req", "NFR-14.4.9");
@@ -282,6 +344,7 @@ TEST_F(LogContext, CatalogContextAndCommitPhasesRespectDebugFiltering) {
   take(catalog.create(request));
   for (const auto& text : memory->rows) EXPECT_NE(Json::parse(text)["event"], "commit.phase");
   memory->minimum = l::Level::debug;
+  l::set_sink(memory);
   auto asset = take(catalog.create(request));
   std::set<std::string> phases;
   for (const auto& text : memory->rows) {
@@ -350,6 +413,105 @@ TEST_F(DiagExport, RedactsAllArchiveEntriesCorrelatesTokensAndPreservesExtension
   EXPECT_EQ(reads.size(), 2u);
   EXPECT_GT(report.path_replacements, 0u);
   write(fs::path(AM_DIAG_CASE_ROOT) / "diagnostics.json", archive.at("diagnostics.json"));
+}
+TEST_F(DiagExport, OfflineLogIsNotOpenedAndIsReportedInsideTheSuccessfulExport) {
+  RecordProperty("req", "NFR-14.4.9|K-130");
+#ifdef _WIN32
+  const auto root = fresh(), logs = root / "logs";
+  const auto name = "am-20261124T000000Z-999999991.jsonl";
+  const auto cloud = logs / name;
+  write(cloud, "PrivateCloudContentCanary");
+  OfflineFile offline(cloud);
+  ASSERT_TRUE(take(am::paths::node_info(cloud)).cloud_placeholder);
+  app::DiagnosticOptions options;
+  options.output = root / "cloud-log.zip";
+  options.log_directory = logs;
+  unsigned opened = 0;
+  options.on_read = [&](const auto& path) {
+    if (path.filename() == cloud.filename()) ++opened;
+  };
+  const auto report = take(app::export_diagnostics(options));
+  EXPECT_EQ(opened, 0u);
+  ASSERT_EQ(report.unavailable.size(), 1u);
+  EXPECT_EQ(report.unavailable[0].reason, "cloud_placeholder");
+  const auto archive = unzip(options.output);
+  EXPECT_FALSE(archive.contains(std::string("logs/") + name));
+  const auto metadata = Json::parse(archive.at("diagnostics.json"));
+  EXPECT_TRUE(metadata["logs"].empty());
+  EXPECT_EQ(metadata["unavailable"][0],
+            (Json{{"source_kind", "log"}, {"name", name}, {"reason", "cloud_placeholder"}}));
+  for (const auto& [entry, content] : archive) {
+    (void)entry;
+    EXPECT_EQ(content.find("PrivateCloudContentCanary"), std::string::npos);
+  }
+  write(fs::path(AM_DIAG_CASE_ROOT) / "offline-log.json", archive.at("diagnostics.json"));
+#else
+  GTEST_SKIP()
+      << "An actual FILE_ATTRIBUTE_OFFLINE fixture requires Windows; raw metadata mapping is tested on every platform";
+#endif
+}
+TEST_F(DiagExport, OfflineDatabaseIsNotOpenedAndLibrarySummaryIsOmitted) {
+  RecordProperty("req", "NFR-14.4.9|K-130");
+#ifdef _WIN32
+  const auto root = fresh(), library = root / "library";
+  take(am::library::Library::init(library));
+  const auto database = library / ".am/index.sqlite";
+  OfflineFile offline(database);
+  ASSERT_TRUE(take(am::paths::node_info(database)).cloud_placeholder);
+  app::DiagnosticOptions options;
+  options.output = root / "cloud-database.zip";
+  options.library = library;
+  unsigned opened = 0;
+  options.on_read = [&](const auto&) { ++opened; };
+  const auto report = take(app::export_diagnostics(options));
+  EXPECT_EQ(opened, 0u);
+  ASSERT_EQ(report.unavailable.size(), 1u);
+  const auto archive = unzip(options.output);
+  EXPECT_FALSE(archive.contains("library.json"));
+  const auto metadata = Json::parse(archive.at("diagnostics.json"));
+  EXPECT_FALSE(metadata.contains("library"));
+  EXPECT_EQ(metadata["unavailable"][0],
+            (Json{{"source_kind", "database"}, {"name", "index.sqlite"}, {"reason", "cloud_placeholder"}}));
+  write(fs::path(AM_DIAG_CASE_ROOT) / "offline-database.json", archive.at("diagnostics.json"));
+#else
+  GTEST_SKIP()
+      << "An actual FILE_ATTRIBUTE_OFFLINE fixture requires Windows; raw metadata mapping is tested on every platform";
+#endif
+}
+TEST_F(DiagExport, NonLinkReparseTagsRemainReadableThroughTheSharedRawMetadataHook) {
+  RecordProperty("req", "NFR-14.4.9|K-130");
+  const auto root = fresh(), logs = root / "logs";
+  const auto file = logs / "am-20261124T000000Z-999999991.jsonl";
+  write(file, l::serialize({l::Level::info, "test", "test.reparse", "Local reparse fixture", {}, nullptr, {}}));
+  for (const std::uint32_t tag : {0x80000013u, 0x80000018u, 0x8000abcdu}) {
+    app::DiagnosticOptions options;
+    options.output = root / (std::to_string(tag) + ".zip");
+    options.log_directory = logs;
+    options.node_data = [&](const auto& path) -> am::Result<am::paths::WindowsNodeData> {
+      const auto actual = am::paths::node_info(path);
+      if (!actual) return actual.error();
+      am::paths::WindowsNodeData raw;
+      raw.size = actual->size;
+      raw.mtime_ns = actual->mtime_ns;
+      raw.attributes = actual->kind == am::paths::NodeKind::directory ? 0x10 : 0;
+      if (path.filename() == file.filename()) {
+        raw.attributes |= 0x400;
+        raw.reparse_tag = tag;
+      }
+      return raw;
+    };
+    unsigned opened = 0;
+    options.on_read = [&](const auto&) { ++opened; };
+    const auto report = take(app::export_diagnostics(options));
+    EXPECT_EQ(opened, 1u);
+    EXPECT_TRUE(report.unavailable.empty());
+    EXPECT_TRUE(report.skipped_summary.empty());
+    const auto archive = unzip(options.output);
+    EXPECT_TRUE(archive.contains("logs/" + file.filename().string()));
+    const auto metadata = Json::parse(archive.at("diagnostics.json"));
+    EXPECT_EQ(metadata["logs"][0]["records"], 1);
+    EXPECT_FALSE(metadata.contains("unavailable"));
+  }
 }
 TEST_F(DiagExport, SinceUsesUtcOffsetsAndFractionalPrecisionAndCountsBrokenTimes) {
   RecordProperty("req", "NFR-14.4.9|K-130");

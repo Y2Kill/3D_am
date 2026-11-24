@@ -49,7 +49,13 @@ std::string utf8(const fs::path& path) {
   const auto text = path.u8string();
   return {text.begin(), text.end()};
 }
-bool local_path(const fs::path& input) {
+Result<paths::NodeInfo> source_info(const fs::path& path, const paths::NodeDataHook& hook) {
+  if (!hook) return paths::node_info(path);
+  auto data = hook(path);
+  if (!data) return data.error();
+  return paths::classify_windows_node(*data);
+}
+bool local_path(const fs::path& input, const paths::NodeDataHook& hook) {
   auto text = utf8(input);
   std::replace(text.begin(), text.end(), '\\', '/');
   if (text.starts_with("//?/")) text.erase(0, 4);
@@ -61,9 +67,9 @@ bool local_path(const fs::path& input) {
   auto current = absolute.root_path();
   for (const auto& part : absolute.relative_path()) {
     current /= part;
-    const auto attributes = GetFileAttributesW(paths::native(current).c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES) break;
-    if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) return false;
+    const auto info = source_info(current, hook);
+    if (!info) break;
+    if (info->kind == paths::NodeKind::link) return false;
   }
 #else
   const auto absolute = fs::absolute(input).lexically_normal();
@@ -94,10 +100,9 @@ bool local_path(const fs::path& input) {
   auto current = absolute.root_path();
   for (const auto& part : absolute.relative_path()) {
     current /= part;
-    std::error_code error;
-    const auto status = fs::symlink_status(current, error);
-    if (error) break;
-    if (fs::is_symlink(status)) return false;
+    const auto info = source_info(current, hook);
+    if (!info) break;
+    if (info->kind == paths::NodeKind::link) return false;
   }
 #endif
   return true;
@@ -467,7 +472,8 @@ Result<DiagnosticReport> export_diagnostics(const DiagnosticOptions& options) {
   fs::path temporary;
   try {
     if (options.output.empty()) return failure("am.diag.arguments_invalid", Errc::invalid_argument);
-    if (!local_path(options.output) || (options.library && !local_path(*options.library)))
+    if (!local_path(options.output, options.node_data) ||
+        (options.library && !local_path(*options.library, options.node_data)))
       return failure("am.diag.local_only", Errc::unsupported);
     const auto since = options.since ? timestamp(*options.since) : std::nullopt;
     if (options.since && !since) return failure("am.diag.arguments_invalid", Errc::invalid_argument);
@@ -489,7 +495,7 @@ Result<DiagnosticReport> export_diagnostics(const DiagnosticOptions& options) {
       if (auto env = environment_value("AM_LOG_DIR")) directory = fs::path(std::u8string(env->begin(), env->end()));
     if (directory) {
       std::error_code directory_error;
-      if (!local_path(*directory) || !fs::is_directory(paths::native(*directory), directory_error)) {
+      if (!local_path(*directory, options.node_data) || !fs::is_directory(paths::native(*directory), directory_error)) {
         if (options.log_directory) return failure("am.diag.logs_unavailable");
         directory.reset();
       }
@@ -499,11 +505,16 @@ Result<DiagnosticReport> export_diagnostics(const DiagnosticOptions& options) {
       const std::regex pattern(R"(^am-[0-9]{8}T[0-9]{6}Z-[0-9]+(\.[0-9]+)?\.jsonl$)");
       std::vector<fs::path> files;
       for (const auto& entry : fs::directory_iterator(paths::native(*directory)))
-        if (fs::is_regular_file(entry.symlink_status()) && std::regex_match(entry.path().filename().string(), pattern))
-          files.push_back(entry.path());
+        if (std::regex_match(entry.path().filename().string(), pattern)) files.push_back(entry.path());
       std::sort(files.begin(), files.end());
       for (const auto& file : files) {
-        if (!local_path(file)) continue;
+        if (!local_path(file, options.node_data)) continue;
+        const auto info = take(source_info(file, options.node_data));
+        if (info.kind != paths::NodeKind::file) continue;
+        if (info.cloud_placeholder) {
+          report.unavailable.push_back({"log", file.filename().string(), "cloud_placeholder"});
+          continue;
+        }
         if (options.on_read) options.on_read(file);
         std::ifstream input(paths::native(file), std::ios::binary);
         if (!input) throw failure("am.diag.logs_unavailable");
@@ -536,8 +547,39 @@ Result<DiagnosticReport> export_diagnostics(const DiagnosticOptions& options) {
       }
     }
     if (options.library) {
-      entries["library.json"] = library_summary(options, redact);
-      metadata["library"] = {{"entry", "library.json"}};
+      bool unavailable = false;
+      std::vector<fs::path> readable_sources;
+      auto check = [&](const fs::path& file, const char* source_kind) {
+        const auto info = source_info(file, options.node_data);
+        if (info && info->kind == paths::NodeKind::link) throw failure("am.diag.local_only", Errc::unsupported);
+        if (info && info->cloud_placeholder) {
+          report.unavailable.push_back({source_kind, file.filename().string(), "cloud_placeholder"});
+          unavailable = true;
+        } else if (info && info->kind == paths::NodeKind::file) {
+          readable_sources.push_back(file);
+        }
+      };
+      check(*options.library / "am-library.toml", "library");
+      check(*options.library / ".am/library.lock", "library");
+      for (const auto* database : {"index.sqlite", "userdata.sqlite", "state.sqlite"})
+        for (const auto* suffix : {"", "-wal", "-shm"})
+          check(*options.library / ".am" / (std::string(database) + suffix), "database");
+      if (!unavailable) {
+        if (options.on_read)
+          for (const auto& source : readable_sources) options.on_read(source);
+        entries["library.json"] = library_summary(options, redact);
+        metadata["library"] = {{"entry", "library.json"}};
+      }
+    }
+    if (!report.unavailable.empty()) {
+      metadata["unavailable"] = Json::array();
+      for (const auto& item : report.unavailable)
+        metadata["unavailable"].push_back(
+            {{"source_kind", item.source_kind}, {"name", item.name}, {"reason", item.reason}});
+      report.skipped_summary = message_text("am.diag.skipped");
+      report.skipped_summary.replace(report.skipped_summary.find("{count}"), 7,
+                                     std::to_string(report.unavailable.size()));
+      report.skipped_summary.replace(report.skipped_summary.find("{reason}"), 8, report.unavailable.front().reason);
     }
     entries["diagnostics.json"] = metadata.dump();
     for (const auto& [name, value] : entries) {

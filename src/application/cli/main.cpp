@@ -23,6 +23,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
+#ifdef AM_DIAGNOSTIC_CLI_TEST_HOOK
+void install_diagnostic_cli_test_hook(am::application::DiagnosticOptions&);
+#endif
 namespace {
 namespace app = am::application;
 using app::Json;
@@ -526,10 +529,24 @@ int main(int argc, char** argv) {
     if(diagnostic_source->count())options.log_directory=path(diagnostic_logs);else if(explicit_log_directory && !log_directory.empty())options.log_directory=path(log_directory);
     if(diagnostic_lib->count())options.library=path(diagnostic_library);
     if(diagnostic_time->count())options.since=diagnostic_since;
+#ifdef AM_DIAGNOSTIC_CLI_TEST_HOOK
+    install_diagnostic_cli_test_hook(options);
+#endif
     auto result=app::export_diagnostics(options);
     if(!result){code=result.error().code==am::Errc::invalid_argument?2:4;if(json)std::cout<<Json{{"command","diag export"},{"error",error_value(result.error())}}.dump()<<'\n';print_error(result.error(),verbose);return;}
     Json value{{"command","diag export"},{"entries",result->entries},{"logs_available",result->logs_available},{"dry_run",diagnostic_dry_run},{"replacements",{{"path",result->path_replacements},{"name",result->name_replacements},{"user",result->user_replacements},{"host",result->host_replacements}}}};
-    if(json)std::cout<<value.dump()<<'\n';else std::cout<<app::message_text("am.diag.exported")<<": "<<value.dump()<<'\n';
+    if (json) {
+      if (!result->unavailable.empty()) {
+        value["unavailable"] = Json::array();
+        for (const auto& source : result->unavailable)
+          value["unavailable"].push_back(
+              {{"source_kind", source.source_kind}, {"name", source.name}, {"reason", source.reason}});
+      }
+      std::cout << value.dump() << '\n';
+    } else {
+      std::cout << app::message_text("am.diag.exported") << ": " << value.dump() << '\n';
+      if (!result->skipped_summary.empty()) std::cout << result->skipped_summary << '\n';
+    }
     code=0;
   });
   auto* library = cli.add_subcommand("library", "Create a library or read its status");

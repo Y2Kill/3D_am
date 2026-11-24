@@ -509,8 +509,10 @@ TEST(ImportScan, ReadyAssetExclusionConflictsAskAndKeepTheRule) {
             EXPECT_EQ(c["entries"][0]["decision"], "ask");
             EXPECT_EQ(c["entries"][0]["rule_id"],
                       std::string_view(filename) == "desktop.ini" ? "windows.desktop_ini" : "macos.ds_store");
-            EXPECT_EQ(c["entries"][0]["confidence"],
-                      std::string_view(filename) == "desktop.ini" ? "certain" : "probable");
+            EXPECT_EQ(c["entries"][0]["confidence"], "probable");
+            if (std::string_view(filename) == "desktop.ini") {
+              EXPECT_EQ(c["entries"][0]["explanation_id"], "am.import.exclusion.signature_conflict");
+            }
           } else {
             ++remainder;
             EXPECT_TRUE(reason(c, "ready_asset_separated"));
@@ -522,6 +524,86 @@ TEST(ImportScan, ReadyAssetExclusionConflictsAskAndKeepTheRule) {
       }
     }
   }
+}
+TEST(ImportScan, CloudPlaceholderMetadataIsRetainedWithoutOpeningOrHashing) {
+  RecordProperty("req", "SC-3|K-130");
+  const auto root = fresh();
+  write(root / "online.bin", "not locally materialized");
+  write(root / "dedup.bin", "deduplicated payload");
+  write(root / "cloud-dir" / "local.bin", "local payload");
+  const auto before = snapshot(root);
+  auto r = request({root});
+  r.hash_inputs = true;
+  r.hooks.node_data = [&](const auto& path) -> am::Result<am::paths::WindowsNodeData> {
+    auto actual = am::paths::node_info(path);
+    if (!actual) return actual.error();
+    am::paths::WindowsNodeData raw;
+    raw.attributes = actual->kind == am::paths::NodeKind::directory ? 0x10 : 0;
+    raw.size = actual->size;
+    raw.mtime_ns = actual->mtime_ns;
+    if (path.filename() == "online.bin") raw.attributes |= 0x400000;
+    if (path.filename() == "cloud-dir") raw.attributes |= 0x400000;
+    if (path.filename() == "dedup.bin") {
+      raw.attributes |= 0x400;
+      raw.reparse_tag = 0x80000013;
+    }
+    return raw;
+  };
+  unsigned forbidden_opens = 0, local_opens = 0;
+  r.hooks.on_open = [&](const auto& path, bool writable) {
+    EXPECT_FALSE(writable);
+    if (path.filename() == "online.bin")
+      ++forbidden_opens;
+    else
+      ++local_opens;
+  };
+  r.hooks.before_io = [&](const auto& path, imp::ScanIo kind) -> am::Result<void> {
+    if (path.filename() == "online.bin") {
+      EXPECT_EQ(kind, imp::ScanIo::stat);
+    }
+    return {};
+  };
+  const auto plan = run(r);
+  EXPECT_EQ(plan["scan"]["completeness"], "incomplete");
+  unsigned placeholders = 0;
+  for (const auto& node : plan["nodes"]) {
+    if (node["name"] != "online.bin") continue;
+    ++placeholders;
+    EXPECT_EQ(node["kind"], "file");
+    EXPECT_EQ(node["status"], "unavailable");
+    EXPECT_EQ(node["problem"]["code"], "cloud_placeholder");
+    EXPECT_EQ(node["problem"]["message_id"], "am.import.cloud_placeholder");
+    EXPECT_TRUE(node.contains("size"));
+    EXPECT_TRUE(node.contains("mtime_ns"));
+    EXPECT_FALSE(node.contains("sha256"));
+    for (const auto& candidate : plan["candidates"])
+      for (const auto& entry : candidate["entries"])
+        if (entry["node"] == node["id"]) {
+          EXPECT_EQ(entry["decision"], "ask");
+          EXPECT_EQ(candidate["action"], "ask");
+          EXPECT_TRUE(reason(candidate, "has_unavailable"));
+        }
+  }
+  EXPECT_EQ(placeholders, 1u);
+  EXPECT_EQ(forbidden_opens, 0u);
+  EXPECT_EQ(local_opens, 2u);
+  EXPECT_EQ(snapshot(root), before);
+  r.roots = {root / "online.bin"};
+  const auto single = run(r);
+  EXPECT_EQ(single["nodes"][0]["status"], "unavailable");
+  EXPECT_EQ(single["candidates"][0]["action"], "ask");
+  EXPECT_EQ(forbidden_opens, 0u);
+}
+TEST(ImportScan, PngUnderAServiceFilenameAsksInsteadOfBeingExcluded) {
+  RecordProperty("req", "SC-3|ADR-0011");
+  const auto root = fresh();
+  write(root / "desktop.ini", "\x89PNG\r\n\x1a\n");
+  const auto plan = run(request({root}));
+  ASSERT_EQ(plan["candidates"].size(), 1u);
+  const auto& entry = plan["candidates"][0]["entries"][0];
+  EXPECT_EQ(entry["decision"], "ask");
+  EXPECT_EQ(entry["confidence"], "probable");
+  EXPECT_EQ(entry["explanation_id"], "am.import.exclusion.signature_conflict");
 }
 TEST(ImportScan, ProfilesAreEmbeddedStrictAndKeepTheirOriginalByteHash) {
   RecordProperty("req", "SC-3");

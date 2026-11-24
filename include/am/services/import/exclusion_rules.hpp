@@ -2,7 +2,7 @@
 // Built-in rules for technical/redundant files (ТЗ 6.5, ADR-0011, open question 7).
 //
 // Confidence model:
-//   certain  — name/structure AND content signature agree -> excluded by default
+//   certain  — rule checks pass and known content does not contradict them
 //   probable — only the name/structure matches            -> proposed to the user
 // Rules are applied BEFORE nested containers are expanded: the collection has
 // "__MACOSX/._model.3mf" AppleDouble stubs that would otherwise be opened as ZIP.
@@ -18,7 +18,7 @@
 
 namespace am::import {
 
-inline constexpr int kExclusionRulesVersion = 1;
+inline constexpr int kExclusionRulesVersion = 2;
 
 enum class Confidence { none, probable, certain };
 
@@ -26,6 +26,7 @@ struct RuleMatch {
   std::string rule_id;          // e.g. "macos.appledouble"
   Confidence confidence = Confidence::none;
   std::string explanation;      // short, shown to the user
+  std::string explanation_id{};
 };
 
 struct EntryFacts {
@@ -36,7 +37,7 @@ struct EntryFacts {
 
 class ExclusionEngine {
  public:
-  ExclusionEngine();  // loads built-in rules v1
+  ExclusionEngine();  // loads built-in rules v2
 
   // Returns the strongest match, or confidence==none.
   RuleMatch evaluate(const EntryFacts& entry) const;
@@ -48,7 +49,9 @@ class ExclusionEngine {
   struct Rule {
     std::string id;
     RuleMatch (*fn)(const EntryFacts&);
+    std::span<const FileKind> expected_kinds;
   };
+  RuleMatch evaluate_rule(const Rule&, const EntryFacts&) const;
   std::vector<Rule> rules_;
 };
 

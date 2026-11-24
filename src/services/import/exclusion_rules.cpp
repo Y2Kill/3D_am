@@ -1,6 +1,7 @@
 #include "am/services/import/exclusion_rules.hpp"
 
 #include <algorithm>
+#include <array>
 
 namespace am::import {
 namespace {
@@ -71,20 +72,35 @@ RuleMatch icon_r(const EntryFacts& e) {
 }
 
 int rank(Confidence c) { return c == Confidence::certain ? 2 : c == Confidence::probable ? 1 : 0; }
+constexpr std::array apple_kinds{FileKind::apple_double};
+constexpr std::array finder_kinds{FileKind::ds_store};
+constexpr std::array thumbnail_kinds{FileKind::ole_compound};
+constexpr std::array text_kinds{FileKind::unknown, FileKind::stl_ascii, FileKind::obj_text, FileKind::gcode_text,
+                                FileKind::rtf};
 
 }  // namespace
 
 ExclusionEngine::ExclusionEngine()
-    : rules_{{"macos.appledouble", &appledouble},
-             {"macos.ds_store", &ds_store},
-             {"windows.thumbs_db", &thumbs_db},
-             {"windows.desktop_ini", &desktop_ini},
-             {"os.icon_r", &icon_r}} {}
+    : rules_{{"macos.appledouble", &appledouble, apple_kinds},
+             {"macos.ds_store", &ds_store, finder_kinds},
+             {"windows.thumbs_db", &thumbs_db, thumbnail_kinds},
+             {"windows.desktop_ini", &desktop_ini, text_kinds},
+             {"os.icon_r", &icon_r, text_kinds}} {}
+
+RuleMatch ExclusionEngine::evaluate_rule(const Rule& rule, const EntryFacts& entry) const {
+  auto match = rule.fn(entry);
+  if (match.confidence == Confidence::certain && entry.kind && *entry.kind != FileKind::unknown &&
+      std::find(rule.expected_kinds.begin(), rule.expected_kinds.end(), *entry.kind) == rule.expected_kinds.end()) {
+    match.confidence = Confidence::probable;
+    match.explanation_id = "am.import.exclusion.signature_conflict";
+  }
+  return match;
+}
 
 RuleMatch ExclusionEngine::evaluate(const EntryFacts& entry) const {
   RuleMatch best;
   for (const auto& r : rules_) {
-    RuleMatch m = r.fn(entry);
+    RuleMatch m = evaluate_rule(r, entry);
     if (rank(m.confidence) > rank(best.confidence)) best = std::move(m);
   }
   return best;
@@ -94,7 +110,7 @@ RuleMatch ExclusionEngine::evaluate(const EntryFacts& entry, std::span<const std
   RuleMatch best;
   for (const auto& rule : rules_) {
     if (std::find(enabled_rules.begin(), enabled_rules.end(), rule.id) == enabled_rules.end()) continue;
-    auto match = rule.fn(entry);
+    auto match = evaluate_rule(rule, entry);
     if (rank(match.confidence) > rank(best.confidence)) best = std::move(match);
   }
   return best;

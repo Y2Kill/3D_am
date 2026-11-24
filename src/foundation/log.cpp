@@ -7,6 +7,7 @@
 #include <cmath>
 #include <ctime>
 #include <map>
+#include <mutex>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -17,6 +18,8 @@
 namespace am::log {
 namespace {
 std::atomic<std::shared_ptr<Sink>> sink;
+std::atomic<int> minimum_level{static_cast<int>(Level::critical) + 1};
+std::mutex sink_setter;
 thread_local Scope* scope = nullptr;
 void merge(Context& target, const Context& overlay) {
   if (overlay.job_id) target.job_id = overlay.job_id;
@@ -165,11 +168,16 @@ std::string_view level_name(Level level) noexcept {
   const auto i = static_cast<unsigned>(level);
   return i < values.size() ? values[i] : "error";
 }
-void set_sink(std::shared_ptr<Sink> value) noexcept { sink.store(std::move(value), std::memory_order_release); }
-bool enabled(Level level) noexcept {
-  auto target = sink.load(std::memory_order_acquire);
-  return target && level >= target->min_level();
+void set_sink(std::shared_ptr<Sink> value) noexcept {
+  const auto minimum = value ? static_cast<int>(value->min_level()) : static_cast<int>(Level::critical) + 1;
+  std::shared_ptr<Sink> previous;
+  {
+    const std::lock_guard lock(sink_setter);
+    previous = sink.exchange(std::move(value), std::memory_order_acq_rel);
+    minimum_level.store(minimum, std::memory_order_relaxed);
+  }
 }
+bool enabled(Level level) noexcept { return static_cast<int>(level) >= minimum_level.load(std::memory_order_relaxed); }
 Context current_context() { return scope ? scope->context_ : Context{}; }
 Scope::Scope(Context value) noexcept {
   try {
