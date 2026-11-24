@@ -6,6 +6,9 @@ All notable user-visible changes are recorded here.
 
 ### Fixed
 
+- Disabled logging avoids shared-pointer loads, and log quota cleanup tolerates files held by other processes.
+- Import scanning distinguishes links from other Windows reparse tags, skips online-only file reads, and asks about conflicting service filenames and content signatures.
+- Diagnostic exports report skipped cloud placeholders without reading them.
 - Library opening avoids full database scans during clean sessions. Verification
   checks all three databases; unclosed writer sessions check integrity before recovery.
 - FTS row deletion uses indexed ownership keys. Index schema version 2 is rebuilt

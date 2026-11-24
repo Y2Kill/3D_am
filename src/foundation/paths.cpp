@@ -2,9 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
+#include <limits>
 #include <new>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "am/foundation/unicode.hpp"
 
@@ -97,6 +102,122 @@ std::filesystem::path native(const std::filesystem::path& p) {
   return std::filesystem::path(s);  // relative: caller must absolutize first
 #else
   return p;
+#endif
+}
+
+NodeInfo classify_windows_node(const WindowsNodeData& data) noexcept {
+  // Win32 constants are kept numeric so the pure mapping is portable.
+  constexpr std::uint32_t directory = 0x10, reparse = 0x400;
+  constexpr std::uint32_t recall_data = 0x400000, recall_open = 0x40000, offline = 0x1000;
+  const bool link = (data.attributes & reparse) && (data.reparse_tag == 0xa000000cu ||
+                                                    data.reparse_tag == 0xa0000003u || data.reparse_tag == 0xa000001du);
+  NodeInfo result;
+  result.kind = link ? NodeKind::link : (data.attributes & directory) ? NodeKind::directory : NodeKind::file;
+  if (data.attributes & reparse) result.reparse_tag = data.reparse_tag;
+  result.cloud_placeholder =
+      result.kind == NodeKind::file && (data.attributes & (recall_data | recall_open | offline)) != 0;
+  result.size = data.size;
+  result.mtime_ns = data.mtime_ns;
+  return result;
+}
+Result<WindowsNodeData> windows_node_data(const std::filesystem::path& path) {
+#ifdef _WIN32
+  try {
+    auto failure = [](DWORD code) {
+      return Error::make(
+                 code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND ? Errc::not_found : Errc::io_error,
+                 "Node metadata unavailable", std::to_string(code))
+          .in("foundation.paths")
+          .id("am.paths.node_unavailable");
+    };
+    WIN32_FIND_DATAW found{};
+    const auto query = FindFirstFileW(native(path).c_str(), &found);
+    if (query != INVALID_HANDLE_VALUE) {
+      FindClose(query);
+    } else {
+      // FindFirstFile does not accept volume roots. A metadata-only handle also supports them.
+      const auto handle =
+          CreateFileW(native(path).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                      OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+      if (handle == INVALID_HANDLE_VALUE) return failure(GetLastError());
+      BY_HANDLE_FILE_INFORMATION basic{};
+      FILE_ATTRIBUTE_TAG_INFO tag{};
+      const bool ok = GetFileInformationByHandle(handle, &basic) &&
+                      GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &tag, sizeof(tag));
+      const auto code = GetLastError();
+      CloseHandle(handle);
+      if (!ok) return failure(code);
+      found.dwFileAttributes = tag.FileAttributes;
+      found.dwReserved0 = tag.ReparseTag;
+      found.nFileSizeHigh = basic.nFileSizeHigh;
+      found.nFileSizeLow = basic.nFileSizeLow;
+      found.ftLastWriteTime = basic.ftLastWriteTime;
+    }
+    WindowsNodeData result;
+    result.attributes = found.dwFileAttributes;
+    result.reparse_tag = found.dwReserved0;
+    result.size = (static_cast<std::uint64_t>(found.nFileSizeHigh) << 32) | found.nFileSizeLow;
+    const auto ticks =
+        (static_cast<std::uint64_t>(found.ftLastWriteTime.dwHighDateTime) << 32) | found.ftLastWriteTime.dwLowDateTime;
+    constexpr std::uint64_t epoch = 116444736000000000ull;
+    const auto magnitude = ticks >= epoch ? ticks - epoch : epoch - ticks;
+    if (magnitude <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)() / 100))
+      result.mtime_ns =
+          ticks >= epoch ? static_cast<std::int64_t>(magnitude * 100) : -static_cast<std::int64_t>(magnitude * 100);
+    return result;
+  } catch (...) {
+    return Error::make(Errc::io_error, "Node metadata unavailable")
+        .in("foundation.paths")
+        .id("am.paths.node_unavailable");
+  }
+#else
+  (void)path;
+  return Error::make(Errc::unsupported, "Windows node metadata is unavailable on this platform")
+      .in("foundation.paths")
+      .id("am.paths.node_unavailable");
+#endif
+}
+Result<NodeInfo> node_info(const std::filesystem::path& path) {
+#ifdef _WIN32
+  auto data = windows_node_data(path);
+  if (!data) return data.error();
+  return classify_windows_node(*data);
+#else
+  try {
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (error || !std::filesystem::exists(status))
+      return Error::make(Errc::io_error, "Node metadata unavailable", error.message())
+          .in("foundation.paths")
+          .id("am.paths.node_unavailable");
+    NodeInfo result;
+    result.kind = std::filesystem::is_symlink(status)        ? NodeKind::link
+                  : std::filesystem::is_directory(status)    ? NodeKind::directory
+                  : std::filesystem::is_regular_file(status) ? NodeKind::file
+                                                             : NodeKind::other;
+    if (result.kind != NodeKind::link) {
+      const auto modified = std::filesystem::last_write_time(path, error);
+      if (error)
+        return Error::make(Errc::io_error, "Node metadata unavailable", error.message())
+            .in("foundation.paths")
+            .id("am.paths.node_unavailable");
+      result.mtime_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::filesystem::file_time_type::clock::to_sys(modified).time_since_epoch())
+                            .count();
+      if (result.kind == NodeKind::file) {
+        result.size = std::filesystem::file_size(path, error);
+        if (error)
+          return Error::make(Errc::io_error, "Node metadata unavailable", error.message())
+              .in("foundation.paths")
+              .id("am.paths.node_unavailable");
+      }
+    }
+    return result;
+  } catch (...) {
+    return Error::make(Errc::io_error, "Node metadata unavailable")
+        .in("foundation.paths")
+        .id("am.paths.node_unavailable");
+  }
 #endif
 }
 

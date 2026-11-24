@@ -39,7 +39,9 @@ std::string basename(std::time_t time) {
   return std::string(text) + std::to_string(process_id()) + ".jsonl";
 }
 void quota(const LoggingOptions& options) {
-  const auto root = fs::weakly_canonical(options.directory);
+  std::error_code error;
+  const auto root = fs::weakly_canonical(paths::native(options.directory), error);
+  if (error) return;
   const std::regex pattern(R"(^am-[0-9]{8}T[0-9]{6}Z-([0-9]+)(\.[0-9]+)?\.jsonl$)");
   struct Item {
     fs::path path;
@@ -50,15 +52,32 @@ void quota(const LoggingOptions& options) {
   };
   std::vector<Item> files;
   std::uint64_t total = 0;
-  for (const auto& file : fs::directory_iterator(root)) {
-    if (!fs::is_regular_file(file.symlink_status())) continue;
-    const auto name = file.path().filename().string();
+  const fs::directory_iterator end;
+  fs::directory_iterator cursor(paths::native(root), error);
+  for (; !error && cursor != end; cursor.increment(error)) {
+    const auto status = cursor->symlink_status(error);
+    if (error) {
+      error.clear();
+      continue;
+    }
+    if (!fs::is_regular_file(status)) continue;
+    const auto encoded = cursor->path().filename().u8string();
+    const std::string name(encoded.begin(), encoded.end());
     std::smatch match;
     if (!std::regex_match(name, match, pattern)) continue;
-    const auto size = file.file_size();
+    const auto size = cursor->file_size(error);
+    if (error) {
+      error.clear();
+      continue;
+    }
+    const auto modified = cursor->last_write_time(error);
+    if (error) {
+      error.clear();
+      continue;
+    }
     total = size > (std::numeric_limits<std::uint64_t>::max)() - total ? (std::numeric_limits<std::uint64_t>::max)()
                                                                        : total + size;
-    files.push_back({file.path(), size, name, match[1].str() == std::to_string(process_id()), file.last_write_time()});
+    files.push_back({cursor->path(), size, name, match[1].str() == std::to_string(process_id()), modified});
   }
   std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
     return a.modified == b.modified ? a.name < b.name : a.modified < b.modified;
@@ -66,9 +85,19 @@ void quota(const LoggingOptions& options) {
   for (const auto& file : files) {
     if (total <= options.max_total_bytes) break;
     if (file.own) continue;
-    const auto checked = fs::weakly_canonical(file.path);
-    if (checked.parent_path() != root || fs::is_symlink(fs::symlink_status(file.path))) continue;
-    if (fs::remove(checked)) total -= std::min(total, file.size);
+    const auto checked = fs::weakly_canonical(paths::native(file.path), error);
+    if (error || checked.parent_path() != root) {
+      error.clear();
+      continue;
+    }
+    const auto status = fs::symlink_status(paths::native(file.path), error);
+    if (error || fs::is_symlink(status)) {
+      error.clear();
+      continue;
+    }
+    if (options.before_remove && !options.before_remove(checked)) continue;
+    if (fs::remove(paths::native(checked), error)) total -= std::min(total, file.size);
+    error.clear();
   }
 }
 class FileLog final : public log::Sink {

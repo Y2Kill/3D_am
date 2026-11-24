@@ -31,9 +31,21 @@ add_executable(am_unit_tests
 target_sources(am_unit_tests PRIVATE unit/test_jobs.cpp unit/test_log.cpp)
 target_compile_definitions(am_unit_tests PRIVATE AM_LOG_RECORD_ROOT="${PROJECT_SOURCE_DIR}/.cache/log-record-tests")
 target_link_libraries(am_unit_tests PRIVATE am::application GTest::gtest_main)
+target_sources(am_unit_tests PRIVATE unit/test_node_info.cpp)
+target_compile_definitions(am_unit_tests PRIVATE AM_NODE_INFO_ROOT="${PROJECT_SOURCE_DIR}/.cache/node-info-tests")
 target_compile_definitions(am_unit_tests PRIVATE
   AM_UNICODE_DATA_DIR="${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0")
 if(AM_WITH_CONTAINER)
+  if(TARGET am_cli)
+    find_package(CLI11 CONFIG REQUIRED)
+    add_executable(am_diag_export_test_driver ${PROJECT_SOURCE_DIR}/src/application/cli/main.cpp cli/diagnostic_node_data_hook.cpp)
+    target_link_libraries(am_diag_export_test_driver PRIVATE am::application am::foundation CLI11::CLI11)
+    target_compile_definitions(am_diag_export_test_driver PRIVATE AM_DIAGNOSTIC_CLI_TEST_HOOK=1)
+    am_apply_defaults(am_diag_export_test_driver)
+    if(WIN32)
+      target_sources(am_diag_export_test_driver PRIVATE ${PROJECT_SOURCE_DIR}/src/application/common/am.manifest)
+    endif()
+  endif()
   target_sources(am_unit_tests PRIVATE unit/test_import_scan.cpp unit/test_import_plan.cpp)
   target_compile_definitions(am_unit_tests PRIVATE AM_IMPORT_SCAN_ROOT="${PROJECT_SOURCE_DIR}/.cache/import-scan-tests" AM_IMPORT_PLAN_CASES="${PROJECT_SOURCE_DIR}/.cache/import-plan-cases")
   target_sources(am_unit_tests PRIVATE unit/test_logging_services.cpp)
@@ -137,6 +149,16 @@ if(AM_PYTHON_TESTS)
         --root ${PROJECT_SOURCE_DIR} --check)
     set_tests_properties(golden_regen_check PROPERTIES LABELS "req:K-3;req:K-6;req:ADR-0035")
     if(AM_WITH_CONTAINER)
+      if(TARGET am_diag_export_test_driver)
+        foreach(_am_diag_case json text unchanged)
+          add_test(NAME cli_diagnostic_placeholders_${_am_diag_case}
+            COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_diagnostic_placeholders_cli.py
+              --am $<TARGET_FILE:am_cli> --driver $<TARGET_FILE:am_diag_export_test_driver>
+              --root ${PROJECT_SOURCE_DIR}/.cache/diagnostic-placeholders-cli-tests
+              --metadata-root ${PROJECT_SOURCE_DIR}/.cache/diag-export-cases --case ${_am_diag_case})
+          set_tests_properties(cli_diagnostic_placeholders_${_am_diag_case} PROPERTIES LABELS "req:NFR-14.4.9;req:K-130" TIMEOUT 120)
+        endforeach()
+      endif()
       add_test(NAME log_word_ranges_check COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/tools/gen_log_word_ranges.py --check)
       set_tests_properties(log_word_ranges_check PROPERTIES LABELS "req:NFR-14.4.9;req:K-130")
       add_test(NAME message_catalog_check

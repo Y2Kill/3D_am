@@ -541,6 +541,16 @@ for name, positive, fixture_dir in (("log-record", log_example, ".cache/log-reco
         cases += [("level", dict(positive, level="invalid"), False), ("ctx", missing, False)]
     else:
         cases += [("format", dict(positive, format="invalid"), False)]
+        unavailable = {"source_kind": "log", "name": "am-20261124T000000Z-123.jsonl", "reason": "cloud_placeholder"}
+        cases += [("unavailable", dict(positive, unavailable=[unavailable]), True),
+                  ("unavailable-database", dict(positive, unavailable=[dict(unavailable, source_kind="database", name="index.sqlite")]), True),
+                  ("unavailable-library", dict(positive, unavailable=[dict(unavailable, source_kind="library", name="am-library.toml")]), True),
+                  ("unavailable-extra", dict(positive, unavailable=[dict(unavailable, extra=True)]), False),
+                  ("unavailable-reason", dict(positive, unavailable=[dict(unavailable, reason="unknown")]), False),
+                  ("unavailable-kind", dict(positive, unavailable=[dict(unavailable, source_kind="unknown")]), False),
+                  ("unavailable-posix-path", dict(positive, unavailable=[dict(unavailable, name="/home/user/log.jsonl")]), False),
+                  ("unavailable-windows-path", dict(positive, unavailable=[dict(unavailable, name="C:\\Users\\user\\log.jsonl")]), False),
+                  ("unavailable-empty", dict(positive, unavailable=[]), False)]
     for label, value, expected in cases:
         report(name + ":" + label, "NFR-14.4.9", "diagnostic schema", expected, current.is_valid(value))
     actual = list((Path(args.root) / fixture_dir).glob("*.json"))

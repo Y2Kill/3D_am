@@ -31,11 +31,15 @@ Error error(Errc c, std::string_view id, std::string detail) {
 [[noreturn]] void fail(Errc c, std::string_view id, std::string detail) { throw error(c, id, std::move(detail)); }
 Error oom() { return error(Errc::resource_exhausted, "am.commit.out_of_memory", "Allocation failed"); }
 Error io(std::string detail) { return error(Errc::io_error, "am.commit.io_error", std::move(detail)); }
-void log_aborted(std::string_view op_id,bool changed,Errc code,std::string_view detail) noexcept {
-  if(changed || !log::enabled(log::Level::warning))return;
-  try {auto cause=error(code,code==Errc::resource_exhausted ? "am.commit.out_of_memory":"am.commit.io_error",std::string(detail));
-    log::write(log::Level::warning,"storage.commit","commit.aborted","Commit aborted",{{"op_id",std::string(op_id)}},&cause);
-  } catch(...) {}
+void log_aborted(std::string_view op_id, bool changed, Errc code, std::string_view detail) noexcept {
+  if (changed || !log::enabled(log::Level::warning)) return;
+  try {
+    auto cause = error(code, code == Errc::resource_exhausted ? "am.commit.out_of_memory" : "am.commit.io_error",
+                       std::string(detail));
+    log::write(log::Level::warning, "storage.commit", "commit.aborted", "Commit aborted",
+               {{"op_id", std::string(op_id)}}, &cause);
+  } catch (...) {
+  }
 }
 Error base_changed() { return error(Errc::conflict, "am.commit.base_changed", "Target no longer matches the expected file"); }
 template<class T> T take(Result<T> result) { if (!result) throw result.error(); return std::move(result).value(); }
@@ -324,7 +328,7 @@ Result<db::BaseSnapshot> inspect_copy_source(const Path& path) {
   }
 }
 Result<CommitResult> commit_zip(const CommitRequest& r) {
-  log::Scope scope({r.job_id,r.asset_id,{},std::string("zip.commit")});
+  log::Scope scope({r.job_id, r.asset_id, {}, std::string("zip.commit")});
   std::shared_ptr<db::CommitJournal> journal; db::PendingOperation row; bool inserted = false, moved = false; std::shared_ptr<NativeFile> protected_file;
   // This lock deliberately outlives cleanup and every journal transition.
   std::optional<AssetLock> lock;
@@ -341,7 +345,12 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
     const auto available = r.hooks.free_space ? take(r.hooks.free_space(paths.temp_dir)) : free_space(paths.temp_dir);
     const auto margin = std::max<U64>(r.estimated_size / 20 + (r.estimated_size % 20 != 0 ? 1 : 0), 256ULL * 1024 * 1024); // hypothesis, O-17
     if (r.estimated_size > UINT64_MAX - margin || available < r.estimated_size + margin) fail(Errc::insufficient_space, "am.commit.insufficient_space", "Free space is below estimate plus hypothesis reserve");
-    journal = journal_for(paths.root, r.journal); take(journal->insert(row)); inserted = true; AM_LOG(debug,"storage.commit","commit.phase","Commit phase",{{"op_id",row.op_id},{"phase",std::string("prepared")}}); hit(r.hooks, FaultPoint::after_prepared);
+    journal = journal_for(paths.root, r.journal);
+    take(journal->insert(row));
+    inserted = true;
+    AM_LOG(debug, "storage.commit", "commit.phase", "Commit phase",
+           {{"op_id", row.op_id}, {"phase", std::string("prepared")}});
+    hit(r.hooks, FaultPoint::after_prepared);
     auto sink = r.hooks.create_sink ? take(r.hooks.create_sink(paths.temp)) : take(asset_zip::file_sink(paths.temp));
     auto hooked = std::make_shared<HookSink>(); hooked->inner = sink; hooked->hooks = &r.hooks; hooked->threshold = r.hooks.mid_write_after_bytes.value_or(std::max<U64>(1, r.estimated_size / 2));
     asset_zip::WriteSummary summary;
@@ -416,20 +425,55 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
       return result;
     }
     take(journal->advance(row.op_id, db::CommitState::prepared, db::CommitState::verified, evidence)); row.state = db::CommitState::verified; row.verified = evidence;
-    AM_LOG(debug,"storage.commit","commit.phase","Commit phase",{{"op_id",row.op_id},{"phase",std::string("verified")}}); hit(r.hooks, FaultPoint::after_verified_journal);
+    AM_LOG(debug, "storage.commit", "commit.phase", "Commit phase",
+           {{"op_id", row.op_id}, {"phase", std::string("verified")}});
+    hit(r.hooks, FaultPoint::after_verified_journal);
     if (!matches_base(paths.target, row.base, r.budget, r.zip_limits)) throw base_changed();
     hit(r.hooks, FaultPoint::before_replace);
     if (r.copy_source && !matches_base(paths.target, row.base, r.budget, r.zip_limits)) throw base_changed();
     const auto method = replace_file(protected_file, paths.target, evidence, r.hooks, moved); hit(r.hooks, FaultPoint::after_replace);
-    take(journal->advance(row.op_id, db::CommitState::verified, db::CommitState::committed)); row.state = db::CommitState::committed; AM_LOG(debug,"storage.commit","commit.phase","Commit phase",{{"op_id",row.op_id},{"phase",std::string("committed")}}); hit(r.hooks, FaultPoint::after_committed_journal);
+    take(journal->advance(row.op_id, db::CommitState::verified, db::CommitState::committed));
+    row.state = db::CommitState::committed;
+    AM_LOG(debug, "storage.commit", "commit.phase", "Commit phase",
+           {{"op_id", row.op_id}, {"phase", std::string("committed")}});
+    hit(r.hooks, FaultPoint::after_committed_journal);
     if (r.on_committed) take(r.on_committed(row));
-    take(journal->advance(row.op_id, db::CommitState::committed, db::CommitState::indexed)); AM_LOG(debug,"storage.commit","commit.phase","Commit phase",{{"op_id",row.op_id},{"phase",std::string("indexed")}}); hit(r.hooks, FaultPoint::after_indexed_journal); take(journal->remove(row.op_id));
+    take(journal->advance(row.op_id, db::CommitState::committed, db::CommitState::indexed));
+    AM_LOG(debug, "storage.commit", "commit.phase", "Commit phase",
+           {{"op_id", row.op_id}, {"phase", std::string("indexed")}});
+    hit(r.hooks, FaultPoint::after_indexed_journal);
+    take(journal->remove(row.op_id));
     auto actual = NativeFile::open(paths.target);
     return CommitResult{row.op_id, evidence.size, manifest, actual->mtime_ns, method, std::move(summary), hash_seconds};
-  } catch (const Error& e) { if(!moved)AM_LOG(warning,"storage.commit","commit.aborted","Commit aborted",{{"op_id",row.op_id}},&e); try { cleanup(); } catch (...) { } return e; }
-  catch (const std::bad_alloc&) { log_aborted(row.op_id,moved,Errc::resource_exhausted,"Allocation failed"); try { cleanup(); } catch (...) { } return oom(); }
-  catch (const std::exception& e) { log_aborted(row.op_id,moved,Errc::io_error,e.what()); try { cleanup(); } catch (...) { } return io(e.what()); }
-  catch (...) { log_aborted(row.op_id,moved,Errc::io_error,"Unknown commit callback exception"); try { cleanup(); } catch (...) { } return io("Unknown commit callback exception"); }
+  } catch (const Error& e) {
+    if (!moved) AM_LOG(warning, "storage.commit", "commit.aborted", "Commit aborted", {{"op_id", row.op_id}}, &e);
+    try {
+      cleanup();
+    } catch (...) {
+    }
+    return e;
+  } catch (const std::bad_alloc&) {
+    log_aborted(row.op_id, moved, Errc::resource_exhausted, "Allocation failed");
+    try {
+      cleanup();
+    } catch (...) {
+    }
+    return oom();
+  } catch (const std::exception& e) {
+    log_aborted(row.op_id, moved, Errc::io_error, e.what());
+    try {
+      cleanup();
+    } catch (...) {
+    }
+    return io(e.what());
+  } catch (...) {
+    log_aborted(row.op_id, moved, Errc::io_error, "Unknown commit callback exception");
+    try {
+      cleanup();
+    } catch (...) {
+    }
+    return io("Unknown commit callback exception");
+  }
 }
 namespace {
 bool lifecycle_kind(std::string_view kind) { return kind == "trash" || kind == "restore" || kind == "purge"; }
@@ -549,7 +593,7 @@ RecoveryItem recover_lifecycle(const Path& root, db::PendingOperation row, db::C
 }
 }  // namespace
 Result<std::string> commit_lifecycle(const LifecycleRequest& r) {
-  log::Scope scope({{},r.asset_id,{},std::string("asset.lifecycle")});
+  log::Scope scope({{}, r.asset_id, {}, std::string("asset.lifecycle")});
   auto journal = r.journal;
   db::PendingOperation row;
   bool inserted = false, changed = false;
@@ -577,7 +621,8 @@ Result<std::string> commit_lifecycle(const LifecycleRequest& r) {
     journal = journal_for(normalized(r.library_root), journal);
     take(journal->insert(row));
     inserted = true;
-    AM_LOG(debug,"storage.commit","commit.phase","Commit phase",{{"op_id",row.op_id},{"phase",std::string("prepared")}});
+    AM_LOG(debug, "storage.commit", "commit.phase", "Commit phase",
+           {{"op_id", row.op_id}, {"phase", std::string("prepared")}});
     hit(r.hooks, FaultPoint::after_prepared);
     hit(r.hooks, FaultPoint::before_replace);
     db::BaseSnapshot actual;
@@ -600,14 +645,18 @@ Result<std::string> commit_lifecycle(const LifecycleRequest& r) {
     hit(r.hooks, FaultPoint::after_replace);
     take(journal->advance(row.op_id, db::CommitState::prepared, db::CommitState::committed));
     row.state = db::CommitState::committed;
-    AM_LOG(debug,"storage.commit","commit.phase","Commit phase",{{"op_id",row.op_id},{"phase",std::string("committed")}}); hit(r.hooks, FaultPoint::after_committed_journal);
+    AM_LOG(debug, "storage.commit", "commit.phase", "Commit phase",
+           {{"op_id", row.op_id}, {"phase", std::string("committed")}});
+    hit(r.hooks, FaultPoint::after_committed_journal);
     if (r.on_committed) take(r.on_committed(row));
     take(journal->advance(row.op_id, db::CommitState::committed, db::CommitState::indexed));
-    AM_LOG(debug,"storage.commit","commit.phase","Commit phase",{{"op_id",row.op_id},{"phase",std::string("indexed")}}); hit(r.hooks, FaultPoint::after_indexed_journal);
+    AM_LOG(debug, "storage.commit", "commit.phase", "Commit phase",
+           {{"op_id", row.op_id}, {"phase", std::string("indexed")}});
+    hit(r.hooks, FaultPoint::after_indexed_journal);
     take(journal->remove(row.op_id));
     return row.op_id;
   } catch (const Error& e) {
-    if(!changed)AM_LOG(warning,"storage.commit","commit.aborted","Commit aborted",{{"op_id",row.op_id}},&e);
+    if (!changed) AM_LOG(warning, "storage.commit", "commit.aborted", "Commit aborted", {{"op_id", row.op_id}}, &e);
     try {
       cleanup();
     } catch (...) {
@@ -640,7 +689,7 @@ Result<std::vector<RecoveryItem>> recover(const Path& root, const RecoveryOption
   try {
     auto journal = journal_for(normalized(root), options.journal); auto rows = take(journal->list()); std::vector<RecoveryItem> report;
     for (auto row : rows) {
-      log::Scope scope({row.job_id,row.asset_id,{},std::string("zip.recover")});
+      log::Scope scope({row.job_id, row.asset_id, {}, std::string("zip.recover")});
       RecoveryItem item; item.op_id = row.op_id; item.path = row.target_path;
       try {
         auto locked = AssetLock::acquire(root, row.asset_id, options.lock_timeout);
@@ -648,7 +697,8 @@ Result<std::vector<RecoveryItem>> recover(const Path& root, const RecoveryOption
         auto lock = std::move(locked).value();
         if (lifecycle_kind(row.kind)) {
           report.push_back(recover_lifecycle(root, row, *journal, options));
-          AM_LOG(info,"storage.commit","commit.recovered","Commit recovered",{{"op_id",row.op_id},{"outcome",std::string(outcome_name(report.back().outcome))}});
+          AM_LOG(info, "storage.commit", "commit.recovered", "Commit recovered",
+                 {{"op_id", row.op_id}, {"outcome", std::string(outcome_name(report.back().outcome))}});
           continue;
         }
         const auto paths = layout(root, row.target_path, row.asset_id, row.op_id);
@@ -678,7 +728,8 @@ Result<std::vector<RecoveryItem>> recover(const Path& root, const RecoveryOption
       catch (const std::bad_alloc&) { item.outcome = RecoveryOutcome::failed; item.error = oom(); }
       catch (const std::exception& e) { item.outcome = RecoveryOutcome::failed; item.error = io(e.what()); }
       catch (...) { item.outcome = RecoveryOutcome::failed; item.error = io("Unknown recovery callback exception"); }
-      AM_LOG(info,"storage.commit","commit.recovered","Commit recovered",{{"op_id",item.op_id},{"outcome",std::string(outcome_name(item.outcome))}});
+      AM_LOG(info, "storage.commit", "commit.recovered", "Commit recovered",
+             {{"op_id", item.op_id}, {"outcome", std::string(outcome_name(item.outcome))}});
       report.push_back(std::move(item));
     }
     std::set<Path, PathLess> active;

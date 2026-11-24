@@ -183,17 +183,27 @@ struct ExecutorState : std::enable_shared_from_this<ExecutorState> {
   Clock::time_point now() const { return options.clock ? options.clock() : Clock::now(); }
   void emit(const JobEvent& event) noexcept {
     try {
-      log::Scope scope({event.job.job_id,{},{},{}});
       if(event.kind==EventKind::progress) {
-        if(log::enabled(log::Level::trace)) {
-          std::vector<log::Field> fields{{"unit",event.job.progress.unit},{"stage",event.job.progress.stage}};
+        if (log::enabled(log::Level::trace)) {
+          log::Scope scope({event.job.job_id, {}, {}, {}});
+          std::vector<log::Field> fields{{"unit", event.job.progress.unit}, {"stage", event.job.progress.stage}};
           if(event.job.progress.done)fields.push_back({"done",*event.job.progress.done});
           if(event.job.progress.total)fields.push_back({"total",*event.job.progress.total});
-          log::write(log::Record{log::Level::trace,"jobs","job.progress","Job progress",fields,nullptr,{}});
+          log::write(log::Record{log::Level::trace, "jobs", "job.progress", "Job progress", fields, nullptr, {}});
         }
       } else if(event.kind==EventKind::started || event.kind==EventKind::finished) {
-        const auto level=event.kind==EventKind::started || event.job.state==JobState::succeeded ? log::Level::info : event.job.state==JobState::failed || event.job.state==JobState::resource_error || event.job.state==JobState::cannot_continue_safely ? log::Level::error : log::Level::warning;
-        if(log::enabled(level))log::write(level,"jobs",event.kind==EventKind::started?"job.started":"job.finished","Job lifecycle",{{"type",event.job.type},{"attempt",static_cast<std::int64_t>(event.job.attempt)},{"state",std::string(job_state_name(event.job.state))}});
+        const auto level = event.kind == EventKind::started || event.job.state == JobState::succeeded ? log::Level::info
+                           : event.job.state == JobState::failed || event.job.state == JobState::resource_error ||
+                                   event.job.state == JobState::cannot_continue_safely
+                               ? log::Level::error
+                               : log::Level::warning;
+        if (log::enabled(level)) {
+          log::Scope scope({event.job.job_id, {}, {}, {}});
+          log::write(level, "jobs", event.kind == EventKind::started ? "job.started" : "job.finished", "Job lifecycle",
+                     {{"type", event.job.type},
+                      {"attempt", static_cast<std::int64_t>(event.job.attempt)},
+                      {"state", std::string(job_state_name(event.job.state))}});
+        }
       }
     } catch(...) {}
     if (observer) observer->on_event(event);
@@ -255,10 +265,10 @@ struct ExecutorState : std::enable_shared_from_this<ExecutorState> {
     if (started) emit({EventKind::started, execution->record, {}});
     auto self = shared_from_this();
     try {
-      const auto inherited=log::current_context();
+      const auto inherited = log::current_context();
       execution->worker = std::thread([self, execution, inherited] {
         log::Scope outer(inherited);
-        log::Scope scope({execution->record.job_id,{},{},{}});
+        log::Scope scope({execution->record.job_id, {}, {}, {}});
         auto invoke = [&]() -> JobOutcome {
           const auto profile = job_profile(execution->record, self->options.profile);
           if (!profile) return JobOutcome::failure(profile.error());

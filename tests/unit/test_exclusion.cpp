@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <array>
+
 #include "am/services/import/exclusion_rules.hpp"
 
 using namespace am::import;
@@ -41,4 +43,35 @@ TEST(Exclusion, DsStoreAndThumbs) {
 TEST(Exclusion, OrdinaryModelIsKept) {
   ExclusionEngine e;
   EXPECT_EQ(e.evaluate({"Raven/Pre Support/arm1.stl", 1999534, FileKind::stl_binary}).confidence, Confidence::none);
+}
+
+TEST(Exclusion, KnownSignatureConflictsDowngradeNameOnlyRules) {
+  RecordProperty("req", "SC-3|ADR-0011");
+  ExclusionEngine engine;
+  EXPECT_EQ(kExclusionRulesVersion, 2);
+  for (const auto kind : {FileKind::png, FileKind::zip, FileKind::stl_binary, FileKind::pdf}) {
+    for (const auto* name : {"desktop.ini", "Icon\r"}) {
+      const auto match = engine.evaluate({name, 120, kind});
+      EXPECT_EQ(match.confidence, Confidence::probable);
+      EXPECT_EQ(match.explanation_id, "am.import.exclusion.signature_conflict");
+    }
+  }
+  const std::array<std::string, 1> enabled{"windows.desktop_ini"};
+  EXPECT_EQ(engine.evaluate({"desktop.ini", 120, FileKind::zip}, enabled).confidence, Confidence::probable);
+}
+TEST(Exclusion, IniAndExpectedTextKeepTheExistingConfidence) {
+  RecordProperty("req", "SC-3|ADR-0011");
+  ExclusionEngine engine;
+  const std::string ini = "[.ShellClassInfo]\nIconResource=folder.ico\n";
+  const auto detected =
+      am::detect_kind(std::span(reinterpret_cast<const std::uint8_t*>(ini.data()), ini.size()), ini.size());
+  EXPECT_EQ(detected, FileKind::unknown);
+  EXPECT_EQ(engine.evaluate({"desktop.ini", ini.size(), detected}).confidence, Confidence::certain);
+  for (const auto kind :
+       {FileKind::unknown, FileKind::stl_ascii, FileKind::obj_text, FileKind::gcode_text, FileKind::rtf}) {
+    EXPECT_EQ(engine.evaluate({"desktop.ini", 120, kind}).confidence, Confidence::certain);
+    EXPECT_EQ(engine.evaluate({"Icon\r", 120, kind}).confidence, Confidence::certain);
+  }
+  EXPECT_EQ(engine.evaluate({".DS_Store", 120, FileKind::png}).confidence, Confidence::probable);
+  EXPECT_EQ(engine.evaluate({"Thumbs.db", 120, FileKind::png}).confidence, Confidence::probable);
 }

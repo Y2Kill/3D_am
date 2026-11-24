@@ -359,7 +359,16 @@ TEST_P(JobsExecutor, PauseCancelAndShutdownWaitForSafePointAndReleaseAttempt) {
     add(handlers, "test.safe", [&](auto& context) {
       entered.signal();
       if (!release.wait()) return j::JobOutcome::failure(job_tests::error("test.timeout"));
-      return context.stop().stop_requested() ? j::JobOutcome::interrupted() : j::JobOutcome::success();
+      std::mutex mutex;
+      std::condition_variable_any stopped;
+      std::unique_lock lock(mutex);
+      stopped.wait_until(lock, context.stop(), std::chrono::steady_clock::now() + std::chrono::seconds(15),
+                         [] { return false; });
+      if (!context.stop().stop_requested()) {
+        ADD_FAILURE() << "Executor did not deliver the stop request before the test deadline";
+        return j::JobOutcome::failure(job_tests::error("test.stop_timeout"));
+      }
+      return j::JobOutcome::interrupted();
     });
     const auto job = enqueue("test.safe");
     auto config = options();

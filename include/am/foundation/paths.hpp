@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -19,6 +20,26 @@ namespace am::paths {
 // Windows: absolute paths get the \\?\ (or \\?\UNC\) prefix and backslashes.
 // Other platforms: returned unchanged.
 std::filesystem::path native(const std::filesystem::path& p);
+
+enum class NodeKind { file, directory, link, other };
+struct WindowsNodeData {
+  std::uint32_t attributes = 0, reparse_tag = 0;
+  std::optional<std::uint64_t> size;
+  std::optional<std::int64_t> mtime_ns;
+};
+using NodeDataHook = std::function<Result<WindowsNodeData>(const std::filesystem::path&)>;
+struct NodeInfo {
+  NodeKind kind = NodeKind::other;
+  std::optional<std::uint32_t> reparse_tag;
+  bool cloud_placeholder = false;
+  std::optional<std::uint64_t> size;
+  std::optional<std::int64_t> mtime_ns;
+};
+// Pure Windows metadata mapping, also testable on POSIX. Never reads file data.
+NodeInfo classify_windows_node(const WindowsNodeData&) noexcept;
+Result<WindowsNodeData> windows_node_data(const std::filesystem::path&);
+// Does not follow links or read file data. POSIX uses symlink_status.
+Result<NodeInfo> node_info(const std::filesystem::path&);
 
 // Normalises an original path from an archive or filesystem to forward
 // slashes, drops leading "./" and "/" and collapses duplicate separators.

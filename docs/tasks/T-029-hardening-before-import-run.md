@@ -1,6 +1,6 @@
 # T-029. Укрепление перед `import run`: нестабильный тест, журнал, reparse points, конфликт сигнатур (M3a)
 
-**Статус:** ready · **Веха:** M3a · **Основание:** приёмки T-027 (замечания 1–3) и T-028 (замечания 1–3); ТЗ v1.8 §6.5.2, §6.9.2, §14.4, §14.5, §14.6 (нет скрытой сетевой передачи); ADR-0011, ADR-0024
+**Статус:** review · **Веха:** M3a · **Основание:** приёмки T-027 (замечания 1–3) и T-028 (замечания 1–3); ТЗ v1.8 §6.5.2, §6.9.2, §14.4, §14.5, §14.6 (нет скрытой сетевой передачи); ADR-0011, ADR-0024
 
 ## Цель
 
@@ -105,4 +105,108 @@
 
 ## Отчёт исполнителя
 
-_(заполняет исполнитель)_
+### Ветка и коммиты
+
+Ветка `codex/T-029`, база `9e2c173`. Реализация завершена, задача передана на review. Слияние и push не выполнялись. Коммиты до итогового отчёта:
+
+```text
+3bd83f7 — T-029: start hardening and record scope questions
+c7af839 — T-029: harden stop tests, logging, metadata classification and exclusions
+```
+
+Итоговый отчёт и статус review оформлены следующим отдельным коммитом ветки.
+
+### Критерии приёмки
+
+1. Выполнены четыре обязательных полных прогона; фактические результаты ниже. Периодическая проверка 250 000 исключена предписанным -LE periodic, генерация большого набора не проводилась. Реальная коллекция не использовалась.
+2. Исправлен только тест PauseCancelAndShutdownWaitForSafePointAndReleaseAttempt: после release обработчик ждёт фактический context.stop() через прерываемое условное ожидание, с прежним тестовым сроком 15 секунд. Тайм-аут даёт ADD_FAILURE и failure, а не success. До исправления получено 37 провалов на Windows и 57 на Linux, после — 0 при 300 повторах на каждой платформе и обоих хранилищах. CompletedWorkWinsOverLateShutdown не менялся. Проверены ParentPauseResumeAndCancelCascadeAtSafePoints (control синхронно передаёт stop до возврата), ThreeGracefulShutdownsDoNotExhaustCrashRecovery (уже ждёт stop-token), VerifyJob.CancelAndShutdownAtBoundaryPreserveRequiredAttemptSemantics (уже ждёт stopped перед release); такой же гонки в них нет. Семантика остановки Executor не менялась.
+3. enabled() читает только atomic<int> с relaxed, shared_ptr не загружается. set_sink сериализует обновления двух атомиков и освобождает прежнюю ссылку после блокировки. write независимо проверяет загруженный приёмник и его уровень; время жизни — shared_ptr. В emit Scope и поля создаются только для включённого уровня. Нулевой приёмник, минимальный уровень, отсутствие вызовов min_level при enabled и существующая многопоточная замена проверены. Замер до/после — ниже. В logging.md описана фактическая гарантия: уже начатая запись может закончиться на старом приёмнике после set_sink(nullptr); отключение не является барьером всех записей.
+4. Квота использует error_code для обхода/метаданных/удаления и paths::native. Неудаляемый файл пропускается, проверяется следующий; это не отключает создание журнала. Добавлены before_remove, тест отказа с последующим удалением следующего файла и Windows-тест с чужим PID в имени и реальным handle без FILE_SHARE_DELETE. Удерживаемый файл сохраняется, open_file_log успешен. Форматирование protocol.cpp проверено сравнением без пробельных символов: только стиль. В executor.cpp менялись только вставки журналирования.
+5. В foundation введены WindowsNodeData, NodeInfo, чистое classify_windows_node и системные getters. Windows получает метаданные через FindFirstFileW, с метаданным handle без доступа к данным для корней; POSIX сохраняет symlink_status. Ссылки — только SYMLINK/MOUNT_POINT/LX_SYMLINK, остальные теги дают обычные file/directory. На обеих платформах выполнены 20 отдельных табличных случаев тегов/атрибутов и native-проверка; существующий тест реальных ссылок/junction T-028 сохранён. Скан с подменой сырых данных не открывает и не хеширует заглушку, сохраняет размер/mtime, unavailable/cloud_placeholder/am.import.cloud_placeholder/ask/has_unavailable; облачный каталог обходится, DEDUP-файл читается. Проверены файл внутри дерева и отдельный корень. В diag export заглушки журналов и библиотечных источников пропускаются успешно с metadata.unavailable; библиотечная сводка при такой базе не открывается. Windows-тесты используют реальный OFFLINE-атрибут; общий raw hook дополнительно проверен CLI на обеих платформах. Отдельный DiagExport-тест сохраняет читаемость DEDUP/WCI/неизвестного тега.
+6. Правила исключений v2 содержат expected_kinds; известное противоречащее содержимое понижает certain до probable и возвращает am.import.exclusion.signature_conflict. Для desktop.ini/Icon с CR допустимы unknown/stl_ascii/obj_text/gcode_text/rtf; обязательные сигнатуры AppleDouble/DS_Store/Thumbs.db не менялись. Проверены PNG, ZIP, бинарный STL, PDF и текст. Прежние тесты test_exclusion.cpp и группа 7 T-028 не ослаблены. В тесте В-3 T-028 ожидание certain для ZIP desktop.ini заменено на требуемое probable с дополнительной проверкой explanation_id; ready_asset/ask и сохранение rule_id остаются.
+7. arch_check проходит; новых портов и внешних зависимостей foundation нет. Исследование существующих библиотек сверено: используются прежние std/Win32/POSIX, CLI11 и инструменты тестирования. Обновлены logging.md, import_pipeline.md, CHANGELOG и только примечание строки 11 versioning. Опубликованный манифест, golden, SQL, ADR, ТЗ и архив владельца не изменены.
+
+### Уточнения управляющего и согласованный объём
+
+- **В-1 решён:** разрешён hook в `include/am/services/import/scan.hpp` с подменой сырых атрибутов/тега и метаданных, а не результата классификации. Общий чистый classifier находится в foundation; hook — на уровне запроса, не глобальный и не для плагинов.
+- **В-2 решён:** разрешены необязательное `unavailable[]`, расширение `schemas/diagnostics.v1.schema.json` и `tests/schema/schema_check.py`, примечание в строке 11 versioning без смены версии. Поле отсутствует при отсутствии пропусков; элементы закрыты, имена только служебные, reason пока только cloud_placeholder. Заглушка не приводит к ошибке экспорта.
+- **В-3 решён:** разрешены точечная правка diag export в `src/application/cli/main.cpp` и новые CLI-тесты. JSON и текст получают данные из DiagnosticReport; обычный вывод сохранён. Для CLI-проверок один и тот же тип raw NodeDataHook передаётся также в DiagnosticOptions; тестовый драйвер собирает тот же main.cpp с отдельным определением. Производственный CLI не содержит переменную окружения для внедрения, что проверяет тест. Это реализует позднейшее требование В-3 о CLI-тесте с hook В-1; классификатор остаётся общим.
+
+### Команды и фактические результаты
+
+| Прогон | PASS | SKIP | FAIL | Код возврата |
+|---|---:|---:|---:|---:|
+| min | 146 | 0 | 0 | 0 |
+| windows | 593 | 0 | 0 | 0 |
+| offline | 593 | 0 | 0 | 0 |
+| linux | 558 | 32 | 0 | 0 |
+
+`tools\build_min.cmd --ci`:
+
+```text
+100% tests passed, 0 tests failed out of 146
+Total Test time (real) =  18.07 sec
+req_report: 20 IDs, 146 tests, 49 without req, 0 invalid IDs
+```
+
+`tools\build_cli.cmd --ci -LE periodic`:
+
+```text
+100% tests passed, 0 tests failed out of 593
+Total Test time (real) = 1391.14 sec
+req_report: 72 IDs, 594 tests, 49 without req, 0 invalid IDs
+```
+
+`tools\build_cli.cmd --offline --ci -LE periodic`:
+
+```text
+100% tests passed, 0 tests failed out of 593
+Total Test time (real) = 1511.20 sec
+req_report: 72 IDs, 594 tests, 49 without req, 0 invalid IDs
+```
+
+WSL: `tools/build_linux.sh cli --offline --ci -LE periodic`:
+
+```text
+100% tests passed, 0 tests failed out of 590
+Total Test time (real) = 1783.71 sec
+req_report: 72 IDs, 591 tests, 48 without req, 0 invalid IDs
+```
+
+Полные логи — `.cache/t029/full-min.log`, `full-windows.log`, `full-offline.log`, `full-linux.log`; коды возврата и время всей команды с конфигурацией/сборкой — validation-status.json. req_report CLI считает также исключённый periodic, поэтому его инвентарь на один больше набора ctest. Старые тесты без req не исправлялись; invalid IDs отсутствуют.
+
+В Linux новые SKIP — реальное отрицание FILE_SHARE_DELETE и два теста реального FILE_ATTRIBUTE_OFFLINE (требуют Win32). Их Windows-прогоны выполнены; табличная классификация и CLI с сырым hook выполняются на обеих платформах без SKIP. Унаследованные пропуски: Win32/NTFS и production-write capabilities, тест точного восстановления mtime при ограничении DrvFS, а также исходный тест T-028 сырого байта FF, который DrvFS заменяет на U+FFFD ещё при создании. Конкретный список — в конце full-linux.log. Лимиты, входы и матрица требований ради прохождения тестов не ослаблялись.
+
+### 300 повторов исходного и исправленного теста
+
+Фильтр: `--gtest_filter=*JobsExecutor.PauseCancelAndShutdownWaitForSafePointAndReleaseAttempt* --gtest_repeat=300 --gtest_color=no`. Использован am_unit_tests из build/win-cli и build/linux-cli. Каждый из двух параметров (memory/SQLite) выполняется 300 раз — по 600 запусков на платформу. Debug, одинаковые флаги; Windows и WSL запускались парой как до, так и после исправления.
+
+| Платформа | Версия теста | Повторов на параметр | Запусков | Провалов memory | Провалов SQLite |
+|---|---|---:|---:|---:|---:|
+| windows | baseline | 300 | 600 | 37 | 0 |
+| linux | baseline | 300 | 600 | 57 | 0 |
+| windows | fixed | 300 | 600 | 0 | 0 |
+| linux | fixed | 300 | 600 | 0 | 0 |
+
+Исходные измерения выполнены до пересборки T-029. Логи baseline-repeat-windows/linux.log и fixed-repeat-windows/linux.log в .cache/t029; repeat-summary.json содержит фактический счётчик RUN/FAILED и повторов. Провалы исходного теста — намеренно зафиксированное воспроизведение, не результат финальных прогонов.
+
+### Стоимость журнала до/после
+
+Те же тесты Log.MeasuresDisabledAndInfoCostWithoutThresholds (200 000 вызовов) и FileLog.MeasuresInfoFileCostWithoutThreshold (2 000 записей). Debug, время на вызов в наносекундах; установка приёмника и создание файла не входят в интервалы. Две платформы сравниваются каждая со своей исходной версией. Пороги, нормативы и статистические гарантии не назначались.
+
+| Платформа | Версия | disabled, нс | memory info, нс | file info, нс |
+|---|---|---:|---:|---:|
+| windows | baseline | 139.781 | 1475.86 | 76490.7 |
+| windows | fixed | 14.151 | 959.441 | 60967.1 |
+| linux | baseline | 61.406 | 727.599 | 54008.7 |
+| linux | fixed | 7.09729 | 490.859 | 50202.2 |
+
+Вывод LOG_COST — в baseline-cost-windows/linux.log и fixed-cost-windows/linux.log. Это единичные наблюдения без вывода о масштабировании.
+
+### Отклонения, границы и вопросы
+
+Согласованные выходы за начальный перечень файлов перечислены в В-1…В-3. Raw NodeDataHook задаётся только на запросе; переменная тестового драйвера отсутствует в production CLI, что проверяет отдельный сценарий. Значения metadata.unavailable.name ограничены служебными именами журналов/баз/конфигурации/блокировки; абсолютные пути отвергает схема. Пустое поле не пишется. JSON и текст без пропусков проверены побайтно с прежним порядком полей; старые CLI-тесты T-027 не менялись. skip не меняет успешный код возврата; текст строится в application из am.diag.skipped и DiagnosticReport.
+
+В LogContext тестовая настройка debug теперь повторно устанавливает приёмник после смены minimum, как требует кэш уровней; проверки фаз и контекста не менялись. В ходе подготовки один вспомогательный запуск arch_check был ошибочно выполнен вне окружения MSVC и нарушил CMake-кэш; кэш восстановлен через --fresh из локальных установленных пакетов, проверки CMake перенесены обратно под build_cli.cmd. Скрипты сборки и пресеты проекта не менялись; сетевых загрузок не было. Предварительные неуспешные прогоны не использованы как доказательство финального PASS.
+
+Облачный провайдер и реальная дедупликация в среде не создавались: проверены все заданные теги/атрибуты, реальные OFFLINE-флаги и отсутствие чтения через наблюдателей/содержимое ZIP. import run, типизированная модель плана и изменение семантики остановки не входят в эту задачу. Открытых блокирующих вопросов нет.

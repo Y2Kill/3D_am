@@ -113,9 +113,15 @@ std::string folded(std::string_view text) {
   auto result = unicode::simple_casefold(text);
   return result ? *result : std::string(text);
 }
+fs::path normalized(const fs::path& path) {
+  const auto absolute = paths::native(fs::absolute(path));
+  const auto info = paths::node_info(absolute);
+  if (info && info->cloud_placeholder) return fs::weakly_canonical(absolute.parent_path()) / absolute.filename();
+  return fs::weakly_canonical(absolute);
+}
 bool within(const fs::path& child, const fs::path& parent) {
-  const auto a_path = fs::weakly_canonical(paths::native(fs::absolute(child)));
-  const auto b_path = fs::weakly_canonical(paths::native(fs::absolute(parent)));
+  const auto a_path = normalized(child);
+  const auto b_path = normalized(parent);
   auto a = a_path.begin(), b = b_path.begin();
   for (; b != b_path.end(); ++a, ++b) {
     if (a == a_path.end()) return false;
@@ -194,10 +200,14 @@ struct Scanner {
     io(path, ScanIo::open);
     if (request.hooks.on_open) request.hooks.on_open(path, false);
   }
-  void unavailable(Node& n, const Error& cause) {
+  paths::NodeInfo node_info(const fs::path& path) const {
+    return request.hooks.node_data ? paths::classify_windows_node(take(request.hooks.node_data(path)))
+                                   : take(paths::node_info(path));
+  }
+  void unavailable(Node& n, const Error& cause, std::string_view code = {}) {
     incomplete = true;
     n.value["status"] = "unavailable";
-    n.value["problem"] = {{"code", std::string(errc_name(cause.code))},
+    n.value["problem"] = {{"code", std::string(code.empty() ? errc_name(cause.code) : code)},
                           {"message_id", cause.message_id.empty() ? "am.import.node_unavailable" : cause.message_id}};
     AM_LOG(warning, "import", "import.scan.node_unavailable", "Source node unavailable",
            {{"path", name(n.actual).display, log::FieldKind::path}}, &cause);
@@ -295,7 +305,9 @@ struct Scanner {
       fs::path actual;
       try {
         io(request.roots[ri], ScanIo::stat);
-        actual = fs::canonical(paths::native(request.roots[ri]));
+        const auto info = node_info(request.roots[ri]);
+        actual =
+            info.cloud_placeholder ? normalized(request.roots[ri]) : fs::canonical(paths::native(request.roots[ri]));
       } catch (const Error& e) {
         throw error("am.import.root_unavailable", {}, e.code).caused_by(e);
       } catch (const std::exception&) {
@@ -337,32 +349,25 @@ struct Scanner {
         raw(n.value, "path_raw", display);
         try {
           if (!p.top) io(p.actual, ScanIo::stat);
-          const auto status = fs::symlink_status(paths::native(p.actual));
-          if (!fs::exists(status)) throw error("am.import.node_unavailable", {}, Errc::not_found);
-          bool link = fs::is_symlink(status);
-#ifdef _WIN32
-          const auto attributes = GetFileAttributesW(paths::native(p.actual).c_str());
-          link = link || (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT));
-#endif
-          const auto kind = link                          ? "symlink"
-                            : fs::is_directory(status)    ? "directory"
-                            : fs::is_regular_file(status) ? "file"
-                                                          : "other";
+          const auto info = node_info(p.actual);
+          const bool link = info.kind == paths::NodeKind::link;
+          const auto kind = link                                      ? "symlink"
+                            : info.kind == paths::NodeKind::directory ? "directory"
+                            : info.kind == paths::NodeKind::file      ? "file"
+                                                                      : "other";
           n.value["kind"] = kind;
           if (!link) {
-            const auto modified = fs::last_write_time(paths::native(p.actual));
-#ifdef _WIN32
-            const auto system_time = std::chrono::clock_cast<std::chrono::system_clock>(modified);
-#else
-            const auto system_time = fs::file_time_type::clock::to_sys(modified);
-#endif
-            n.value["mtime_ns"] = std::to_string(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(system_time.time_since_epoch()).count());
-            if (fs::is_regular_file(status)) {
-              n.value["size"] = std::to_string(fs::file_size(paths::native(p.actual)));
-              file(n);
+            if (!info.mtime_ns) throw error("am.import.node_unavailable", {}, Errc::io_error);
+            n.value["mtime_ns"] = std::to_string(*info.mtime_ns);
+            if (info.kind == paths::NodeKind::file) {
+              if (!info.size) throw error("am.import.node_unavailable", {}, Errc::io_error);
+              n.value["size"] = std::to_string(*info.size);
+              if (info.cloud_placeholder)
+                unavailable(n, error("am.import.cloud_placeholder", {}, Errc::incomplete), "cloud_placeholder");
+              else
+                file(n);
               ++progress.files;
-            } else if (fs::is_directory(status)) {
+            } else if (info.kind == paths::NodeKind::directory) {
               io(p.actual, ScanIo::enumerate);
               std::vector<fs::path> children;
               for (const auto& entry : fs::directory_iterator(paths::native(p.actual)))
@@ -605,7 +610,8 @@ std::vector<Candidate> Scanner::candidates() {
             {"os.icon_r", "am.import.exclusion.icon_r"}};
         entry["rule_id"] = n.rule.rule_id;
         entry["confidence"] = n.rule.confidence == Confidence::certain ? "certain" : "probable";
-        entry["explanation_id"] = explanations.at(n.rule.rule_id);
+        entry["explanation_id"] =
+            n.rule.explanation_id.empty() ? explanations.at(n.rule.rule_id) : n.rule.explanation_id;
       }
       if (decision == "include" || decision == "ask") payload = true;
       if (decision == "ask") c.value["action"] = "ask";

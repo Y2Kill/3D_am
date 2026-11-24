@@ -4,6 +4,7 @@
 #include <functional>
 #include <nlohmann/json.hpp>
 
+#include "am/foundation/paths.hpp"
 #include "am/foundation/result.hpp"
 
 namespace am::import {
@@ -22,6 +23,8 @@ struct ScanProgress {
 };
 enum class ScanIo { stat, enumerate, open, header, hash, shortcut, zip_probe };
 struct ScanHooks {
+  // Per-request tests/fault injection of raw OS metadata; not a plugin extension point.
+  paths::NodeDataHook node_data;
   std::function<Result<void>(const std::filesystem::path&, ScanIo)> before_io;
   // All source opens are read-only; also observes ZIP and shortcut probes.
   std::function<void(const std::filesystem::path&, bool writable)> on_open;

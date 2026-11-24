@@ -57,6 +57,28 @@ TEST_F(Log, EnabledHonoursMinimumAndWriteAlsoFilters) {
   }
   EXPECT_EQ(sink->writes, 3u);
 }
+TEST_F(Log, CachedLevelDoesNotConsultTheSinkDuringEnabledChecks) {
+  RecordProperty("req", "NFR-14.4.9");
+  struct CountingSink final : l::Sink {
+    mutable unsigned queries = 0;
+    l::Level min_level() const noexcept override {
+      ++queries;
+      return l::Level::warning;
+    }
+    void write(const l::Record&) noexcept override {}
+  };
+  auto sink = std::make_shared<CountingSink>();
+  l::set_sink(sink);
+  const auto installed = sink->queries;
+  for (unsigned i = 0; i < 1000; ++i) {
+    EXPECT_FALSE(l::enabled(l::Level::info));
+    EXPECT_TRUE(l::enabled(l::Level::warning));
+  }
+  EXPECT_EQ(sink->queries, installed);
+  l::set_sink(nullptr);
+  for (unsigned level = 0; level <= static_cast<unsigned>(l::Level::critical); ++level)
+    EXPECT_FALSE(l::enabled(static_cast<l::Level>(level)));
+}
 TEST_F(Log, NestedScopesAndExplicitRecordValuesHavePriority) {
   RecordProperty("req", "NFR-14.4.9");
   auto sink = std::make_shared<log_tests::MemorySink>();
