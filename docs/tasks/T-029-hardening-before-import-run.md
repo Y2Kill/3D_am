@@ -219,9 +219,9 @@ req_report: 72 IDs, 591 tests, 48 without req, 0 invalid IDs
 
 | Прогон | Результат |
 |---|---|
-| `toolsuild_min.cmd --ci` | 146/146 PASS |
-| `toolsuild_cli.cmd --ci -LE periodic` | 593/593 PASS |
-| `toolsuild_cli.cmd --offline --ci -LE periodic` | 593/593 PASS |
+| `tools\build_min.cmd --ci` | 146/146 PASS |
+| `tools\build_cli.cmd --ci -LE periodic` | 593/593 PASS |
+| `tools\build_cli.cmd --offline --ci -LE periodic` | 593/593 PASS |
 
 Linux и 300 повторов теста исполнителя приняты по отчёту исполнителя (до исправления 37/600 и 57/600 провалов, после — 0 на обеих платформах). Проверку повторит публичный CI.
 
