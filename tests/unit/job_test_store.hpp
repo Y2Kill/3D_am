@@ -84,7 +84,8 @@ class MemoryStore final : public c::IJobStore {
       at->decision_json = patch.decision_json;
     else if (patch.decision_json)
       at->decision_json = patch.decision_json;
-    if (patch.result_json) at->result_json = patch.result_json;
+    if (to == c::JobState::running) at->result_json.reset();
+    else if (patch.result_json) at->result_json = patch.result_json;
     if (patch.error_json) at->error_json = patch.error_json;
     return *at;
   }

@@ -218,7 +218,7 @@ TEST(IndependentCopy, RepeatedCopiesCopyOfCopyAndSourceRestrictions) {
   const auto c = value(w.catalog.copy_independent({a.ref,{},{}})).copy;
   const auto j = Json::parse(value(w.repository().snapshot(c.ref)).manifest_text());
   EXPECT_EQ(j["history"]["entries"][0]["details"]["source_asset"]["asset_id"],a.ref.asset_id);
-  auto occupied = w.catalog.copy_independent({w.asset.ref,a.ref.asset_id,{}}); ASSERT_FALSE(occupied); EXPECT_EQ(occupied.error().message_id,"am.repo.asset_exists");
+  auto occupied = w.catalog.copy_independent({w.asset.ref,a.ref.asset_id,{}}); ASSERT_FALSE(occupied); EXPECT_EQ(occupied.error().message_id,"am.repo.asset_id_exists");
   auto without_membership = w.plain();
   without_membership["groups"] = Json::array({{{"id",id()},{"name","Empty group"},{"type","custom"}}});
   w.install(without_membership);

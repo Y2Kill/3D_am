@@ -389,3 +389,20 @@ TEST(CommitProtocol, WindowsAndFilesystemEvidence) {
   GTEST_SKIP() << "Win32 OS and NTFS evidence APIs";
 #endif
 }
+
+TEST(CommitProtocol, CancellationRollsBackBeforePublicationAndIgnoresLateStop) {
+  RecordProperty("req","ADR-0006|K-121");
+  for(const auto point:points) {
+    SCOPED_TRACE(point_name(point));
+    const auto root=fresh(); const auto asset=id(); asset_zip::ReadBudget budget(1000000);
+    auto r=request(root,asset,budget); std::stop_source stop; r.stop=stop.get_token(); unsigned indexed=0;
+    r.hooks.point=[&](FaultPoint p)->Result<void>{ if(p==point) stop.request_stop(); return {}; };
+    r.on_committed=[&](const auto&)->Result<void>{ ++indexed; return {}; };
+    const auto result=commit_zip(r);
+    const bool late=point==FaultPoint::after_replace || point==FaultPoint::after_committed_journal || point==FaultPoint::after_indexed_journal;
+    if(late) { ASSERT_TRUE(result)<<to_log_string(result.error()); EXPECT_EQ(indexed,1u); valid(r.target_path); }
+    else { ASSERT_FALSE(result); EXPECT_EQ(result.error().code,Errc::cancelled); EXPECT_EQ(result.error().message_id,"am.commit.cancelled"); EXPECT_FALSE(std::filesystem::exists(r.target_path)); EXPECT_EQ(indexed,0u); }
+    clean(root);
+    auto lock=AssetLock::acquire(root,asset); EXPECT_TRUE(lock);
+  }
+}

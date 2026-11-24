@@ -1,6 +1,6 @@
 # T-030. `import run`: создание ассетов по плану из файлов и папок (M3a)
 
-**Статус:** ready · **Веха:** M3a · **Основание:** ТЗ v1.8 §6.1, §6.3.3–6.3.5, §6.5.6, §6.6, §6.7, §6.8, §6.9.1–6.9.2, §19.4.3; ADR-0006, ADR-0012, ADR-0025, ADR-0037 (X-01); приёмки T-026 (замечание 1), T-028 (замечание 4), T-029 (замечание 1)
+**Статус:** review · **Веха:** M3a · **Основание:** ТЗ v1.8 §6.1, §6.3.3–6.3.5, §6.5.6, §6.6, §6.7, §6.8, §6.9.1–6.9.2, §19.4.3; ADR-0006, ADR-0012, ADR-0025, ADR-0037 (X-01); приёмки T-026 (замечание 1), T-028 (замечание 4), T-029 (замечание 1)
 
 ## Цель
 
@@ -170,4 +170,153 @@
 
 ## Отчёт исполнителя
 
-(заполняет исполнитель)
+Ветка `codex/T-030`, база `1f53244`, начало работы `92d525c`. Основная реализация — `7e693ff`, защита ID и повтор через корзину по В-10 — `2fb2069`, устранение предупреждений без изменения поведения — `74e4668`. Документальные контрольные точки — `b226d3b`, `74bc0e4`. Работа завершена, статус `review`; push и слияние не выполнялись.
+
+### Выполнение критериев
+
+1. Четыре обязательных полных прогона завершены с кодом 0: min — 148 PASS, Windows CLI — 637 PASS, Windows CLI offline — 637 PASS, Linux CLI offline — 577 PASS и 57 обоснованных SKIP. Ошибок нет; таблица и фактические итоговые строки ниже.
+2. Кандидаты получают created/imported, skipped, deferred, failed, already_imported/already_queued; ask не исполняется, архивный вход откладывает весь кандидат. Готовые ассеты классифицируются без замены; явное решение skip не открывает источник повторно.
+3. Один Input и реальные объекты корней; все наблюдённые узлы, каталоги, исключения, ссылки и недоступные файлы учтены. SHA/байты и V1–V4 проверяются через репозиторий и library verify. Частичный режим повторяет только структурно определённую ошибку чтения, исключая каждый файл не более одного раза.
+4. Ключ — SHA точных байтов плана и candidate_id. Payload хранит путь, SHA и заранее выданные UUIDv4, без копии плана. Повтор после фиксации узнаёт InputID и не переписывает ZIP. Свой ассет в корзине требует решения; после ручного restore повтор не пишет ZIP, после purge создаёт с прежними ID, skip оставляет корзину. Чужой InputID или две локации одного ID дают конфликт. Исходный план не меняется.
+5. Свежесть проверяется для всех фактически включаемых файлов, в том числе представленных только inputs.objects при пустом entries (отдельный регрессионный тест). Плановый SHA сверяется с упаковкой; без него после фиксации — stat, при изменении ассет в корзине, asset_id сохранён в failed-результате.
+6. Планировщик выбирает состояния и parent_id по индексам. Один параметризованный тест на memory/SQLite сравнивает число запросов и выбранных строк с 10 000 завершённых заданий; время не нормируется. Предварительное чтение/хеширование параллельно, Catalog-мутации и упаковка сериализованы общим mutex. Проверены четыре параллельных кандидата, полный verify и индекс.
+7. ZIP пишет только AssetRepository/Catalog. Потокобезопасность и граница отмены описаны в import_pipeline.md. После replace поздняя отмена игнорируется; до него временный ZIP и строка журнала очищаются.
+8. Матрицы содержат фактическое частичное покрытие SC-1/2/3, K-5/115/121; полные 16 сценариев и распаковка архивов не объявлены завершёнными.
+
+### Проверки
+
+- Повтор `tools\build_min.cmd --ci` после устранения предупреждений: `100% tests passed, 0 tests failed out of 148`, `Total Test time (real) = 64.26 sec`, код 0. Лог `.cache/t030/final-min.log`.
+- `ImportRun.*` и `ImportRunManifest.*`: подтверждены создание, provenance, недоступность/частичный режим, свежесть, повтор после фиксации, чужой ID, четыре параллельных кандидата, пауза/отмена, готовые ассеты и повреждённый UTF-16. Исправление неявного включения из inputs.objects проверено отдельным тестом; решение skip готового ассета — повтором после удаления источника.
+- Новые тесты jobs/storage прошли на memory/SQLite; дополнительные проверки репозитория покрывают SHA при упаковке, структурный FileID ошибки чтения и отсутствие такого FileID при отказе записи назначения.
+- CLI после исправления: 17/17 целевых проверок (вместе с PlanView/планом/репозиторием), 11.77 s; cli_import_run проверяет коды 0/2/3/4, enqueue-only + jobs run, сводку, повтор и failed-результаты show/list.
+- `tools\build_cli.cmd --offline --ci -V -R ImportRunManifest`: 6/6 PASS, 12.38 s. Логи и измерения — `.cache/t030/manifest-final-targeted2.log`, `.cache/t030/pattern-results.json`, `.cache/t030/anchor-results.json`.
+- После В-10: целевой `ctest --test-dir build/win-cli --output-on-failure -R "ImportRun|AssetRepository.(ExplicitIdentity|TrashSnapshot|DuplicateOperation|ExpectedSource|PackingSha)|IndependentCopy.*Collision|Trash.(ConflictsNever|RecoveryExplicit)"` — `100% tests passed, 0 tests failed out of 37`, `Total Test time (real) = 58.84 sec`. Лог `.cache/t030/v10-final-targeted.log`. Включает restore/purge/skip, отсутствие дубля ID, защиту прямого create/copy и гонку между preflight и блокировкой фиксации.
+- Полные прогоны выполнены на `2fb2069`, включая arch_check, schema_check, sql_check, golden_zip и golden_regen_check; `periodic` исключён согласно задаче. Периодический замер 250 000 не запускался. Логи и JUnit — `.cache/t030/full-{min,windows,offline,linux}.{log,xml}`.
+
+| Команда | Фактический итог ctest | Время ctest | Код команды |
+|---|---|---|---|
+| `tools\build_min.cmd --ci` | `100% tests passed, 0 tests failed out of 148` — 148 PASS, 0 SKIP | `Total Test time (real) = 29.71 sec` | 0 |
+| `tools\build_cli.cmd --ci -LE periodic` | `100% tests passed, 0 tests failed out of 637` — 637 PASS, 0 SKIP | `Total Test time (real) = 1561.34 sec` | 0 |
+| `tools\build_cli.cmd --offline --ci -LE periodic` | `100% tests passed, 0 tests failed out of 637` — 637 PASS, 0 SKIP | `Total Test time (real) = 1552.71 sec` | 0 |
+| WSL `tools/build_linux.sh cli --offline --ci -LE periodic` | `100% tests passed, 0 tests failed out of 634` — 577 PASS, 57 SKIP | `Total Test time (real) = 2009.46 sec` | 0 |
+
+Число `req_report` для CLI (638 Windows / 635 Linux) включает один зарегистрированный periodic-тест, исключённый из прогона. Итоги таблицы взяты из ctest/JUnit, а не из числа регистраций. Невалидных req ID — 0 во всех четырёх прогонах. Время команд вместе с конфигурацией и сборкой: 33.54 / 1586.91 / 1560.61 / 2730.82 s соответственно.
+
+Причины всех 57 Linux SKIP (WSL/DrvFS):
+
+| Количество | Группа | Причина |
+|---|---|---|
+| 23 | ImportRun.* и Decisions/ImportRunTrashRetry.* | Продукционная запись допускается на проверенном fixed NTFS; WSL/DrvFS остаётся read-only. Все эти случаи прошли на Windows. |
+| 12 | cli_logging_commit; cli_jobs_{verify,decision,failure_and_controls,locked,signal}; cli_library_{rebuild_list,sync,trash,add_ready,copy,log_writes} | Те же ограничения записи. Исполнитель и storage/services проверены на Linux через внедрённые синтетические capabilities; CLI чтения проходят без SKIP. |
+| 4 | AssetService.{CreateRefusalsAndPublishRaceNeverReplaceOutput,PostCreateFailureDeletesOnlyTheNewOutput,ValidationAndExtractionUseSharedV3AndPreserveSuccessfulFiles,StreamScopesMinorAndCorruption} | Создание fixtures требует fixed NTFS; process-тесты проверяют read-only варианты. |
+| 1 | ImportReady.KillVerifiedAndReplacedForNewAndReplacementRecoverWithIndex | Crash-process и fixed-NTFS доказательства относятся к Windows; инъекции отказов протокола проходят и на Linux. |
+| 1 | LibraryVerify.PurgeAllWithMissingTrashIsEmptySuccess | Purge — продукционная запись; сама проверка библиотеки тестируется без SKIP. |
+| 12 | FileLog (1), DiagExport offline (2), CommitProtocol Win32 (7), AssetRepository process/kill (2) | Специфичные Win32 sharing, FILE_ATTRIBUTE_OFFLINE, fallback, OS/NTFS evidence и завершение дочерних Win32-процессов. |
+| 2 | ImportRunManifest.{PublishedPatternSurveyOnMsvc,AnchoredPatternSurveyReportsV2AndIndependentV3} | Измеряется именно MSVC std::regex. Эквивалентность линейных проверок, длинные значения и пользовательские схемы проверены на обеих платформах. |
+| 1 | ImportScan.RawInvalidNamesArePreservedWhenTheFilesystemRetainsThem | Данный mount нормализует неверное native-имя до перечисления и не сохраняет raw-fixture. |
+| 1 | Sync.FullDetectsEqualSizeAndRestoredMtime | Данный mount не восстанавливает mtime точно до исходного значения. |
+
+После полных прогонов в `74e4668` механически устранены предупреждения GCC в новом коде: явное создание optional, локальная строка ID перед получением ссылки, явная инициализация пустого stop_token и скобки вокруг тестовых макросов. Поведение и принимаемые данные не изменены. На этой версии дополнительно выполнены:
+
+- `tools\build_min.cmd --ci`: `100% tests passed, 0 tests failed out of 148`, `Total Test time (real) = 64.26 sec`, код 0 (`final-min.log`).
+- `tools\build_cli.cmd --offline --ci -R ImportRun`: `100% tests passed, 0 tests failed out of 29`, `Total Test time (real) = 82.08 sec`, код 0 (`warnings-windows.log`).
+- `ctest --test-dir build/win-cli --output-on-failure -R "AssetRepository.(ExplicitIdentity|TrashSnapshot|ExpectedSource|PackingSha)|CommitProtocol.Cancellation|cli_import_run"`: `100% tests passed, 0 tests failed out of 7`, `Total Test time (real) = 23.81 sec`, код 0 (`warnings-storage-cli-windows.log`).
+- WSL `tools/build_linux.sh cli --offline --ci -R 'ImportRun|AssetRepository.(ExplicitIdentity|TrashSnapshot|ExpectedSource|PackingSha)|ImportReady|CommitProtocol.Cancellation'`: `100% tests passed, 0 tests failed out of 49`, `Total Test time (real) = 91.89 sec`, код 0; 23 PASS и 26 SKIP по тем же причинам выше (`warnings-linux.log`).
+
+Все дополнительные логи — в `.cache/t030/`. Предупреждений в новых строках после повторной сборки нет; оставшиеся предупреждения GCC относятся к неизменённым строкам, вне исправлений задачи. Полные прогоны на `2fb2069` и целевые проверки механических изменений на `74e4668` указаны раздельно.
+
+### Уточнения и согласованные выходы за рамки
+
+- В-1: repository.hpp/.cpp — необязательные stop_token, expected_sha256, SourceFailure; commit/protocol.hpp/.cpp — отмена до публикации; src/services/CMakeLists.txt — новые .cpp. Прежнее поведение без новых параметров сохранено; отдельное изменение контракта явно занятого ID согласовано позже в В-10.
+- В-2: executor.cpp — явно заданные непустые результаты failed/needs_decision сохраняются вместе с error/decision; `{}` по умолчанию не записывается. Для interrupted/resource-состояний результата нет. В начале queued → running он сбрасывается; SQL-схема и её версия прежние.
+- В-3: любое ask раньше unavailable: deferred/unresolved, без дочернего задания; сводка отмечает нерешённую недоступность. Include: strict — ошибка, partial — unavailable/incomplete; exclude не читает источник. Уточнение внесено в import_pipeline.md.
+- В-4: виртуальный объект по title_hint не создаётся. InputObject на реальный корень; внутри профильной границы — существующий каталог границы. Несколько корней получают отдельные префиксы ZIP, коллизии переименовываются. title_hint — только title. Уточнение внесено в import_pipeline.md.
+- В-5: tests/unit/job_test_store.hpp — только сброс result_json на queued → running. Контракт и jobs_and_sessions.md дополнены. Общий параметризованный тест проверяет оба хранилища.
+- В-6: parse_plan — линейная проверка raw-hex точно по `^([0-9a-f]{2})+$`; копия для схемы компактная, исходные значения неизменны. Список трёх полей сверяется со схемой, 65536 hex-байт проходят, неверные значения дают прежний JSON Pointer. Ограничения minLength/maxLength учитываются; неизвестные будущие ограничения закрывают этот путь до обновления реализации.
+- В-7: src/domain/manifest/schema_validator.cpp — линейный rawName.base64 по опубликованному языку: пустая строка и AB== разрешены, хвостовые биты не ужесточены. Обе ссылки rawName сверены со схемой. V1+V2 проходят на 8200 байтах Base64, V2 — на 65536. Документ, opaque-значения и опубликованная схема не меняются.
+- В-8а: встраивание схемы механически перенесено из storage в domain: src/domain/CMakeLists.txt, src/storage/CMakeLists.txt, getter published_schema_parts в codec.hpp и два прежних потребителя repository.cpp. Заголовок приватный, генерируется в build, в Git не добавляется; дублирования нет. Полное сравнение DOM включает линейные проверки только для нормативной схемы. Побайтовое совпадение со schema-файлом и прежний путь пользовательских схем проверены.
+- В-8б: измеренные дефекты исправляются по нормативному определению/указателю, без ограничений длины. Кроме rawName падает только file.type.id с точечными компонентами: 297 PASS / 299 error_stack; после — 65537 PASS. Точка в опубликованном шаблоне действительно экранирована. Остальные шаблоны не исправлялись.
+- В-9: оракул коротких строк — std::regex_match, семантика ECMA-262 без m. Якоря относятся ко всей строке, поэтому LF/CR/CRLF в начале/середине/конце отклоняются на обеих платформах для двух исправленных шаблонов. Это устранение отклонения Windows-валидатора от нормы, не ужесточение формата. Пользовательские схемы сохраняют jsoncons без подстановок.
+- В-10: repository.hpp/.cpp — `snapshot(ref, include_trash=false)`, признак `in_trash`, снимок корзины только для чтения. Явные ID create/copy проверяются в обеих локациях под той же AssetLock, что и фиксация. Для этого в уже согласованном commit/protocol.hpp/.cpp добавлено необязательное предусловие до создания временного ZIP и строки журнала. Пустое предусловие не меняет прежний путь. Тест с отдельным репозиторием создаёт активный/удалённый ID после preflight и подтверждает отказ под удерживаемой блокировкой. Два прежних ожидания ошибок для явно занятых ID в test_asset_repository.cpp и test_independent_copy.cpp механически обновлены на предписанный `am.repo.asset_id_exists`; тесты create без asset_id не менялись. Run требует решения retry/skip для своего InputID в корзине, сохраняет asset_id и предупреждение о возможном отличии восстановленного содержимого. Уточнение внесено в import_pipeline.md.
+
+Проверка длинного rawName выявила дефект V2 опубликованного 1.0 независимо от производителя ZIP. Исправлен валидатор, не формат; версия и golden-корпус неизменны. Заметка о линейной реализации — рядом с валидатором, CHANGELOG содержит исправление.
+
+### Измерение всех шаблонов манифеста (MSVC 14.44)
+
+Это измерения, а не лимиты. Для ограниченных шаблоном ID проверена максимально допустимая длина и большое число разделителей; для неограниченных — указанные размеры. Порог rawName измерен на квартетах A, file.type.id — на a.a.…; отдельный файл-тип из одного компонента проходит 32768 байт. Непроверенные большие длины не объявляются безопасными.
+
+| Определение / указатель | Шаблон | Порог до исправления (байт) | Проверено после / без исправления | Применённые ссылки |
+|---|---|---:|---|---|
+| `/$defs/claimCore/properties/confidence` | `^(0(\.[0-9]+)?\|1(\.0+)?)$` | не найден на проверенных длинах | 32770 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/crc32` | `^[0-9a-f]{8}$` | не найден на проверенных длинах | 8 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/date` | `^[0-9]{4}-[0-9]{2}-[0-9]{2}$` | не найден на проверенных длинах | 10 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/decimalString` | `^-?(0\|[1-9][0-9]*)(\.[0-9]+)?$` | не найден на проверенных длинах | 32770 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/extension/properties/attachments/items/properties/path` | `^extensions/` | не найден на проверенных длинах | 200 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/fieldDefinition/properties/dimension/anyOf/0` | `^[a-z][a-z0-9_]{0,63}$` | не найден на проверенных длинах | 64 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/fieldDefinition/properties/dimension/anyOf/1` | `^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$` | не найден на проверенных длинах | 168 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/fieldId` | `^(?:user:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\|plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*)$` | не найден на проверенных длинах | 168 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/file/properties/generation/properties/tool/anyOf/0` | `^core:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$` | не найден на проверенных длинах | 69 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/file/properties/generation/properties/tool/anyOf/1` | `^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$` | не найден на проверенных длинах | 168 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/file/properties/type/properties/id` | `^[a-z0-9]+(\.[a-z0-9_-]+)*$` | 299 | 65537, V2 PASS | `#/$defs/file`: `/properties/files/items` → `/files/*/type/id` |
+| `/$defs/int64String` | `^-?(0\|[1-9][0-9]{0,18})$` | не найден на проверенных длинах | 20 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/pluginId` | `^(?=.{3,96}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$` | не найден на проверенных длинах | 96 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/rawName/properties/base64` | `^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==\|[A-Za-z0-9+/]{3}=)?$` | 340 | 65536 Base64; V1+V2 также 8200 | `#/$defs/rawName`: `/$defs/inputObject/properties/name_raw`, `/$defs/inputEntry/properties/path_raw` |
+| `/$defs/relKey/anyOf/0` | `^[a-z][a-z0-9_-]{0,63}$` | не найден на проверенных длинах | 64 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/relKey/anyOf/1` | `^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$` | не найден на проверенных длинах | 168 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/revisionRecord/properties/changes/items/properties/kind/anyOf/0` | `^[a-z][a-z0-9_]{0,63}$` | не найден на проверенных длинах | 64 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/revisionRecord/properties/changes/items/properties/kind/anyOf/1` | `^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$` | не найден на проверенных длинах | 168 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/revisionRecord/properties/operation/anyOf/0` | `^[a-z][a-z0-9_]{0,63}$` | не найден на проверенных длинах | 64 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/revisionRecord/properties/operation/anyOf/1` | `^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$` | не найден на проверенных длинах | 168 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/sha256` | `^[0-9a-f]{64}$` | не найден на проверенных длинах | 64 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/storagePath` | `^(?!.*(^\|/)\.\.?(/\|$))(?!.*//)(content\|generated\|extensions)/[^\\]*[^/\\]$` | не найден на проверенных длинах | 200 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/timestamp` | `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$` | не найден на проверенных длинах | 32789 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/typeId/anyOf/1` | `^plugin:(?=[^:]{3,96}:)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+:(?=[^:]{1,64}$)[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$` | не найден на проверенных длинах | 168 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/uint64` | `^(0\|[1-9][0-9]{0,19})$` | не найден на проверенных длинах | 20 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/url` | `^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$` | не найден на проверенных длинах | 32792 PASS; исправление не требуется | нет линейной замены |
+| `/$defs/uuid4` | `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` | не найден на проверенных длинах | 36 PASS; исправление не требуется | нет линейной замены |
+
+### Измерение якорей и независимой V3 (В-9)
+
+Суффикс — `<допустимое>\nX`, префикс — `X\n<допустимое>`. Старый путь движка измерен через SchemaValidator с пользовательской leaf-схемой на известном строковом поле, чтобы охватить и определения, которые V2 не применяет прямо к custom_values. Нормативный V2 измерен на указанном реальном поле. V3 запущена независимо даже при отказе V2 только для измерения: сравниваются новые ошибки с базовым вариантом. У plugin-операции истории уже есть одна базовая ошибка history_coverage, поэтому отсутствие новой не означает успешную V3. В нормальном pipeline V3 выполняется после V2.
+
+| Шаблон (указатель) / фактическое поле | Старый V2-движок: суффикс / префикс | Нормативный V2 после двух исправлений: суффикс / префикс | Новые ошибки независимой V3: суффикс / префикс |
+|---|---|---|---|
+| `/$defs/claimCore/properties/confidence`<br>`/asset/metadata/claims/0/confidence` | принят / принят | принят / принят | нет / нет |
+| `/$defs/crc32`<br>`/inputs/0/entries/0/crc32` | принят / принят | принят / принят | нет / нет |
+| `/$defs/date`<br>`/asset/metadata/dates/acquired` | принят / принят | принят / принят | timestamps:/asset/metadata/dates/acquired / timestamps:/asset/metadata/dates/acquired |
+| `/$defs/decimalString`<br>`/asset/metadata/custom_values/0/value` | принят / принят | принят / принят | value_representation:/asset/metadata/custom_values/0/value / value_representation:/asset/metadata/custom_values/0/value |
+| `/$defs/extension/properties/attachments/items/properties/path`<br>`/extensions/org.example.stlstats/attachments/0/path` | принят / принят | принят / принят | storage_paths:/extensions/org.example.stlstats/attachments/0/path / storage_paths:/extensions/org.example.stlstats/attachments/0/path |
+| `/$defs/fieldDefinition/properties/dimension/anyOf/0`<br>`/field_definitions/0/dimension` | принят / принят | принят / принят | нет / нет |
+| `/$defs/fieldDefinition/properties/dimension/anyOf/1`<br>`/field_definitions/0/dimension` | принят / принят | принят / принят | нет / нет |
+| `/$defs/fieldId`<br>`/field_definitions/0/id` | принят / принят | принят / принят | custom_value_field:/asset/metadata/custom_values/0/field_id / custom_value_field:/asset/metadata/custom_values/0/field_id |
+| `/$defs/file/properties/generation/properties/tool/anyOf/0`<br>`/files/0/generation/tool` | принят / принят | отклонён / отклонён | нет / нет |
+| `/$defs/file/properties/generation/properties/tool/anyOf/1`<br>`/files/0/generation/tool` | принят / принят | отклонён / отклонён | нет / нет |
+| `/$defs/file/properties/type/properties/id`<br>`/files/0/type/id` | принят / принят | отклонён / отклонён | нет / нет |
+| `/$defs/int64String`<br>`/asset/metadata/custom_values/0/value` | принят / принят | принят / принят | value_representation:/asset/metadata/custom_values/0/value / value_representation:/asset/metadata/custom_values/0/value |
+| `/$defs/pluginId`<br>`/extensions/<key>` | принят / принят | принят / принят | нет / нет |
+| `/$defs/rawName/properties/base64`<br>`/inputs/0/entries/0/path_raw/base64` | принят / принят | отклонён / отклонён | нет / нет |
+| `/$defs/relKey/anyOf/0`<br>`/asset/metadata/links/0/rel` | принят / принят | принят / принят | нет / нет |
+| `/$defs/relKey/anyOf/1`<br>`/asset/metadata/links/0/rel` | принят / принят | принят / принят | нет / нет |
+| `/$defs/revisionRecord/properties/changes/items/properties/kind/anyOf/0`<br>`/history/entries/0/changes/0/kind` | принят / принят | принят / принят | нет / нет |
+| `/$defs/revisionRecord/properties/changes/items/properties/kind/anyOf/1`<br>`/history/entries/0/changes/0/kind` | принят / принят | принят / принят | нет / нет |
+| `/$defs/revisionRecord/properties/operation/anyOf/0`<br>`/history/entries/0/operation` | принят / принят | принят / принят | history_coverage:/history / history_coverage:/history |
+| `/$defs/revisionRecord/properties/operation/anyOf/1`<br>`/history/entries/0/operation` | принят / принят | принят / принят | нет / нет |
+| `/$defs/sha256`<br>`/files/0/sha256` | принят / принят | принят / принят | нет / нет |
+| `/$defs/storagePath`<br>`/files/0/storage_path` | принят / принят | принят / принят | storage_paths:/files/0/storage_path / storage_paths:/files/0/storage_path |
+| `/$defs/timestamp`<br>`/asset/created_at` | принят / принят | принят / принят | timestamps:/asset/created_at, asset_times:/asset/created_at / timestamps:/asset/created_at, asset_times:/asset/created_at |
+| `/$defs/typeId/anyOf/1`<br>`/field_definitions/0/type` | принят / принят | принят / принят | нет / value_representation:/asset/metadata/custom_values/0/value |
+| `/$defs/uint64`<br>`/files/0/size_bytes` | принят / принят | принят / принят | byte_sizes_uint64:/files/0/size_bytes / byte_sizes_uint64:/files/0/size_bytes |
+| `/$defs/url`<br>`/asset/metadata/links/0/url` | принят / принят | принят / принят | urls:/asset/metadata/links/0/url / urls:/asset/metadata/links/0/url |
+| `/$defs/uuid4`<br>`/asset/id` | принят / принят | принят / принят | нет / нет |
+
+Python: schema_check использует Draft202012Validator из .cache/pylib. Фактически у Base64 и file.type.id допускается только завершающий LF (`<допустимое>\n`), но не начальный LF и не обе формы с X; это поведение Python re.search. schema_check — тест/CI, не проверка пользовательского импорта. make_golden_zips.py использует только stdlib, не jsonschema; run_golden.py проверяет скомпилированный CLI. Инструменты в T-030 не исправлялись, замечание оставлено для управляющего.
+
+Аудит golden: 79 ZIP, 74 разобранных манифеста; LF/CR в двух исправленных полях не найдено. Лог `.cache/t030/golden-newline-audit.json`. Исходники корпуса не менялись; окончательные golden_zip/golden_regen_check входят в полные прогоны.
+
+### Вопросы
+
+В-1…В-10 приняты. Исходная репродукция В-10 (`.cache/t030/trash-retry-probe.json`) создавала два ZIP одного ID после возврата источника к данным/mtime плана. Исправление проверяется тремя сценариями restore/purge/skip и отдельными тестами прямого create/copy, гонки после preflight и чужого/двойного ID.
+
+Замечание по п. 5 В-10: существующий POSIX fallback перемещения использует link/unlink; сбой между вызовами может оставить две локации. Recovery намеренно не выбирает одну копию: отмечает журнал failed и сохраняет оба файла. Это существующая политика T-019, воспроизводимая тестом `Trash.RecoveryExplicitPresenceMatrixAndFailedRowsRemain` (presence=3, trash/restore, prepared/committed/indexed). `AssetRepository.ExplicitIdentityRejectsActiveTrashAndDualLocations` дополнительно воспроизводит отказ restore без изменения обеих копий. Правило восстановления не изменено; если требуется автоматическое разрешение такой неоднозначности, нужен отдельный вопрос/задача управляющего.
+
+Для отдельной задачи управляющего остаются измеренные расхождения якорей прочих шаблонов MSVC и замечание к Python-тестам. Как предписано В-9, эти шаблоны и Python-инструменты попутно не исправляются в T-030. Таблица показывает, где V3 не обнаруживает новое отклонение.

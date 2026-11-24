@@ -476,6 +476,32 @@ int main(int argc, char** argv) {
   auto* import_command = cli.add_subcommand("import", "Scan sources and propose an editable import plan");
   import_command->require_subcommand(1);
   auto* import_scan = import_command->add_subcommand("scan", "Read sources without modifying them or creating assets");
+  auto* import_run = import_command->add_subcommand("run", "Execute an edited import plan through durable jobs");
+  std::string run_plan,run_library,run_profile="balanced";
+  bool enqueue_only=false;
+  unsigned run_parallel=0;
+  import_run->add_option("--plan",run_plan)->required();
+  import_run->add_option("--library",run_library)->required();
+  import_run->add_flag("--enqueue-only",enqueue_only);
+  import_run->add_option("--profile",run_profile)->check(CLI::IsMember({"economy","balanced","performance"}));
+  auto* run_jobs_option=import_run->add_option("--jobs",run_parallel)->check(CLI::PositiveNumber);
+  presentation(import_run);
+  import_run->callback([&] {
+    JobSignals signals;
+    app::JobServiceOptions options;
+    options.profile=run_profile=="economy" ? am::jobs::Profile::economy : run_profile=="performance" ? am::jobs::Profile::performance : am::jobs::Profile::balanced;
+    if(run_jobs_option->count()) options.parallel_jobs=run_parallel;
+    options.on_event=print_job_event;
+    auto result=app::run_import(path(run_plan),path(run_library),enqueue_only,options,signals.token());
+    if(!result) {
+      const auto& error=result.error();
+      code=error.code==am::Errc::cancelled ? 3 : error.code==am::Errc::invalid_argument ? 2 : 4;
+      if(json) std::cout<<Json{{"command","import run"},{"error",error_value(error)}}.dump()<<'\n';
+      print_error(error,verbose);
+      return;
+    }
+    render("import run",std::move(result));
+  });
   std::vector<std::string> import_sources;
   std::string import_profile = "default", import_library, import_plan;
   bool import_hash = false, import_skip = false, import_single = false;

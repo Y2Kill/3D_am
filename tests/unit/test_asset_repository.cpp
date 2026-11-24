@@ -514,7 +514,7 @@ TEST(AssetRepository, OldInvalidV3RemainsReadableAndVerifyReturnsReport) {
 }
 TEST(AssetRepository, DuplicateOperationIdFailsBeforePreflightJournalOrTemp) {
   RecordProperty("req","ADR-0035|O-18");const auto root=fresh();auto repo=value(AssetRepository::open(root,options()));CreateRequest c;c.asset_id=id();c.op_id=id();auto created=value(repo.create(c));auto before=bytes(target(root,created.ref.asset_id));unsigned preflights=0;auto o=options();o.test_hooks.after_preflight=[&]{++preflights;};auto changing=value(AssetRepository::open(root,o));
-  auto r=metadata(created);r.op_id=c.op_id;auto bad=changing.change(r);ASSERT_FALSE(bad);EXPECT_EQ(bad.error().message_id,"am.repo.duplicate_operation_id");EXPECT_EQ(bad.error().code,Errc::conflict);bad=changing.create(c);ASSERT_FALSE(bad);EXPECT_EQ(bad.error().message_id,"am.repo.duplicate_operation_id");EXPECT_EQ(preflights,0u);EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before);clean(root);
+  auto r=metadata(created);r.op_id=c.op_id;auto bad=changing.change(r);ASSERT_FALSE(bad);EXPECT_EQ(bad.error().message_id,"am.repo.duplicate_operation_id");EXPECT_EQ(bad.error().code,Errc::conflict);bad=changing.create(c);ASSERT_FALSE(bad);EXPECT_EQ(bad.error().message_id,"am.repo.asset_id_exists");EXPECT_EQ(preflights,0u);EXPECT_EQ(bytes(target(root,created.ref.asset_id)),before);clean(root);
 }
 TEST(AssetRepository, DriveClassifierGrantsFullOnlyForFixedNtfs) {
   RecordProperty("req","ADR-0031");for(auto drive:{DriveKind::fixed,DriveKind::removable,DriveKind::ramdisk,DriveKind::remote,DriveKind::unknown,DriveKind::optical})for(auto fs:{"NTFS","FAT32","exFAT","ReFS","unknown"}){
@@ -627,4 +627,129 @@ TEST(AssetRepository,VerifyContainerReturnsV1FailureAndZipPathDetail) {
   EXPECT_EQ(changed,2u);auto path=root/"unsafe.zip";{std::ofstream out(path,std::ios::binary);out.write(reinterpret_cast<const char*>(all.data()),static_cast<std::streamsize>(all.size()));}
   ContainerVerifyOptions settings;settings.streams=false;auto report=value(verify_container(path,settings));EXPECT_EQ(report.v3,CheckStatus::failed);auto found=std::find_if(report.v3_findings.begin(),report.v3_findings.end(),[](const auto& f){return f.rule=="zip_paths";});ASSERT_NE(found,report.v3_findings.end());EXPECT_TRUE(found->pointer.empty());EXPECT_EQ(found->detail,unsafe);
   fixture(repo,root,created.ref,"{");report=value(verify_container(target(root,created.ref.asset_id),settings));EXPECT_EQ(report.v1,CheckStatus::failed);ASSERT_TRUE(report.error);EXPECT_EQ(report.v2,CheckStatus::not_performed);
+}
+
+TEST(AssetRepository, ExpectedSourceShaFailureIdentityAndCancellation) {
+  RecordProperty("req","ADR-0025|K-121|SC-1");
+  const auto root=fresh(); auto o=options(); auto repository=value(AssetRepository::open(root,o));
+  CreateRequest r; r.asset_id=id(); r.files.push_back(addition(root,2));
+  r.files[0].files[1].expected_sha256=std::string(64,'0');
+  auto changed=repository.create(r); ASSERT_FALSE(changed); EXPECT_EQ(changed.error().message_id,"am.repo.source_changed"); EXPECT_FALSE(std::filesystem::exists(target(root,*r.asset_id))); clean(root);
+  r.files[0].files[1].expected_sha256.reset();
+  std::optional<SourceFailure> failed; r.source_failure=&failed;
+  const auto missing=r.files[0].files[1].source;
+  std::filesystem::remove(missing);
+  auto unreadable=repository.create(r); ASSERT_FALSE(unreadable); ASSERT_TRUE(failed); EXPECT_EQ(failed->file_id,*r.files[0].files[1].file_id); clean(root);
+  std::stop_source stop; stop.request_stop(); r.stop=stop.get_token();
+  auto cancelled=repository.create(r); ASSERT_FALSE(cancelled); EXPECT_EQ(cancelled.error().code,Errc::cancelled); EXPECT_FALSE(failed); clean(root);
+}
+TEST(AssetRepository, ExplicitIdentityRejectsActiveTrashAndDualLocations) {
+  RecordProperty("req","ADR-0025|K-121|NFR-14.4.3");
+  const auto root=fresh(); auto repository=value(AssetRepository::open(root,options()));
+  std::filesystem::create_directories(root/"trash");
+  const auto original=create(repository,root);
+  CreateRequest request; request.asset_id=id();
+  const auto occupied=value(repository.create(request));
+  const auto active=target(root,*request.asset_id), trash=root/"trash"/(*request.asset_id+".zip");
+  const auto before=bytes(active);
+  for (unsigned location=0;location<3;++location) {
+    SCOPED_TRACE(location);
+    if (location==1) value(repository.trash(occupied.ref));
+    if (location==2) std::filesystem::copy_file(trash,active);
+    auto rejected=repository.create(request);
+    ASSERT_FALSE(rejected); EXPECT_EQ(rejected.error().code,Errc::conflict);
+    EXPECT_EQ(rejected.error().message_id,"am.repo.asset_id_exists");
+    auto copy=repository.copy_independent({original.ref,request.asset_id,{}});
+    ASSERT_FALSE(copy); EXPECT_EQ(copy.error().message_id,"am.repo.asset_id_exists");
+    if (location!=1) { EXPECT_EQ(bytes(active),before); }
+    if (location!=0) { EXPECT_EQ(bytes(trash),before); }
+    clean(root);
+  }
+  auto dual=repository.snapshot(occupied.ref,true);
+  ASSERT_FALSE(dual); EXPECT_EQ(dual.error().message_id,"am.repo.asset_id_exists");
+  // Existing lifecycle conflict policy preserves both copies; this is a reproduction,
+  // not an automatic repair of an ambiguous externally/crash-created layout.
+  auto restored=repository.restore(occupied.ref);
+  ASSERT_FALSE(restored); EXPECT_EQ(bytes(active),before); EXPECT_EQ(bytes(trash),before);
+  clean(root);
+}
+TEST(AssetRepository, TrashSnapshotIsOptInAndCannotBeChanged) {
+  RecordProperty("req","ADR-0025|K-121");
+  const auto root=fresh(); auto repository=value(AssetRepository::open(root,options()));
+  std::filesystem::create_directories(root/"trash");
+  const auto original=create(repository,root);
+  {
+    auto active=value(repository.snapshot(original.ref));
+    EXPECT_FALSE(active.in_trash()); EXPECT_TRUE(active.writable());
+  }
+  value(repository.trash(original.ref));
+  const auto path=root/"trash"/(original.ref.asset_id+".zip"); const auto before=bytes(path);
+  auto absent=repository.snapshot(original.ref); ASSERT_FALSE(absent); EXPECT_EQ(absent.error().code,Errc::not_found);
+  {
+    auto snapshot=value(repository.snapshot(original.ref,true));
+    EXPECT_TRUE(snapshot.in_trash()); EXPECT_FALSE(snapshot.writable());
+    EXPECT_EQ(snapshot.manifest().known()["asset"]["id"],original.ref.asset_id);
+    auto changed=repository.change(metadata(original)); ASSERT_FALSE(changed);
+    EXPECT_EQ(changed.error().code,Errc::not_found); EXPECT_EQ(bytes(path),before);
+  }
+  value(repository.purge(original.ref));
+  absent=repository.snapshot(original.ref,true); ASSERT_FALSE(absent); EXPECT_EQ(absent.error().code,Errc::not_found);
+  clean(root);
+}
+TEST(AssetRepository, ExplicitIdentityRechecksUnderCommitLockAfterPreflight) {
+  RecordProperty("req","ADR-0025|K-121|NFR-14.4.3");
+  for (bool copy : {false,true}) for (bool trashed : {false,true}) {
+    SCOPED_TRACE(copy);
+    SCOPED_TRACE(trashed);
+    const auto root=fresh(); auto other=value(AssetRepository::open(root,options()));
+    std::filesystem::create_directories(root/"trash");
+    const auto original=create(other,root);
+    CreateRequest request; request.asset_id=id(); const AssetRef asset{library_id,*request.asset_id};
+    auto o=options(); bool under_lock=false;
+    o.test_hooks.after_preflight=[&] {
+      value(other.create(request));
+      if (trashed) value(other.trash(asset));
+    };
+    o.test_hooks.commit.point=[&](commit::FaultPoint p)->Result<void> {
+      if (p==commit::FaultPoint::after_lock) {
+        auto held=commit::AssetLock::acquire(root,asset.asset_id,std::chrono::milliseconds(0));
+        under_lock=!held;
+        EXPECT_FALSE(held);
+      }
+      return {};
+    };
+    auto repository=value(AssetRepository::open(root,o));
+    if (copy) {
+      auto result=repository.copy_independent({original.ref,request.asset_id,{}});
+      ASSERT_FALSE(result); EXPECT_EQ(result.error().message_id,"am.repo.asset_id_exists");
+    } else {
+      auto result=repository.create(request);
+      ASSERT_FALSE(result); EXPECT_EQ(result.error().message_id,"am.repo.asset_id_exists");
+    }
+    EXPECT_TRUE(under_lock);
+    EXPECT_EQ(std::filesystem::exists(target(root,asset.asset_id)),!trashed);
+    EXPECT_EQ(std::filesystem::exists(root/"trash"/(asset.asset_id+".zip")),trashed);
+    clean(root);
+  }
+}
+TEST(AssetRepository, LateCancellationStillIndexesTheCommittedAsset) {
+  RecordProperty("req","ADR-0006|ADR-0025|K-121");
+  const auto root=fresh(); auto o=options(); CreateRequest r; r.asset_id=id(); r.files.push_back(addition(root));
+  std::stop_source stop; r.stop=stop.get_token(); unsigned indexed=0;
+  o.test_hooks.commit.point=[&](commit::FaultPoint point)->Result<void>{if(point==commit::FaultPoint::after_committed_journal) stop.request_stop(); return {};};
+  o.on_indexed=[&](const auto&){++indexed;};
+  auto repository=value(AssetRepository::open(root,o));
+  auto created=repository.create(r); ASSERT_TRUE(created)<<to_log_string(created.error()); EXPECT_EQ(indexed,1u); EXPECT_TRUE(value(repository.verify(created->ref)).v3_complete); clean(root);
+}
+TEST(AssetRepository, PackingShaChangeIdentifiesSourceAndDestinationErrorsDoNot) {
+  RecordProperty("req","ADR-0025|SC-1|NFR-14.4.3");
+  const auto root=fresh(); CreateRequest r; r.asset_id=id();r.files.push_back(addition(root));
+  r.files[0].files[0].expected_sha256=sha("data-0");
+  std::optional<SourceFailure> failure;r.source_failure=&failure;
+  auto o=options();o.test_hooks.after_preflight=[&]{std::ofstream f(r.files[0].files[0].source,std::ios::binary);f<<"data-1";};
+  auto repository=value(AssetRepository::open(root,o));auto changed=repository.create(r);ASSERT_FALSE(changed);EXPECT_EQ(changed.error().message_id,"am.repo.source_changed");ASSERT_TRUE(failure);EXPECT_EQ(failure->file_id,*r.files[0].files[0].file_id);EXPECT_FALSE(failure->read_failure);EXPECT_FALSE(std::filesystem::exists(target(root,*r.asset_id)));clean(root);
+  r.files[0].files[0].expected_sha256.reset();o=options();o.test_hooks.commit.create_sink=[](const auto&)->Result<std::shared_ptr<asset_zip::RandomAccessSink>>{return Error::make(Errc::io_error,"Destination failure").id("test.destination_failed");};
+  auto destination=value(AssetRepository::open(root,o));auto failed=destination.create(r);ASSERT_FALSE(failed);EXPECT_EQ(failed.error().message_id,"test.destination_failed");EXPECT_FALSE(failure);EXPECT_FALSE(std::filesystem::exists(target(root,*r.asset_id)));clean(root);
+  o=options();o.test_hooks.after_preflight=[&]{std::filesystem::remove(r.files[0].files[0].source);};
+  auto packing=value(AssetRepository::open(root,o));auto unreadable=packing.create(r);ASSERT_FALSE(unreadable);ASSERT_TRUE(failure);EXPECT_TRUE(failure->read_failure);EXPECT_EQ(failure->file_id,*r.files[0].files[0].file_id);EXPECT_FALSE(std::filesystem::exists(target(root,*r.asset_id)));clean(root);
 }

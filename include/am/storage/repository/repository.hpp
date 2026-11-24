@@ -1,4 +1,5 @@
 #pragma once
+#include <stop_token>
 #include <chrono>
 #include <compare>
 #include <functional>
@@ -85,11 +86,17 @@ class AssetSnapshot {
   std::uint64_t revision() const noexcept;
   FormatSupport format_support() const noexcept;
   bool writable() const noexcept;
+  bool in_trash() const noexcept;
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
   explicit AssetSnapshot(std::unique_ptr<Impl>);
   friend class AssetRepository;
+};
+struct SourceFailure {
+  std::string file_id;
+  Error error;
+  bool read_failure = true;
 };
 struct FileInput {
   std::string path;
@@ -97,6 +104,7 @@ struct FileInput {
   std::string origin_kind = "user_added";
   std::optional<std::string> file_id;
   std::optional<Json> metadata;
+  std::optional<std::string> expected_sha256;
 };
 struct AddFiles { Json input; std::vector<FileInput> files; };
 struct RemoveFile { std::string file_id; };
@@ -114,6 +122,11 @@ struct CreateRequest {
   std::string creation_kind = "user";
   std::optional<Json> metadata;
   std::vector<AddFiles> files;
+  std::optional<Json> origin;
+  std::stop_token stop{};
+  // Set only for source errors, never for destination failures.
+  // read_failure permits bounded partial retries; source changes never do.
+  std::optional<SourceFailure>* source_failure = nullptr;
 };
 struct IndexedEvent { AssetRef ref; std::uint64_t revision; std::string op_id, kind; };
 // Test-only fault injection. Empty in normal use. Mutators run before writing;
@@ -164,6 +177,7 @@ struct CopyResult {
 struct ImportReadyRequest {
   std::filesystem::path source;
   std::optional<std::string> replace_expected;
+  std::stop_token stop{};
 };
 struct ImportAssetInfo {
   std::string zip_size;
@@ -186,7 +200,8 @@ class AssetRepository {
   AssetRepository(AssetRepository&&) noexcept;
   AssetRepository& operator=(AssetRepository&&) noexcept;
   ~AssetRepository();
-  Result<AssetSnapshot> snapshot(const AssetRef&) const;
+  // Opt-in trash snapshots are read-only; simultaneous locations are a conflict.
+  Result<AssetSnapshot> snapshot(const AssetRef&, bool include_trash = false) const;
   // Optional output receives the actual verification report even on failure.
   Result<ChangeResult> create(const CreateRequest&, VerificationReport* failure_report = nullptr);
   Result<ChangeResult> change(const ChangeRequest&, VerificationReport* failure_report = nullptr);
@@ -202,7 +217,7 @@ class AssetRepository {
   struct Impl;
   std::shared_ptr<Impl> impl_;
   explicit AssetRepository(std::shared_ptr<Impl>);
-  Result<AssetSnapshot> load(const AssetRef&, bool require_v2) const;
+  Result<AssetSnapshot> load(const AssetRef&, bool require_v2, bool include_trash = false) const;
   Result<LifecycleResult> lifecycle(const AssetRef&, std::string_view kind);
 };
 }  // namespace am::repository

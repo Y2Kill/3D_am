@@ -6,6 +6,10 @@ All notable user-visible changes are recorded here.
 
 ### Fixed
 
+- Explicit asset IDs cannot be reused while the original asset is in the trash.
+  Retrying an import in this state asks for a decision and preserves its IDs.
+- Format 1.0 validation accepts long original names and dotted file type IDs on
+  Windows, using schema-equivalent linear checks for the affected patterns.
 - Disabled logging avoids shared-pointer loads, and log quota cleanup tolerates files held by other processes.
 - Import scanning distinguishes links from other Windows reparse tags, skips online-only file reads, and asks about conflicting service filenames and content signatures.
 - Diagnostic exports report skipped cloud placeholders without reading them.
@@ -15,6 +19,9 @@ All notable user-visible changes are recorded here.
   from unchanged ZIPs, avoiding full FTS scans during writes and rebuilds.
 
 ### Added
+
+- Durable `am import run` for edited file/directory plans and ready assets, with
+  source freshness checks, partial import, resumable jobs, and explicit deferred outcomes.
 
 - Read-only `am import scan` with versioned profiles, editable import plans,
   suggested boundaries, exclusions and volume hints, separate ready assets,

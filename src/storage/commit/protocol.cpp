@@ -333,9 +333,12 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
   // This lock deliberately outlives cleanup and every journal transition.
   std::optional<AssetLock> lock;
   auto cleanup = [&] { protected_file.reset(); if (inserted && !moved) { if (file_exists(row.temp_path)) remove_file(row.temp_path); take(journal->remove(row.op_id)); } };
+  auto cancelled = [&] { if (r.stop.stop_requested()) fail(Errc::cancelled, "am.commit.cancelled", "Commit cancelled before publication"); };
   try {
+    cancelled();
     row.op_id = r.op_id.empty() ? Uuid::v4().to_string() : r.op_id; row.asset_id = r.asset_id; row.kind = r.kind; row.base = r.base; row.expected_rev = r.expected_rev; row.job_id = r.job_id;
-    lock.emplace(take(AssetLock::acquire(r.library_root, r.asset_id, r.lock_timeout))); hit(r.hooks, FaultPoint::after_lock);
+    lock.emplace(take(AssetLock::acquire(r.library_root, r.asset_id, r.lock_timeout))); hit(r.hooks, FaultPoint::after_lock); cancelled();
+    if (r.precondition) take(r.precondition());
     const auto paths = layout(r.library_root, r.target_path, r.asset_id, row.op_id); row.target_path = paths.target; row.temp_path = paths.temp;
     if (!r.producer && !r.copy_source) throw io("Producer is missing");
     if (r.producer && r.copy_source)
@@ -350,7 +353,7 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
     inserted = true;
     AM_LOG(debug, "storage.commit", "commit.phase", "Commit phase",
            {{"op_id", row.op_id}, {"phase", std::string("prepared")}});
-    hit(r.hooks, FaultPoint::after_prepared);
+    hit(r.hooks, FaultPoint::after_prepared); cancelled();
     auto sink = r.hooks.create_sink ? take(r.hooks.create_sink(paths.temp)) : take(asset_zip::file_sink(paths.temp));
     auto hooked = std::make_shared<HookSink>(); hooked->inner = sink; hooked->hooks = &r.hooks; hooked->threshold = r.hooks.mid_write_after_bytes.value_or(std::max<U64>(1, r.estimated_size / 2));
     asset_zip::WriteSummary summary;
@@ -370,6 +373,7 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
       auto hash = take(asset_zip::Sha256::create());
       std::array<std::byte, 65536> buffer{};
       for (U64 offset = 0; offset < initial_size;) {
+        cancelled();
         const auto n = take(source->read_at(offset, buffer));
         if (!n) throw changed_source();
         const auto block = std::span(buffer).first(n);
@@ -384,7 +388,7 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
       take(hooked->flush());
       take(hooked->close());
       source->close();
-      hit(r.hooks, FaultPoint::after_finish);
+      hit(r.hooks, FaultPoint::after_finish); cancelled();
       auto after = inspect_copy_source(r.copy_source->path);
       if (!after || after->size != initial_size || after->mtime_ns != initial_mtime) throw changed_source();
     } else {
@@ -395,7 +399,7 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
       take(r.producer(writer));
       hooked->producer_active = false;
       summary = take(writer.finish());
-      hit(r.hooks, FaultPoint::after_finish);
+      hit(r.hooks, FaultPoint::after_finish); cancelled();
     }
     protected_file = NativeFile::open(paths.temp, true);
     const auto hash_start = std::chrono::steady_clock::now(); const auto digest = file_hash(protected_file);
@@ -415,7 +419,8 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
     catch (const std::bad_alloc&) { throw verification_error(oom()); }
     catch (const std::exception& e) { throw verification_error(io(e.what())); }
     catch (...) { throw verification_error(io("Unknown verifier exception")); }
-    hit(r.hooks, FaultPoint::after_verify);
+    cancelled();
+    hit(r.hooks, FaultPoint::after_verify); cancelled();
     db::NewFileEvidence evidence{protected_file->size(), digest, manifest};
     if (r.copy_source && r.copy_source->publish && !take(r.copy_source->publish(evidence))) {
       cleanup();
@@ -427,10 +432,11 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
     take(journal->advance(row.op_id, db::CommitState::prepared, db::CommitState::verified, evidence)); row.state = db::CommitState::verified; row.verified = evidence;
     AM_LOG(debug, "storage.commit", "commit.phase", "Commit phase",
            {{"op_id", row.op_id}, {"phase", std::string("verified")}});
-    hit(r.hooks, FaultPoint::after_verified_journal);
+    hit(r.hooks, FaultPoint::after_verified_journal); cancelled();
     if (!matches_base(paths.target, row.base, r.budget, r.zip_limits)) throw base_changed();
-    hit(r.hooks, FaultPoint::before_replace);
+    hit(r.hooks, FaultPoint::before_replace); cancelled();
     if (r.copy_source && !matches_base(paths.target, row.base, r.budget, r.zip_limits)) throw base_changed();
+    cancelled();
     const auto method = replace_file(protected_file, paths.target, evidence, r.hooks, moved); hit(r.hooks, FaultPoint::after_replace);
     take(journal->advance(row.op_id, db::CommitState::verified, db::CommitState::committed));
     row.state = db::CommitState::committed;

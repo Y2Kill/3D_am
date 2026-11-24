@@ -87,7 +87,9 @@ Result<std::vector<JobRecord>> StateJobStore::list(const JobFilter& filter) {
   return guard<std::vector<JobRecord>>([&]() -> Result<std::vector<JobRecord>> {
     const std::lock_guard lock(mutex_); const ConnectionLock connection_lock(raw_);
     if(filter.parent_id) validate_id(*filter.parent_id);
-    std::string sql=std::string("SELECT ")+columns+" FROM jobs WHERE (? IS NULL OR parent_id=?) AND (?=0 OR parent_id IS NULL)";
+    std::string sql=std::string("SELECT ")+columns+" FROM jobs WHERE 1=1";
+    if(filter.parent_id) sql+=" AND parent_id=?";
+    if(filter.top_level_only) sql+=" AND parent_id IS NULL";
     const std::set<JobState> states(filter.states.begin(),filter.states.end());
     if(!states.empty()) {
       sql+=" AND state IN ("; bool first=true;
@@ -95,8 +97,7 @@ Result<std::vector<JobRecord>> StateJobStore::list(const JobFilter& filter) {
       sql+=')';
     }
     auto s=take(db_.prepare(sql+" ORDER BY priority DESC,position ASC,job_id ASC"));
-    optional_bind(s,1,filter.parent_id); optional_bind(s,2,filter.parent_id); take(s.bind(3,static_cast<std::int64_t>(filter.top_level_only)));
-    int binding=3; for(auto state:states) take(s.bind(++binding,job_state_name(state)));
+    int binding=0; if(filter.parent_id) take(s.bind(++binding,*filter.parent_id)); for(auto state:states) take(s.bind(++binding,job_state_name(state)));
     std::vector<JobRecord> out;
     while(take(s.step())==Step::row) {
       auto r=record(s);
@@ -138,7 +139,7 @@ Result<JobRecord> StateJobStore::transition(std::string_view id,JobState from,Jo
     const bool starting=to==JobState::running;
     const bool finished=job_terminal(to) || to==JobState::failed;
     const auto at=timestamp(clock_());
-    auto q=take(db_.prepare(std::string("UPDATE jobs SET state=?,attempt=max(0,attempt+?),started_at=CASE WHEN ? THEN ? ELSE started_at END,finished_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE finished_at END,decision_json=CASE WHEN ? THEN ? ELSE COALESCE(?,decision_json) END,result_json=COALESCE(?,result_json),error_json=COALESCE(?,error_json) WHERE job_id=? AND state=? RETURNING ")+columns));
+    auto q=take(db_.prepare(std::string("UPDATE jobs SET state=?,attempt=max(0,attempt+?),started_at=CASE WHEN ? THEN ? ELSE started_at END,finished_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE finished_at END,decision_json=CASE WHEN ? THEN ? ELSE COALESCE(?,decision_json) END,result_json=CASE WHEN ?3 THEN NULL ELSE COALESCE(?,result_json) END,error_json=COALESCE(?,error_json) WHERE job_id=? AND state=? RETURNING ")+columns));
     take(q.bind(1,job_state_name(to))); take(q.bind(2,static_cast<std::int64_t>(starting ? 1 : patch.release_attempt ? -1 : 0)));
     take(q.bind(3,static_cast<std::int64_t>(starting))); take(q.bind(4,at));
     take(q.bind(5,static_cast<std::int64_t>(finished))); take(q.bind(6,at)); take(q.bind(7,static_cast<std::int64_t>(starting)));
