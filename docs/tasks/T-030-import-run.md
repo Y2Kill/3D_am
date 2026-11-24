@@ -1,6 +1,6 @@
 # T-030. `import run`: создание ассетов по плану из файлов и папок (M3a)
 
-**Статус:** in_progress · **Веха:** M3a · **Основание:** ТЗ v1.8 §6.1, §6.3.3–6.3.5, §6.5.6, §6.6, §6.7, §6.8, §6.9.1–6.9.2, §19.4.3; ADR-0006, ADR-0012, ADR-0025, ADR-0037 (X-01); приёмки T-026 (замечание 1), T-028 (замечание 4), T-029 (замечание 1)
+**Статус:** review · **Веха:** M3a · **Основание:** ТЗ v1.8 §6.1, §6.3.3–6.3.5, §6.5.6, §6.6, §6.7, §6.8, §6.9.1–6.9.2, §19.4.3; ADR-0006, ADR-0012, ADR-0025, ADR-0037 (X-01); приёмки T-026 (замечание 1), T-028 (замечание 4), T-029 (замечание 1)
 
 ## Цель
 
@@ -170,11 +170,11 @@
 
 ## Отчёт исполнителя
 
-Ветка `codex/T-030`, база `1f53244`, начало работы `92d525c`. Основная реализация в `7e693ff`; В-10 принят, добавлены защита ID в репозитории и безопасный повтор через корзину. Окончательные проверки выполняются. Статус `in_progress`, на review не передано.
+Ветка `codex/T-030`, база `1f53244`, начало работы `92d525c`. Основная реализация — `7e693ff`, защита ID и повтор через корзину по В-10 — `2fb2069`, устранение предупреждений без изменения поведения — `74e4668`. Документальные контрольные точки — `b226d3b`, `74bc0e4`. Работа завершена, статус `review`; push и слияние не выполнялись.
 
 ### Выполнение критериев
 
-1. Четыре обязательных прогона: итог дополняется после окончания. Полный Windows-прогон был прерван для исправления подтверждённого обхода свежести при пустом entries; финальные прогоны запускаются заново.
+1. Четыре обязательных полных прогона завершены с кодом 0: min — 148 PASS, Windows CLI — 637 PASS, Windows CLI offline — 637 PASS, Linux CLI offline — 577 PASS и 57 обоснованных SKIP. Ошибок нет; таблица и фактические итоговые строки ниже.
 2. Кандидаты получают created/imported, skipped, deferred, failed, already_imported/already_queued; ask не исполняется, архивный вход откладывает весь кандидат. Готовые ассеты классифицируются без замены; явное решение skip не открывает источник повторно.
 3. Один Input и реальные объекты корней; все наблюдённые узлы, каталоги, исключения, ссылки и недоступные файлы учтены. SHA/байты и V1–V4 проверяются через репозиторий и library verify. Частичный режим повторяет только структурно определённую ошибку чтения, исключая каждый файл не более одного раза.
 4. Ключ — SHA точных байтов плана и candidate_id. Payload хранит путь, SHA и заранее выданные UUIDv4, без копии плана. Повтор после фиксации узнаёт InputID и не переписывает ZIP. Свой ассет в корзине требует решения; после ручного restore повтор не пишет ZIP, после purge создаёт с прежними ID, skip оставляет корзину. Чужой InputID или две локации одного ID дают конфликт. Исходный план не меняется.
@@ -185,17 +185,49 @@
 
 ### Проверки
 
-- Предварительный `tools\build_min.cmd --ci`: 148/148 PASS. После окончательных изменений выполняется повтор.
+- Повтор `tools\build_min.cmd --ci` после устранения предупреждений: `100% tests passed, 0 tests failed out of 148`, `Total Test time (real) = 64.26 sec`, код 0. Лог `.cache/t030/final-min.log`.
 - `ImportRun.*` и `ImportRunManifest.*`: подтверждены создание, provenance, недоступность/частичный режим, свежесть, повтор после фиксации, чужой ID, четыре параллельных кандидата, пауза/отмена, готовые ассеты и повреждённый UTF-16. Исправление неявного включения из inputs.objects проверено отдельным тестом; решение skip готового ассета — повтором после удаления источника.
 - Новые тесты jobs/storage прошли на memory/SQLite; дополнительные проверки репозитория покрывают SHA при упаковке, структурный FileID ошибки чтения и отсутствие такого FileID при отказе записи назначения.
 - CLI после исправления: 17/17 целевых проверок (вместе с PlanView/планом/репозиторием), 11.77 s; cli_import_run проверяет коды 0/2/3/4, enqueue-only + jobs run, сводку, повтор и failed-результаты show/list.
 - `tools\build_cli.cmd --offline --ci -V -R ImportRunManifest`: 6/6 PASS, 12.38 s. Логи и измерения — `.cache/t030/manifest-final-targeted2.log`, `.cache/t030/pattern-results.json`, `.cache/t030/anchor-results.json`.
 - После В-10: целевой `ctest --test-dir build/win-cli --output-on-failure -R "ImportRun|AssetRepository.(ExplicitIdentity|TrashSnapshot|DuplicateOperation|ExpectedSource|PackingSha)|IndependentCopy.*Collision|Trash.(ConflictsNever|RecoveryExplicit)"` — `100% tests passed, 0 tests failed out of 37`, `Total Test time (real) = 58.84 sec`. Лог `.cache/t030/v10-final-targeted.log`. Включает restore/purge/skip, отсутствие дубля ID, защиту прямого create/copy и гонку между preflight и блокировкой фиксации.
-- Финальные полные выводы и причины Linux SKIP добавляются ниже по окончании.
+- Полные прогоны выполнены на `2fb2069`, включая arch_check, schema_check, sql_check, golden_zip и golden_regen_check; `periodic` исключён согласно задаче. Периодический замер 250 000 не запускался. Логи и JUnit — `.cache/t030/full-{min,windows,offline,linux}.{log,xml}`.
+
+| Команда | Фактический итог ctest | Время ctest | Код команды |
+|---|---|---|---|
+| `tools\build_min.cmd --ci` | `100% tests passed, 0 tests failed out of 148` — 148 PASS, 0 SKIP | `Total Test time (real) = 29.71 sec` | 0 |
+| `tools\build_cli.cmd --ci -LE periodic` | `100% tests passed, 0 tests failed out of 637` — 637 PASS, 0 SKIP | `Total Test time (real) = 1561.34 sec` | 0 |
+| `tools\build_cli.cmd --offline --ci -LE periodic` | `100% tests passed, 0 tests failed out of 637` — 637 PASS, 0 SKIP | `Total Test time (real) = 1552.71 sec` | 0 |
+| WSL `tools/build_linux.sh cli --offline --ci -LE periodic` | `100% tests passed, 0 tests failed out of 634` — 577 PASS, 57 SKIP | `Total Test time (real) = 2009.46 sec` | 0 |
+
+Число `req_report` для CLI (638 Windows / 635 Linux) включает один зарегистрированный periodic-тест, исключённый из прогона. Итоги таблицы взяты из ctest/JUnit, а не из числа регистраций. Невалидных req ID — 0 во всех четырёх прогонах. Время команд вместе с конфигурацией и сборкой: 33.54 / 1586.91 / 1560.61 / 2730.82 s соответственно.
+
+Причины всех 57 Linux SKIP (WSL/DrvFS):
+
+| Количество | Группа | Причина |
+|---|---|---|
+| 23 | ImportRun.* и Decisions/ImportRunTrashRetry.* | Продукционная запись допускается на проверенном fixed NTFS; WSL/DrvFS остаётся read-only. Все эти случаи прошли на Windows. |
+| 12 | cli_logging_commit; cli_jobs_{verify,decision,failure_and_controls,locked,signal}; cli_library_{rebuild_list,sync,trash,add_ready,copy,log_writes} | Те же ограничения записи. Исполнитель и storage/services проверены на Linux через внедрённые синтетические capabilities; CLI чтения проходят без SKIP. |
+| 4 | AssetService.{CreateRefusalsAndPublishRaceNeverReplaceOutput,PostCreateFailureDeletesOnlyTheNewOutput,ValidationAndExtractionUseSharedV3AndPreserveSuccessfulFiles,StreamScopesMinorAndCorruption} | Создание fixtures требует fixed NTFS; process-тесты проверяют read-only варианты. |
+| 1 | ImportReady.KillVerifiedAndReplacedForNewAndReplacementRecoverWithIndex | Crash-process и fixed-NTFS доказательства относятся к Windows; инъекции отказов протокола проходят и на Linux. |
+| 1 | LibraryVerify.PurgeAllWithMissingTrashIsEmptySuccess | Purge — продукционная запись; сама проверка библиотеки тестируется без SKIP. |
+| 12 | FileLog (1), DiagExport offline (2), CommitProtocol Win32 (7), AssetRepository process/kill (2) | Специфичные Win32 sharing, FILE_ATTRIBUTE_OFFLINE, fallback, OS/NTFS evidence и завершение дочерних Win32-процессов. |
+| 2 | ImportRunManifest.{PublishedPatternSurveyOnMsvc,AnchoredPatternSurveyReportsV2AndIndependentV3} | Измеряется именно MSVC std::regex. Эквивалентность линейных проверок, длинные значения и пользовательские схемы проверены на обеих платформах. |
+| 1 | ImportScan.RawInvalidNamesArePreservedWhenTheFilesystemRetainsThem | Данный mount нормализует неверное native-имя до перечисления и не сохраняет raw-fixture. |
+| 1 | Sync.FullDetectsEqualSizeAndRestoredMtime | Данный mount не восстанавливает mtime точно до исходного значения. |
+
+После полных прогонов в `74e4668` механически устранены предупреждения GCC в новом коде: явное создание optional, локальная строка ID перед получением ссылки, явная инициализация пустого stop_token и скобки вокруг тестовых макросов. Поведение и принимаемые данные не изменены. На этой версии дополнительно выполнены:
+
+- `tools\build_min.cmd --ci`: `100% tests passed, 0 tests failed out of 148`, `Total Test time (real) = 64.26 sec`, код 0 (`final-min.log`).
+- `tools\build_cli.cmd --offline --ci -R ImportRun`: `100% tests passed, 0 tests failed out of 29`, `Total Test time (real) = 82.08 sec`, код 0 (`warnings-windows.log`).
+- `ctest --test-dir build/win-cli --output-on-failure -R "AssetRepository.(ExplicitIdentity|TrashSnapshot|ExpectedSource|PackingSha)|CommitProtocol.Cancellation|cli_import_run"`: `100% tests passed, 0 tests failed out of 7`, `Total Test time (real) = 23.81 sec`, код 0 (`warnings-storage-cli-windows.log`).
+- WSL `tools/build_linux.sh cli --offline --ci -R 'ImportRun|AssetRepository.(ExplicitIdentity|TrashSnapshot|ExpectedSource|PackingSha)|ImportReady|CommitProtocol.Cancellation'`: `100% tests passed, 0 tests failed out of 49`, `Total Test time (real) = 91.89 sec`, код 0; 23 PASS и 26 SKIP по тем же причинам выше (`warnings-linux.log`).
+
+Все дополнительные логи — в `.cache/t030/`. Предупреждений в новых строках после повторной сборки нет; оставшиеся предупреждения GCC относятся к неизменённым строкам, вне исправлений задачи. Полные прогоны на `2fb2069` и целевые проверки механических изменений на `74e4668` указаны раздельно.
 
 ### Уточнения и согласованные выходы за рамки
 
-- В-1: repository.hpp/.cpp — необязательные stop_token, expected_sha256, SourceFailure; commit/protocol.hpp/.cpp — отмена до публикации; src/services/CMakeLists.txt — новые .cpp. Прежнее поведение без параметров сохранено, прежние тестовые случаи репозитория и протокола не менялись.
+- В-1: repository.hpp/.cpp — необязательные stop_token, expected_sha256, SourceFailure; commit/protocol.hpp/.cpp — отмена до публикации; src/services/CMakeLists.txt — новые .cpp. Прежнее поведение без новых параметров сохранено; отдельное изменение контракта явно занятого ID согласовано позже в В-10.
 - В-2: executor.cpp — явно заданные непустые результаты failed/needs_decision сохраняются вместе с error/decision; `{}` по умолчанию не записывается. Для interrupted/resource-состояний результата нет. В начале queued → running он сбрасывается; SQL-схема и её версия прежние.
 - В-3: любое ask раньше unavailable: deferred/unresolved, без дочернего задания; сводка отмечает нерешённую недоступность. Include: strict — ошибка, partial — unavailable/incomplete; exclude не читает источник. Уточнение внесено в import_pipeline.md.
 - В-4: виртуальный объект по title_hint не создаётся. InputObject на реальный корень; внутри профильной границы — существующий каталог границы. Несколько корней получают отдельные префиксы ZIP, коллизии переименовываются. title_hint — только title. Уточнение внесено в import_pipeline.md.
