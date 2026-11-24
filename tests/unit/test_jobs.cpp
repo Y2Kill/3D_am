@@ -860,3 +860,55 @@ INSTANTIATE_TEST_SUITE_P(Stores, JobsExecutor, testing::Values(false, true));
 #else
 INSTANTIATE_TEST_SUITE_P(Stores, JobsExecutor, testing::Values(false));
 #endif
+
+TEST_P(JobsExecutor, FailedAndDecisionResultsBelongToTheirAttempt) {
+  RecordProperty("req","K-121|NFR-14.4.3");
+  j::HandlerRegistry registry;
+  add(registry,"test.result",[](j::JobContext& ctx){
+    if(ctx.record().attempt>1) { EXPECT_FALSE(ctx.record().result_json);return j::JobOutcome::success("{\"fresh\":true}"); }
+    auto out=j::JobOutcome::failure(am::Error::make(am::Errc::io_error,"Test failed").id("test.failed"));out.result_json="{\"asset_id\":\"trashed\"}";return out;
+  });
+  add(registry,"test.noresult",[](auto&){return j::JobOutcome::failure(am::Error::make(am::Errc::io_error,"Test failed").id("test.failed"));});
+  add(registry,"test.decisionresult",[](j::JobContext& ctx){
+    if(ctx.record().attempt>1){EXPECT_FALSE(ctx.record().result_json);return j::JobOutcome::success();}
+    auto out=j::JobOutcome::ask({"test.decide",{"continue"},"{}"});out.result_json="{\"summary\":1}";return out;
+  });
+  j::ResourceManager resources(limits());j::Executor executor(*store,resources,registry,options());
+  const auto failed=enqueue("test.result"),empty=enqueue("test.noresult"),decision=enqueue("test.decisionresult");value(executor.run_until_idle());
+  EXPECT_EQ(get(failed.job_id).result_json,std::optional<std::string>("{\"asset_id\":\"trashed\"}"));EXPECT_TRUE(get(failed.job_id).error_json);
+  EXPECT_FALSE(get(empty.job_id).result_json);EXPECT_TRUE(get(empty.job_id).error_json);
+  EXPECT_EQ(get(decision.job_id).result_json,std::optional<std::string>("{\"summary\":1}"));EXPECT_TRUE(get(decision.job_id).decision_json);
+  value(executor.retry(failed.job_id));value(executor.answer(decision.job_id,"continue"));value(executor.run_until_idle());
+  EXPECT_EQ(get(failed.job_id).state,S::succeeded);EXPECT_EQ(get(failed.job_id).attempt,2);EXPECT_EQ(get(decision.job_id).state,S::succeeded);
+  // Every retry/resume path enters running only through queued -> running.
+  for(const auto intermediate:{S::failed,S::needs_decision,S::waiting_resources}) {
+    const auto job=enqueue("test.ok");value(store->transition(job.job_id,S::queued,S::running));c::JobPatch patch;patch.result_json="{\"old\":true}";
+    if(intermediate==S::needs_decision)patch.decision_json="{\"kind\":\"test\",\"options\":[\"continue\"]}";
+    value(store->transition(job.job_id,S::running,intermediate,patch));value(store->transition(job.job_id,intermediate,S::queued));
+    EXPECT_FALSE(value(store->transition(job.job_id,S::queued,S::running)).result_json);
+    value(store->transition(job.job_id,S::running,S::succeeded));
+  }
+}
+namespace {
+class SelectionStore final:public c::IJobStore {
+ public:
+  c::IJobStore& base;std::size_t queries=0,rows=0;bool unfiltered=false;
+  explicit SelectionStore(c::IJobStore& b):base(b){}
+  am::Result<c::JobRecord> enqueue(const c::JobSpec& s)override{return base.enqueue(s);}
+  am::Result<std::optional<c::JobRecord>> get(std::string_view id)override{++queries;auto r=base.get(id);if(r&&*r)++rows;return r;}
+  am::Result<std::vector<c::JobRecord>> list(const c::JobFilter& f={})override{++queries;unfiltered=unfiltered||(f.states.empty()&&!f.parent_id);auto r=base.list(f);if(r)rows+=r->size();return r;}
+  am::Result<c::JobRecord> transition(std::string_view id,S a,S b,const c::JobPatch& p={})override{return base.transition(id,a,b,p);}
+  am::Result<void> report(std::string_view id,const c::JobProgress& p)override{return base.report(id,p);}
+  am::Result<void> move_before(std::string_view id,std::optional<std::string_view> b)override{return base.move_before(id,b);}
+  am::Result<std::size_t> remove_finished(std::string_view t)override{return base.remove_finished(t);}
+};
+}
+TEST_P(JobsExecutor, IdleSchedulingSelectsSameRowsWithTenThousandCompletedJobs) {
+  RecordProperty("req","K-115|NFR-14.3.1");
+  SelectionStore selected(*store);j::ResourceManager resources(limits());j::HandlerRegistry registry;j::Executor executor(selected,resources,registry,options());
+  const auto paused=enqueue();value(store->transition(paused.job_id,S::queued,S::paused));
+  value(executor.run_until_idle());const auto queries=selected.queries,rows=selected.rows;EXPECT_FALSE(selected.unfiltered);
+  for(unsigned i=0;i<10000;++i){const auto job=enqueue();value(store->transition(job.job_id,S::queued,S::running));value(store->transition(job.job_id,S::running,S::succeeded));}
+  selected.queries=selected.rows=0;selected.unfiltered=false;value(executor.run_until_idle());
+  EXPECT_EQ(selected.queries,queries);EXPECT_EQ(selected.rows,rows);EXPECT_FALSE(selected.unfiltered);
+}

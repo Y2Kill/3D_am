@@ -1,4 +1,5 @@
 #pragma once
+#include <stop_token>
 #include <chrono>
 #include <compare>
 #include <functional>
@@ -91,12 +92,18 @@ class AssetSnapshot {
   explicit AssetSnapshot(std::unique_ptr<Impl>);
   friend class AssetRepository;
 };
+struct SourceFailure {
+  std::string file_id;
+  Error error;
+  bool read_failure = true;
+};
 struct FileInput {
   std::string path;
   std::filesystem::path source;
   std::string origin_kind = "user_added";
   std::optional<std::string> file_id;
   std::optional<Json> metadata;
+  std::optional<std::string> expected_sha256;
 };
 struct AddFiles { Json input; std::vector<FileInput> files; };
 struct RemoveFile { std::string file_id; };
@@ -114,6 +121,11 @@ struct CreateRequest {
   std::string creation_kind = "user";
   std::optional<Json> metadata;
   std::vector<AddFiles> files;
+  std::optional<Json> origin;
+  std::stop_token stop;
+  // Set only for source errors, never for destination failures.
+  // read_failure permits bounded partial retries; source changes never do.
+  std::optional<SourceFailure>* source_failure = nullptr;
 };
 struct IndexedEvent { AssetRef ref; std::uint64_t revision; std::string op_id, kind; };
 // Test-only fault injection. Empty in normal use. Mutators run before writing;
@@ -164,6 +176,7 @@ struct CopyResult {
 struct ImportReadyRequest {
   std::filesystem::path source;
   std::optional<std::string> replace_expected;
+  std::stop_token stop;
 };
 struct ImportAssetInfo {
   std::string zip_size;

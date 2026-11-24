@@ -11,6 +11,7 @@
 #include "am/foundation/json_text.hpp"
 #include "am/services/import/exclusion_rules.hpp"
 #include "am/services/import/scan.hpp"
+#include "am/services/import/plan_view.hpp"
 #include "detail.hpp"
 #include "import_schema.hpp"
 
@@ -24,6 +25,34 @@ void decimal(const PlanJson& value, const std::string& at) {
   std::uint64_t number = 0;
   const auto result = std::from_chars(v.data(), v.data() + v.size(), number);
   if (result.ec != std::errc{} || result.ptr != v.data() + v.size()) invalid(at);
+}
+PlanJson schema_instance(const PlanJson& value) {
+  static const auto normative=PlanJson::parse(import_schema);
+  auto instance=value;
+  for(const auto location:plan_raw_schema_fields) {
+    const std::string pointer(location);
+    const auto& spec=normative.at(PlanJson::json_pointer(pointer));
+    // Fail closed if a future schema adds a constraint this linear check cannot enforce.
+    for(auto it=spec.begin();it!=spec.end();++it)
+      if(it.key()!="type" && it.key()!="pattern" && it.key()!="minLength" && it.key()!="maxLength" && it.key()!="description" && it.key()!="title" && it.key()!="$comment") invalid(pointer);
+    if(spec.at("pattern")!="^([0-9a-f]{2})+$" || spec.at("type")!="string") invalid(pointer);
+    const auto begin=std::string("/properties/").size();
+    const auto section=pointer.substr(begin,pointer.find('/',begin)-begin);
+    const auto field=pointer.substr(pointer.rfind('/')+1);
+    if(!instance.is_object() || !instance.contains(section) || !instance.at(section).is_array()) continue;
+    for(std::size_t i=0;i<instance.at(section).size();++i) {
+      auto& item=instance.at(section).at(i);
+      if(!item.is_object() || !item.contains(field) || !item.at(field).is_string()) continue;
+      const auto& raw=item.at(field).get_ref<const std::string&>();
+      const auto at="/"+section+"/"+std::to_string(i)+"/"+field;
+      if(raw.empty() || raw.size()%2 || raw.find_first_not_of("0123456789abcdef")!=std::string::npos) invalid(at);
+      if(spec.contains("minLength") && raw.size()<spec.at("minLength").get<std::size_t>()) invalid(at);
+      if(spec.contains("maxLength") && raw.size()>spec.at("maxLength").get<std::size_t>()) invalid(at);
+      // Only the schema's copy is compacted. References and the typed view use original bytes.
+      item.at(field)="00";
+    }
+  }
+  return instance;
 }
 }  // namespace
 Result<void> validate_profile(const ImportProfile& profile) {
@@ -150,7 +179,7 @@ Result<ImportPlan> parse_plan(std::string_view input) {
     auto value = PlanJson::parse(input);
     static const auto schema = jsoncons::jsonschema::make_json_schema(jsoncons::json::parse(import_schema));
     std::optional<std::string> problem;
-    schema.validate(jsoncons::json::parse(input), [&](const jsoncons::jsonschema::validation_message& message) {
+    schema.validate(jsoncons::json::parse(schema_instance(value).dump()), [&](const jsoncons::jsonschema::validation_message& message) {
       problem = message.instance_location().string();
       return jsoncons::jsonschema::walk_state::abort;
     });
@@ -162,6 +191,12 @@ Result<ImportPlan> parse_plan(std::string_view input) {
       if (!nodes.emplace(text(n, "id"), i).second) invalid(at + "/id");
       if (n["root"].get<std::size_t>() >= value["roots"].size()) invalid(at + "/root");
       if (n.contains("size")) decimal(n["size"], at + "/size");
+      if (n.contains("mtime_ns")) {
+        const auto v = n["mtime_ns"].get<std::string>();
+        std::int64_t number = 0;
+        const auto r = std::from_chars(v.data(),v.data()+v.size(),number);
+        if (r.ec != std::errc{} || r.ptr != v.data()+v.size()) invalid(at + "/mtime_ns");
+      }
       if (n["kind"] == "file" && n["status"] == "available" && (!n.contains("size") || !n.contains("mtime_ns")))
         invalid(at);
       if (n["status"] == "unavailable" && !n.contains("problem")) invalid(at + "/problem");
@@ -274,3 +309,122 @@ Result<ImportPlan> parse_plan(std::string_view input) {
   }
 }
 }  // namespace am::import
+
+namespace am::import {
+namespace {
+std::optional<RawBytes> raw_bytes(const PlanJson& j, const char* field) {
+  if (!j.contains(field)) return {};
+  const auto encoded = j.at(field).get<std::string>();
+  RawBytes out{{},j.value("raw_encoding",std::string{})};
+  for (std::size_t i=0;i<encoded.size();i+=2) {
+    unsigned byte=0;
+    std::from_chars(encoded.data()+i,encoded.data()+i+2,byte,16);
+    out.bytes += static_cast<char>(byte);
+  }
+  return out;
+}
+template<class T> std::optional<T> integer(const PlanJson& j,const char* key) {
+  if (!j.contains(key)) return {};
+  const auto s=j.at(key).get<std::string>(); T n{};
+  std::from_chars(s.data(),s.data()+s.size(),n); return n;
+}
+std::filesystem::path native_text(const std::string& display, const std::optional<RawBytes>& raw) {
+  if (!raw) {
+    if(display.find('\0')!=std::string::npos) throw detail::error("am.import.plan_invalid");
+    return std::filesystem::path(std::u8string(display.begin(),display.end()));
+  }
+#ifdef _WIN32
+  if (raw->encoding != "utf-16le" || raw->bytes.size()%2) throw detail::error("am.import.run.source_unavailable");
+  std::wstring text;
+  for (std::size_t i=0;i<raw->bytes.size();i+=2)
+    text+=static_cast<wchar_t>(static_cast<unsigned char>(raw->bytes[i]) |
+                             (static_cast<unsigned char>(raw->bytes[i+1])<<8));
+  if(text.find(L'\0')!=std::wstring::npos) throw detail::error("am.import.plan_invalid");
+  return std::filesystem::path(text);
+#else
+  if (raw->encoding != "posix") throw detail::error("am.import.run.source_unavailable");
+  if(raw->bytes.find('\0')!=std::string::npos) throw detail::error("am.import.plan_invalid");
+  return std::filesystem::path(raw->bytes);
+#endif
+}
+}
+Result<std::filesystem::path> source_path(const PlanView& plan, const PlanNode& node) {
+  try {
+    const auto& root=plan.roots().at(node.root);
+    auto path=native_text(root.path,root.raw);
+    if (!node.path.empty() || node.path_raw) {
+      const auto relative=native_text(node.path,node.path_raw);
+      if(relative.is_absolute() || relative.has_root_name()) throw detail::error("am.import.plan_invalid");
+      for(const auto& component:relative) if(component=="..") throw detail::error("am.import.plan_invalid");
+      path/=relative;
+    }
+    return path;
+  } catch(const Error& e) { return e; }
+  catch(...) { return detail::error("am.import.run.source_unavailable"); }
+}
+Result<PlanView> parse_plan_view(std::string_view input) {
+  try {
+    auto parsed=parse_plan(input); if(!parsed) return parsed.error();
+    const auto& j=parsed->value;
+    PlanView out;
+    out.mode_=j.at("mode")=="partial" ? ImportMode::partial : ImportMode::strict;
+    out.scan_complete_=j.at("scan").at("completeness")=="complete";
+    for(const auto& r:j.at("roots")) out.roots_.push_back({r.at("path").get<std::string>(),raw_bytes(r,"path_raw")});
+    std::map<std::string,std::size_t> indices;
+    for(const auto& n:j.at("nodes")) {
+      PlanNode v;
+      v.id=n.at("id"); v.path=n.at("path"); v.name=n.at("name"); v.root=n.at("root");
+      const std::map<std::string,NodeKind> kinds{{"file",NodeKind::file},{"directory",NodeKind::directory},{"symlink",NodeKind::symlink},{"other",NodeKind::other}};
+      v.kind=kinds.at(n.at("kind").get<std::string>()); v.available=n.at("status")=="available";
+      v.empty=n.value("empty",false); v.excluded_only=n.value("excluded_only",false);
+      v.detected=n.value("detected",std::string{}); v.size=integer<std::uint64_t>(n,"size"); v.mtime_ns=integer<std::int64_t>(n,"mtime_ns");
+      if(n.contains("sha256")) v.sha256=n.at("sha256").get<std::string>();
+      v.name_raw=raw_bytes(n,"name_raw"); v.path_raw=raw_bytes(n,"path_raw");
+      if(n.contains("problem")) v.problem=PlanProblem{n.at("problem").at("code"),n.at("problem").at("message_id")};
+      indices.emplace(v.id,out.nodes_.size()); out.nodes_.push_back(std::move(v));
+    }
+    for(const auto& c:j.at("candidates")) {
+      PlanCandidate v;
+      v.id=c.at("id"); v.root=c.at("root"); v.base_path=c.at("base_path"); v.title_hint=c.at("title_hint"); v.confidence=c.at("confidence");
+      v.kind=c.at("kind")=="ready_asset" ? CandidateKind::ready_asset : CandidateKind::new_asset;
+      const std::map<std::string,CandidateAction> actions{{"import",CandidateAction::import},{"skip",CandidateAction::skip},{"ask",CandidateAction::ask}};
+      v.action=actions.at(c.at("action").get<std::string>());
+      v.reasons=c.at("reasons").get<std::vector<std::string>>(); v.warnings=c.at("warnings").get<std::vector<std::string>>();
+      if(c.contains("asset_id")) v.asset_id=c.at("asset_id").get<std::string>();
+      if(c.contains("revision")) v.revision=c.at("revision").get<std::uint64_t>();
+      if(c.at("context").contains("sources")) for(const auto& s:c.at("context").at("sources")) v.sources.push_back({s.at("kind"),s.at("name")});
+      std::map<std::string,std::size_t> volumes;
+      for(const auto& s:c.at("volume_sets")) {
+        PlanVolumeSet set; set.id=s.at("id"); set.scheme=s.at("scheme"); set.base=s.at("base"); set.confirmed=s.at("confirmed");
+        set.missing_indices=s.at("missing_indices").get<std::vector<std::uint64_t>>();
+        for(const auto& m:s.at("members")) set.members.push_back(indices.at(m.get<std::string>()));
+        volumes.emplace(set.id,v.volume_sets.size()); v.volume_sets.push_back(std::move(set));
+      }
+      const std::map<std::string,InputKind> kinds{{"file",InputKind::file},{"directory",InputKind::directory},{"archive",InputKind::archive},{"multivolume_archive",InputKind::multivolume_archive}};
+      for(const auto& in:c.at("inputs")) {
+        PlanInput item; item.id=in.at("id"); item.kind=kinds.at(in.at("kind").get<std::string>());
+        for(const auto& ref:in.at("objects")) {
+          PlanObjectRef r;
+          if(ref.contains("node")) r.node=indices.at(ref.at("node").get<std::string>());
+          else r.volume_set=volumes.at(ref.at("volume_set").get<std::string>());
+          item.objects.push_back(r);
+        }
+        v.inputs.push_back(std::move(item));
+      }
+      const std::map<std::string,EntryDecision> decisions{{"include",EntryDecision::include},{"exclude",EntryDecision::exclude},{"ask",EntryDecision::ask},{"skip",EntryDecision::skip}};
+      for(const auto& e:c.at("entries")) v.entries.push_back({indices.at(e.at("node").get<std::string>()),decisions.at(e.at("decision").get<std::string>()),e.value("rule_id",std::string{}),e.value("confidence",std::string{}),e.value("explanation_id",std::string{})});
+      for(const auto& d:c.at("directories")) v.directories.push_back(indices.at(d.get<std::string>()));
+      for(const auto& l:c.at("suggested_links")) v.suggested_links.push_back({l.at("url"),indices.at(l.at("node").get<std::string>()),l.at("ad")});
+      for(const auto& m:c.at("matches")) {
+        PlanMatch match; match.kind=m.at("kind"); match.asset_id=m.at("asset_id"); match.object_id=m.value("object_id",std::string{}); match.relation=m.value("relation",std::string{});
+        if(m.contains("node")) match.node=indices.at(m.at("node").get<std::string>());
+        v.matches.push_back(std::move(match));
+      }
+      out.candidates_.push_back(std::move(v));
+    }
+    return out;
+  } catch(const Error& e) { return e; }
+  catch(const std::exception& e) { return detail::error("am.import.plan_invalid",e.what()); }
+  catch(...) { return detail::error("am.import.plan_invalid"); }
+}
+} // namespace am::import

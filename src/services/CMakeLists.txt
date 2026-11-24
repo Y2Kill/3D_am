@@ -2,7 +2,7 @@
 # index, search, duplicates, preview, external editing sessions.
 set(AM_SERVICES_SOURCES import/exclusion_rules.cpp)
 if(AM_WITH_CONTAINER)
-  list(APPEND AM_SERVICES_SOURCES catalog/indexer.cpp import/scan.cpp import/plan.cpp)
+  list(APPEND AM_SERVICES_SOURCES catalog/indexer.cpp import/scan.cpp import/plan.cpp import/run.cpp)
   find_package(jsoncons CONFIG REQUIRED)
   set(AM_IMPORT_SCHEMA "${PROJECT_SOURCE_DIR}/schemas/import-plan.v1.schema.json")
   file(READ "${AM_IMPORT_SCHEMA}" AM_IMPORT_SCHEMA_TEXT)

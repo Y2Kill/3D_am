@@ -1,6 +1,7 @@
 #include "am/foundation/log.hpp"
 #include "am/application/library_service.hpp"
 #include "am/application/job_service.hpp"
+#include "am/services/import/run.hpp"
 #include "am/services/catalog/verify_job.hpp"
 #include "am/foundation/json_text.hpp"
 #include <array>
@@ -671,6 +672,7 @@ Result<JobService> JobService::open(const std::filesystem::path& root, const Job
     job_take(am::catalog::register_verify_job(p->registry, *p->catalog, media.device_id,
                                               [target](Error warning) { target->warn(std::move(warning)); }));
     job_take(p->registry.add("dev.probe", [](const auto&) { return std::make_unique<ProbeJob>(); }));
+    job_take(am::import::register_import_jobs(p->registry,*p->catalog,media.device_id));
     jobs::ExecutorOptions executor;
     executor.limits = limits;
     executor.profile = options.profile;
@@ -735,7 +737,18 @@ Result<JobCommandOutcome> list_jobs(const std::filesystem::path& root, const jc:
         out.value["jobs"].push_back(job_row(record));
       out.records.push_back(std::move(record));
     }
-    out.json = out.value.dump();
+    out.json = "{\"jobs\":[";
+    for(std::size_t i=0;i<out.records.size();++i) {
+      if(i) out.json += ',';
+      auto row=out.value.at("jobs").at(i).dump();
+      const auto& record=out.records[i];
+      if((record.state==jc::JobState::failed || record.state==jc::JobState::needs_decision) && record.result_json) {
+        if(!json::parse_strict(*record.result_json)) return job_error("am.jobs.json_invalid",Errc::corrupt_data);
+        row.pop_back(); row+=",\"result\":"+*record.result_json+"}";
+      }
+      out.json += row;
+    }
+    out.json += "]}";
     return out;
   });
 }

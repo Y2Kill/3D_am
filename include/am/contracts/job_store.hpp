@@ -53,6 +53,7 @@ struct JobRecord {
 // queued -> running consumes an attempt. A cooperative shutdown may release it
 // only on running -> queued; crash recovery keeps the previous attempt count.
 // A decision answer is the original question plus {"answer":{"option":"..."}}.
+// A result belongs to the last attempt and is cleared at queued -> running.
 struct JobPatch {
   std::optional<std::string> decision_json, result_json, error_json;
   bool clear_decision = false, release_attempt = false;

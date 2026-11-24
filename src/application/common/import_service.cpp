@@ -1,4 +1,5 @@
 #include "am/application/import_service.hpp"
+#include "am/services/import/run.hpp"
 
 #include <fstream>
 #include <toml++/toml.hpp>
@@ -163,5 +164,24 @@ Result<AssetOutcome> scan_import(import::ScanRequest request, const fs::path& ou
     cleanup();
     return error("am.import.output_unavailable", {}, Errc::io_error);
   }
+}
+Result<AssetOutcome> run_import(const fs::path& plan,const fs::path& library,bool enqueue_only,
+                                const JobServiceOptions& options,std::stop_token stop) {
+  try {
+    take(import::validate_run_plan(plan,library));
+    auto service=take(JobService::open(library,options));
+    const auto queued=take(import::enqueue_run(service.catalog(),plan));
+    if(!enqueue_only && !queued.reused) take(service.run(stop));
+    auto summary=take(import::run_summary(service.catalog(),queued));
+    AssetOutcome out; out.value=Json::parse(summary.dump()); out.diagnostics=service.diagnostics();
+    for(const auto& row:summary.at("candidates")) {
+      const auto status=row.at("status").get<std::string>();
+      if(status=="failed") out.status=ExitCode::operation_failed;
+      else if(out.status!=ExitCode::operation_failed && (status=="deferred" || status=="cancelled" || (!enqueue_only && status=="already_queued"))) out.status=ExitCode::partial;
+    }
+    if(stop.stop_requested() && out.status==ExitCode::success) out.status=ExitCode::partial;
+    return out;
+  } catch(const Error& e) { return e; }
+  catch(const std::exception& e) { return error("am.import.run.failed",e.what(),Errc::io_error); }
 }
 }  // namespace am::application

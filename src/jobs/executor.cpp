@@ -348,6 +348,14 @@ struct ExecutorState : std::enable_shared_from_this<ExecutorState> {
       }
       auto state = JobState::failed;
       JobPatch patch;
+      if ((outcome.kind == OutcomeKind::failed || outcome.kind == OutcomeKind::needs_decision) &&
+          !(outcome.error && outcome.error->code == Errc::cancelled) &&
+          !outcome.result_json.empty() && outcome.result_json != "{}") {
+        if (json::parse_strict(outcome.result_json))
+          patch.result_json = outcome.result_json;
+        else
+          outcome = JobOutcome::failure(error("am.jobs.json_invalid"));
+      }
       switch (outcome.kind) {
         case OutcomeKind::succeeded:
           if (!json::parse_strict(outcome.result_json)) {
@@ -493,7 +501,9 @@ struct ExecutorState : std::enable_shared_from_this<ExecutorState> {
         touched.clear();
         retries.clear();
         retry_counts.clear();
-        for (const auto& record : take(store.list()))
+        JobFilter waiting;
+        waiting.states = {JobState::waiting_resources};
+        for (const auto& record : take(store.list(waiting)))
           if (record.state == JobState::waiting_resources && options.auto_retries > 0) {
             (void)transition(record.job_id, record.state, JobState::queued);
             retry_counts[record.job_id] = 1;
@@ -534,16 +544,19 @@ struct ExecutorState : std::enable_shared_from_this<ExecutorState> {
             } else
               ++at;
           }
-          const auto all = take(store.list());
+          JobFilter roots;
+          roots.states = {JobState::queued, JobState::running};
+          roots.top_level_only = true;
+          const auto all = take(store.list(roots));
           std::vector<std::pair<JobRecord, bool>> candidates;
           for (const auto& root : all) {
             if (root.parent_id) continue;
             if (root.state == JobState::queued)
               candidates.emplace_back(root, true);
             else if (root.state == JobState::running && parents.contains(root.job_id)) {
-              std::vector<JobRecord> children;
-              for (const auto& child : all)
-                if (child.parent_id == root.job_id) children.push_back(child);
+              JobFilter child_filter;
+              child_filter.parent_id = root.job_id;
+              const auto children = take(store.list(child_filter));
               if (summarize_children(children).settled())
                 candidates.emplace_back(root, false);
               else
@@ -592,8 +605,21 @@ struct ExecutorState : std::enable_shared_from_this<ExecutorState> {
       {
         const std::lock_guard lock(mutex);
         summary.processed = touched.size();
-        for (auto record : take(store.list())) {
-          if (job_terminal(record.state) && !touched.contains(record.job_id)) continue;
+        JobFilter remaining;
+        remaining.states = {JobState::queued, JobState::running, JobState::paused, JobState::needs_decision,
+                            JobState::waiting_resources, JobState::resource_error,
+                            JobState::cannot_continue_safely, JobState::failed};
+        auto records = take(store.list(remaining));
+        for (const auto& id : touched) {
+          auto record = get(id);
+          if (job_terminal(record.state)) records.push_back(std::move(record));
+        }
+        std::sort(records.begin(),records.end(),[](const auto& a,const auto& b) {
+          if(a.priority!=b.priority) return a.priority>b.priority;
+          if(a.position!=b.position) return a.position<b.position;
+          return a.job_id<b.job_id;
+        });
+        for (auto record : records) {
           if (record.state == JobState::succeeded) ++summary.succeeded;
           if (record.state == JobState::failed) ++summary.failed;
           if (attention(record.state)) ++summary.attention;

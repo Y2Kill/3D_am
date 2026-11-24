@@ -4,7 +4,6 @@
 #include "am/foundation/paths.hpp"
 #include "am/foundation/unicode.hpp"
 #include "am/foundation/uuid.hpp"
-#include "manifest_schema.hpp"
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -324,7 +323,7 @@ MediaInfo detect_media(const std::filesystem::path& root) noexcept {
 
 namespace {
 manifest::SchemaValidator container_schema() {
-  std::string schema;for(const auto part:manifest_schema_parts)schema+=part;
+  std::string schema;for(const auto part:manifest::published_schema_parts())schema+=part;
   return take(manifest::SchemaValidator::create(schema));
 }
 VerificationReport check_container(const asset_zip::ZipArchive& zip, const manifest::ManifestDocument& doc,
@@ -484,7 +483,7 @@ Result<AssetRepository> AssetRepository::open(const Path& root, RepositoryOption
       throw Error::make(Errc::read_only,"Storage is read-only by default",caps.filesystem).in("storage.repository").id("am.repo.storage_read_only").allow(ErrorAction::open_read_only);
     if (!options.clock) fail(Errc::invalid_argument,"am.repo.invalid_operation","Clock is missing");
     if (!options.semantic_validator) options.semantic_validator = std::make_shared<Invariants>(true);
-    std::string schema; for (const auto part : manifest_schema_parts) schema += part;
+    std::string schema; for (const auto part : manifest::published_schema_parts()) schema += part;
     auto state = std::make_shared<Impl>(std::filesystem::weakly_canonical(std::filesystem::absolute(root)),std::move(options),std::move(caps),take(manifest::SchemaValidator::create(schema)));
     if (state->options.mode == LibraryMode::read_write) state->journal = take(db::StateJournal::open(state->root));
     return AssetRepository(std::move(state));
@@ -652,6 +651,7 @@ Result<ImportReadyResult> AssetRepository::import_ready(const ImportReadyRequest
     out.ref.library_id = impl_->options.library_id;
     auto operation = guard<void>([&]() -> Result<void> {
       impl_->require_write();
+      if(incoming.stop.stop_requested()) fail(Errc::cancelled,"am.commit.cancelled","Import cancelled before publication");
       const auto source_path = import_path(incoming.source), root = import_path(impl_->root);
       if (import_inside(root, source_path))
         fail(Errc::invalid_argument, "am.repo.import_source_inside_library", "Source is inside destination library");
@@ -692,6 +692,7 @@ Result<ImportReadyResult> AssetRepository::import_ready(const ImportReadyRequest
       std::string current_zip_hash;
       asset_zip::ReadBudget budget(impl_->options.read_budget);
       commit::CommitRequest request(budget);
+      request.stop = incoming.stop;
       request.library_root = impl_->root;
       request.target_path = impl_->path(out.ref);
       request.asset_id = out.ref.asset_id;
@@ -844,18 +845,38 @@ namespace {
 struct NewSource {
   Path path; U64 size; std::string sha;
   asset_zip::CompressionMethod method;
+  std::stop_token stop;
+  std::optional<std::string> expected_sha256;
+  std::string file_id;
+  std::optional<SourceFailure>* failure = nullptr;
 };
-NewSource preflight(const Path& path, std::string_view name) {
-  auto source = take(asset_zip::file_source(path)); auto hash = take(asset_zip::Sha256::create());
+void check_stop(std::stop_token stop) {
+  if (stop.stop_requested()) fail(Errc::cancelled,"am.commit.cancelled","Import cancelled before publication");
+}
+template<class T> T read_source(Result<T> result, const std::string& id, std::optional<SourceFailure>* failure) {
+  if (!result && failure && (result.error().code == Errc::io_error || result.error().code == Errc::not_found))
+    *failure = SourceFailure{id,result.error()};
+  return take(std::move(result));
+}
+[[noreturn]] void changed_source(const std::string& id, std::optional<SourceFailure>* failure, const char* detail) {
+  auto cause=error(Errc::conflict,"am.repo.source_changed",detail);
+  if(failure) *failure=SourceFailure{id,cause,false};
+  throw cause;
+}
+NewSource preflight(const Path& path, std::string_view name, std::stop_token stop = {},
+                    const std::string& id = {}, std::optional<SourceFailure>* failure = nullptr) {
+  check_stop(stop);
+  auto source = read_source(asset_zip::file_source(path),id,failure); auto hash = take(asset_zip::Sha256::create());
   std::array<std::byte,65536> bytes{}; std::vector<std::byte> sample;
   for (U64 offset = 0; offset < source->size();) {
-    const auto count = take(source->read_at(offset,bytes)); if (!count) fail(Errc::conflict,"am.repo.source_changed","Unexpected source EOF");
+    check_stop(stop);
+    const auto count = read_source(source->read_at(offset,bytes),id,failure); if (!count) fail(Errc::conflict,"am.repo.source_changed","Unexpected source EOF");
     if (offset == 0) sample.assign(bytes.begin(),bytes.begin()+static_cast<std::ptrdiff_t>(count));
     take(hash.update(std::span(bytes).first(count))); offset += count;
   }
-  return {path,source->size(),hex(take(hash.finish())),take(asset_zip::choose_method(name,sample))};
+  return {path,source->size(),hex(take(hash.finish())),take(asset_zip::choose_method(name,sample)),stop,{},id,failure};
 }
-struct Plan { std::map<std::string,NewSource> sources; std::set<std::string> removed_ids; Json changes = Json::array(); };
+struct Plan { std::stop_token stop; std::optional<SourceFailure>* failure = nullptr; std::map<std::string,NewSource> sources; std::set<std::string> removed_ids; Json changes = Json::array(); };
 Json& file(Json& j, const std::string& id) {
   if (j.contains("files")) for (auto& f : j["files"]) if (string(f,"id") == id) return f;
   fail(Errc::invalid_argument,"am.repo.invalid_operation","Unknown FileID: " + id);
@@ -892,7 +913,10 @@ void add_files(Json& j, Plan& plan, const AddFiles& add, const std::set<std::str
     if (f.origin_kind != "imported" && f.origin_kind != "user_added") fail(Errc::invalid_argument,"am.repo.invalid_operation","AddFiles origin must be imported or user_added");
     const auto id = identifier(f.file_id), path = "content/" + input_id + "/" + f.path;
     if (!ids.insert(id).second) fail(Errc::conflict,"am.repo.path_collision","FileID already exists: " + id);
-    auto source = preflight(f.source,path);
+    auto source = preflight(f.source,path,plan.stop,id,plan.failure);
+    source.expected_sha256 = f.expected_sha256;
+    if (f.expected_sha256 && source.sha != *f.expected_sha256)
+      changed_source(id,plan.failure,"Source differs from expected SHA-256");
     Json record{{"id",id},{"storage_path",path},{"size_bytes",std::to_string(source.size)},{"sha256",source.sha},{"origin_kind",f.origin_kind}};
     if (f.metadata) record["metadata"] = *f.metadata;
     j["files"].push_back(record); plan.sources.emplace(path,std::move(source)); plan.changes.push_back({{"kind","file_add"},{"target",id}});
@@ -1028,15 +1052,17 @@ void write_text(asset_zip::ZipWriter& writer, const std::string& text) {
   asset_zip::EntryOptions options; options.uncompressed_size = text.size(); auto entry = take(writer.begin_entry("manifest.json",options)); take(entry.write(std::as_bytes(std::span(text)))); take(entry.finish());
 }
 void write_source(asset_zip::ZipWriter& writer, const std::string& name, const NewSource& fresh) {
-  auto source = take(asset_zip::file_source(fresh.path));
-  if (source->size() != fresh.size) fail(Errc::conflict,"am.repo.source_changed","Source size changed between passes");
+  check_stop(fresh.stop);
+  auto source = read_source(asset_zip::file_source(fresh.path),fresh.file_id,fresh.failure);
+  if (source->size() != fresh.size) changed_source(fresh.file_id,fresh.failure,"Source size changed between passes");
   asset_zip::EntryOptions options; options.uncompressed_size = fresh.size; options.method = fresh.method;
   auto entry = take(writer.begin_entry(name,options)); std::array<std::byte,65536> bytes{};
   for (U64 offset = 0; offset < source->size();) {
-    auto n = take(source->read_at(offset,bytes)); if (!n) fail(Errc::conflict,"am.repo.source_changed","Source EOF changed between passes"); take(entry.write(std::span(bytes).first(n))); offset += n;
+    check_stop(fresh.stop);
+    auto n = read_source(source->read_at(offset,bytes),fresh.file_id,fresh.failure); if (!n) changed_source(fresh.file_id,fresh.failure,"Source EOF changed between passes"); take(entry.write(std::span(bytes).first(n))); offset += n;
   }
   auto actual = take(entry.finish());
-  if (actual.uncompressed_size != fresh.size || !actual.sha256 || hex(*actual.sha256) != fresh.sha) fail(Errc::conflict,"am.repo.source_changed","Source SHA-256 changed between passes");
+  if (actual.uncompressed_size != fresh.size || !actual.sha256 || hex(*actual.sha256) != fresh.sha || (fresh.expected_sha256 && hex(*actual.sha256) != *fresh.expected_sha256)) changed_source(fresh.file_id,fresh.failure,"Source SHA-256 changed between passes");
 }
 // Edit only schema-defined string tokens. Opaque numeric lexemes never enter a
 // floating-point DOM, including core-typed values stored behind codec handles.
@@ -1228,6 +1254,7 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
   if (repo.options.test_hooks.after_preflight) repo.options.test_hooks.after_preflight();
   asset_zip::ReadBudget budget(repo.options.read_budget); commit::CommitRequest request(budget);
   request.library_root = repo.root; request.asset_id = ref.asset_id; request.target_path = repo.path(ref); request.op_id = op;
+  request.stop = plan.stop;
   request.kind = old ? "update" : "create"; if (old) { request.base = old->base(); request.expected_rev = static_cast<std::int64_t>(old->revision()); }
   request.estimated_size = estimated; request.capabilities = repo.capabilities; request.zip_limits = repo.options.zip_limits; request.lock_timeout = repo.options.lock_timeout; request.journal = repo.journal; request.hooks = repo.options.test_hooks.commit;
   std::map<std::string,std::size_t> original_indices; if (old) for (const auto& e : old->archive().entries()) original_indices.emplace(e.raw_name,e.index);
@@ -1286,6 +1313,8 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
 Result<ChangeResult> AssetRepository::create(const CreateRequest& request, VerificationReport* failure_report) {
   if (failure_report) *failure_report = {};
   return guard<ChangeResult>([&] {
+    if(request.source_failure) request.source_failure->reset();
+    check_stop(request.stop);
     impl_->require_write(); AssetRef ref{impl_->options.library_id,identifier(request.asset_id)}; Impl::Lease lock(*impl_,ref);
     if (std::filesystem::exists(paths::native(impl_->path(ref)))) {
       if (request.op_id) {
@@ -1301,7 +1330,10 @@ Result<ChangeResult> AssetRepository::create(const CreateRequest& request, Verif
     if (request.metadata) j["asset"]["metadata"] = *request.metadata;
     std::vector<ChangeOperation> paths_to_check; for (const auto& add : request.files) paths_to_check.emplace_back(add);
     precheck_add_paths(j,paths_to_check,{});
-    Plan plan; for (const auto& add : request.files) add_files(j,plan,add,{});
+    Plan plan; plan.stop = request.stop; plan.failure = request.source_failure;
+    if (plan.failure) plan.failure->reset();
+    if (request.origin) j["origin"] = *request.origin;
+    for (const auto& add : request.files) add_files(j,plan,add,{});
     auto doc = take(manifest::parse_manifest(j.dump(),impl_->options.codec_limits));
     auto result = guard<ChangeResult>([&] { return commit_update(*impl_,ref,std::move(doc),std::move(plan),nullptr,op,"asset_created",Json{{"creation_kind",request.creation_kind}},failure_report); });
     if (!result && result.error().message_id == "am.commit.base_changed") fail(Errc::conflict,"am.repo.asset_exists","Asset appeared during creation");

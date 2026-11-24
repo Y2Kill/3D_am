@@ -628,3 +628,39 @@ TEST(AssetRepository,VerifyContainerReturnsV1FailureAndZipPathDetail) {
   ContainerVerifyOptions settings;settings.streams=false;auto report=value(verify_container(path,settings));EXPECT_EQ(report.v3,CheckStatus::failed);auto found=std::find_if(report.v3_findings.begin(),report.v3_findings.end(),[](const auto& f){return f.rule=="zip_paths";});ASSERT_NE(found,report.v3_findings.end());EXPECT_TRUE(found->pointer.empty());EXPECT_EQ(found->detail,unsafe);
   fixture(repo,root,created.ref,"{");report=value(verify_container(target(root,created.ref.asset_id),settings));EXPECT_EQ(report.v1,CheckStatus::failed);ASSERT_TRUE(report.error);EXPECT_EQ(report.v2,CheckStatus::not_performed);
 }
+
+TEST(AssetRepository, ExpectedSourceShaFailureIdentityAndCancellation) {
+  RecordProperty("req","ADR-0025|K-121|SC-1");
+  const auto root=fresh(); auto o=options(); auto repository=value(AssetRepository::open(root,o));
+  CreateRequest r; r.asset_id=id(); r.files.push_back(addition(root,2));
+  r.files[0].files[1].expected_sha256=std::string(64,'0');
+  auto changed=repository.create(r); ASSERT_FALSE(changed); EXPECT_EQ(changed.error().message_id,"am.repo.source_changed"); EXPECT_FALSE(std::filesystem::exists(target(root,*r.asset_id))); clean(root);
+  r.files[0].files[1].expected_sha256.reset();
+  std::optional<SourceFailure> failed; r.source_failure=&failed;
+  const auto missing=r.files[0].files[1].source;
+  std::filesystem::remove(missing);
+  auto unreadable=repository.create(r); ASSERT_FALSE(unreadable); ASSERT_TRUE(failed); EXPECT_EQ(failed->file_id,*r.files[0].files[1].file_id); clean(root);
+  std::stop_source stop; stop.request_stop(); r.stop=stop.get_token();
+  auto cancelled=repository.create(r); ASSERT_FALSE(cancelled); EXPECT_EQ(cancelled.error().code,Errc::cancelled); EXPECT_FALSE(failed); clean(root);
+}
+TEST(AssetRepository, LateCancellationStillIndexesTheCommittedAsset) {
+  RecordProperty("req","ADR-0006|ADR-0025|K-121");
+  const auto root=fresh(); auto o=options(); CreateRequest r; r.asset_id=id(); r.files.push_back(addition(root));
+  std::stop_source stop; r.stop=stop.get_token(); unsigned indexed=0;
+  o.test_hooks.commit.point=[&](commit::FaultPoint point)->Result<void>{if(point==commit::FaultPoint::after_committed_journal) stop.request_stop(); return {};};
+  o.on_indexed=[&](const auto&){++indexed;};
+  auto repository=value(AssetRepository::open(root,o));
+  auto created=repository.create(r); ASSERT_TRUE(created)<<to_log_string(created.error()); EXPECT_EQ(indexed,1u); EXPECT_TRUE(value(repository.verify(created->ref)).v3_complete); clean(root);
+}
+TEST(AssetRepository, PackingShaChangeIdentifiesSourceAndDestinationErrorsDoNot) {
+  RecordProperty("req","ADR-0025|SC-1|NFR-14.4.3");
+  const auto root=fresh(); CreateRequest r; r.asset_id=id();r.files.push_back(addition(root));
+  r.files[0].files[0].expected_sha256=sha("data-0");
+  std::optional<SourceFailure> failure;r.source_failure=&failure;
+  auto o=options();o.test_hooks.after_preflight=[&]{std::ofstream f(r.files[0].files[0].source,std::ios::binary);f<<"data-1";};
+  auto repository=value(AssetRepository::open(root,o));auto changed=repository.create(r);ASSERT_FALSE(changed);EXPECT_EQ(changed.error().message_id,"am.repo.source_changed");ASSERT_TRUE(failure);EXPECT_EQ(failure->file_id,*r.files[0].files[0].file_id);EXPECT_FALSE(failure->read_failure);EXPECT_FALSE(std::filesystem::exists(target(root,*r.asset_id)));clean(root);
+  r.files[0].files[0].expected_sha256.reset();o=options();o.test_hooks.commit.create_sink=[](const auto&)->Result<std::shared_ptr<asset_zip::RandomAccessSink>>{return Error::make(Errc::io_error,"Destination failure").id("test.destination_failed");};
+  auto destination=value(AssetRepository::open(root,o));auto failed=destination.create(r);ASSERT_FALSE(failed);EXPECT_EQ(failed.error().message_id,"test.destination_failed");EXPECT_FALSE(failure);EXPECT_FALSE(std::filesystem::exists(target(root,*r.asset_id)));clean(root);
+  o=options();o.test_hooks.after_preflight=[&]{std::filesystem::remove(r.files[0].files[0].source);};
+  auto packing=value(AssetRepository::open(root,o));auto unreadable=packing.create(r);ASSERT_FALSE(unreadable);ASSERT_TRUE(failure);EXPECT_TRUE(failure->read_failure);EXPECT_EQ(failure->file_id,*r.files[0].files[0].file_id);EXPECT_FALSE(std::filesystem::exists(target(root,*r.asset_id)));clean(root);
+}

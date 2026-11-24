@@ -1,4 +1,5 @@
 #pragma once
+#include <stop_token>
 #include <chrono>
 #include <functional>
 #include "am/storage/db/commit_journal.hpp"
@@ -68,6 +69,7 @@ struct CommitRequest {
   std::function<Result<void>(const asset_zip::ZipArchive&)> verifier;
   std::function<Result<void>(const db::PendingOperation&)> on_committed;
   FaultHooks hooks;
+  std::stop_token stop;
 };
 struct CommitResult {
   std::string op_id;
