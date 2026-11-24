@@ -86,6 +86,7 @@ class AssetSnapshot {
   std::uint64_t revision() const noexcept;
   FormatSupport format_support() const noexcept;
   bool writable() const noexcept;
+  bool in_trash() const noexcept;
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
@@ -199,7 +200,8 @@ class AssetRepository {
   AssetRepository(AssetRepository&&) noexcept;
   AssetRepository& operator=(AssetRepository&&) noexcept;
   ~AssetRepository();
-  Result<AssetSnapshot> snapshot(const AssetRef&) const;
+  // Opt-in trash snapshots are read-only; simultaneous locations are a conflict.
+  Result<AssetSnapshot> snapshot(const AssetRef&, bool include_trash = false) const;
   // Optional output receives the actual verification report even on failure.
   Result<ChangeResult> create(const CreateRequest&, VerificationReport* failure_report = nullptr);
   Result<ChangeResult> change(const ChangeRequest&, VerificationReport* failure_report = nullptr);
@@ -215,7 +217,7 @@ class AssetRepository {
   struct Impl;
   std::shared_ptr<Impl> impl_;
   explicit AssetRepository(std::shared_ptr<Impl>);
-  Result<AssetSnapshot> load(const AssetRef&, bool require_v2) const;
+  Result<AssetSnapshot> load(const AssetRef&, bool require_v2, bool include_trash = false) const;
   Result<LifecycleResult> lifecycle(const AssetRef&, std::string_view kind);
 };
 }  // namespace am::repository

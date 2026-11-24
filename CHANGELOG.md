@@ -6,6 +6,8 @@ All notable user-visible changes are recorded here.
 
 ### Fixed
 
+- Explicit asset IDs cannot be reused while the original asset is in the trash.
+  Retrying an import in this state asks for a decision and preserves its IDs.
 - Format 1.0 validation accepts long original names and dotted file type IDs on
   Windows, using schema-equivalent linear checks for the affected patterns.
 - Disabled logging avoids shared-pointer loads, and log quota cleanup tolerates files held by other processes.

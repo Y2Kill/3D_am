@@ -420,8 +420,9 @@ struct AssetSnapshot::Impl {
   db::BaseSnapshot base;
   FormatSupport support;
   bool can_write;
-  Impl(AssetRef r, asset_zip::ZipArchive z, ManifestRead m, db::BaseSnapshot b, FormatSupport s, bool writable)
-      : ref(std::move(r)), zip(std::move(z)), text(std::move(m.text)), document(std::move(m.document)), base(std::move(b)), support(s), can_write(writable) {}
+  bool trashed;
+  Impl(AssetRef r, asset_zip::ZipArchive z, ManifestRead m, db::BaseSnapshot b, FormatSupport s, bool writable, bool in_trash = false)
+      : ref(std::move(r)), zip(std::move(z)), text(std::move(m.text)), document(std::move(m.document)), base(std::move(b)), support(s), can_write(writable), trashed(in_trash) {}
 };
 AssetSnapshot::AssetSnapshot(std::unique_ptr<Impl> p) : impl_(std::move(p)) {}
 AssetSnapshot::AssetSnapshot(AssetSnapshot&&) noexcept = default;
@@ -435,6 +436,7 @@ const db::BaseSnapshot& AssetSnapshot::base() const noexcept { return impl_->bas
 U64 AssetSnapshot::revision() const noexcept { return repository::revision(impl_->document.known()); }
 FormatSupport AssetSnapshot::format_support() const noexcept { return impl_->support; }
 bool AssetSnapshot::writable() const noexcept { return impl_->can_write; }
+bool AssetSnapshot::in_trash() const noexcept { return impl_->trashed; }
 
 struct AssetRepository::Impl {
   Path root;
@@ -451,6 +453,11 @@ struct AssetRepository::Impl {
     return root / "assets" / ref.asset_id.substr(ref.asset_id.size()-2) / (ref.asset_id + ".zip");
   }
   void require_write() const { if (options.mode == LibraryMode::read_only) fail(Errc::read_only,"am.repo.read_only","Library is read-only"); }
+  void require_absent(const AssetRef& ref) const {
+    if (std::filesystem::exists(paths::native(path(ref))) ||
+        std::filesystem::exists(paths::native(root / "trash" / (ref.asset_id+".zip"))))
+      fail(Errc::conflict,"am.repo.asset_id_exists","AssetID already exists in assets or trash");
+  }
   void validate(const manifest::ManifestDocument& doc) const { std::lock_guard lock(schema_mutex); take(schema.validate(doc)); }
   struct Lease {
     Impl* owner; AssetRef ref; std::shared_ptr<std::mutex> mutex; std::unique_lock<std::mutex> lock;
@@ -489,9 +496,19 @@ Result<AssetRepository> AssetRepository::open(const Path& root, RepositoryOption
     return AssetRepository(std::move(state));
   });
 }
-Result<AssetSnapshot> AssetRepository::load(const AssetRef& ref, bool require_v2) const {
+Result<AssetSnapshot> AssetRepository::load(const AssetRef& ref, bool require_v2, bool include_trash) const {
   return guard<AssetSnapshot>([&] {
-    const auto path = impl_->path(ref);
+    auto path = impl_->path(ref);
+    bool trashed = false;
+    if (include_trash) {
+      const auto trash = impl_->root / "trash" / (ref.asset_id+".zip");
+      const bool active_exists = std::filesystem::exists(paths::native(path));
+      if (std::filesystem::exists(paths::native(trash))) {
+        if (active_exists) fail(Errc::conflict,"am.repo.asset_id_exists","AssetID exists in both assets and trash");
+        path = trash;
+        trashed = true;
+      }
+    }
     if (!std::filesystem::exists(paths::native(path))) fail(Errc::not_found,"am.repo.not_found","Asset does not exist");
     // Keep the source handle open. If replacement raced the metadata query,
     // retry rather than combine a manifest and base from different versions.
@@ -503,12 +520,12 @@ Result<AssetSnapshot> AssetRepository::load(const AssetRef& ref, bool require_v2
       if (source->size() != base.size || hash_text(manifest.text) != base.manifest_sha256) continue;
       if (require_v2 && support == FormatSupport::supported) impl_->validate(manifest.document);
       base.revision = static_cast<std::int64_t>(repository::revision(manifest.document.known()));
-      return AssetSnapshot(std::make_unique<AssetSnapshot::Impl>(ref,std::move(zip),std::move(manifest),std::move(base),support,support == FormatSupport::supported && impl_->options.mode == LibraryMode::read_write));
+      return AssetSnapshot(std::make_unique<AssetSnapshot::Impl>(ref,std::move(zip),std::move(manifest),std::move(base),support,support == FormatSupport::supported && impl_->options.mode == LibraryMode::read_write && !trashed,trashed));
     }
     fail(Errc::conflict,"am.repo.revision_conflict","Snapshot changed during acquisition");
   });
 }
-Result<AssetSnapshot> AssetRepository::snapshot(const AssetRef& ref) const { return load(ref,true); }
+Result<AssetSnapshot> AssetRepository::snapshot(const AssetRef& ref, bool include_trash) const { return load(ref,true,include_trash); }
 Result<VerificationReport> AssetRepository::verify(const AssetRef& ref, VerifyLevel level, const std::vector<std::string>& ids) const {
   return guard<VerificationReport>([&] {
     auto snap = take(load(ref,false)); asset_zip::ReadBudget budget(impl_->options.read_budget);
@@ -1230,7 +1247,7 @@ bool is_independent_copy(const AssetSnapshot& snapshot, const manifest::CodecLim
 template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref, manifest::ManifestDocument doc, Plan plan,
                                                const AssetSnapshot* old, const std::string& op, const std::string& kind,
                                                const Json& details, VerificationReport* failure_report,
-                                               const IndependentCopy* copy = nullptr) {
+                                               const IndependentCopy* copy = nullptr, bool guard_identity = false) {
   ChangeResult result; result.ref = ref; result.op_id = op; result.revision = repository::revision(doc.known());
   const auto allowed = old ? opaque_paths(old->manifest().known(),old->archive()) : std::set<std::string>{};
   const auto old_keys = old ? old->manifest().opaque_keys() : std::vector<manifest::OpaqueKey>{};
@@ -1255,6 +1272,9 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
   asset_zip::ReadBudget budget(repo.options.read_budget); commit::CommitRequest request(budget);
   request.library_root = repo.root; request.asset_id = ref.asset_id; request.target_path = repo.path(ref); request.op_id = op;
   request.stop = plan.stop;
+  if (guard_identity) request.precondition = [&repo,ref]() -> Result<void> {
+    return guard<void>([&]() -> Result<void> { repo.require_absent(ref); return {}; });
+  };
   request.kind = old ? "update" : "create"; if (old) { request.base = old->base(); request.expected_rev = static_cast<std::int64_t>(old->revision()); }
   request.estimated_size = estimated; request.capabilities = repo.capabilities; request.zip_limits = repo.options.zip_limits; request.lock_timeout = repo.options.lock_timeout; request.journal = repo.journal; request.hooks = repo.options.test_hooks.commit;
   std::map<std::string,std::size_t> original_indices; if (old) for (const auto& e : old->archive().entries()) original_indices.emplace(e.raw_name,e.index);
@@ -1316,6 +1336,7 @@ Result<ChangeResult> AssetRepository::create(const CreateRequest& request, Verif
     if(request.source_failure) request.source_failure->reset();
     check_stop(request.stop);
     impl_->require_write(); AssetRef ref{impl_->options.library_id,identifier(request.asset_id)}; Impl::Lease lock(*impl_,ref);
+    if (request.asset_id) impl_->require_absent(ref);
     if (std::filesystem::exists(paths::native(impl_->path(ref)))) {
       if (request.op_id) {
         auto old = take(snapshot(ref));
@@ -1335,8 +1356,8 @@ Result<ChangeResult> AssetRepository::create(const CreateRequest& request, Verif
     if (request.origin) j["origin"] = *request.origin;
     for (const auto& add : request.files) add_files(j,plan,add,{});
     auto doc = take(manifest::parse_manifest(j.dump(),impl_->options.codec_limits));
-    auto result = guard<ChangeResult>([&] { return commit_update(*impl_,ref,std::move(doc),std::move(plan),nullptr,op,"asset_created",Json{{"creation_kind",request.creation_kind}},failure_report); });
-    if (!result && result.error().message_id == "am.commit.base_changed") fail(Errc::conflict,"am.repo.asset_exists","Asset appeared during creation");
+    auto result = guard<ChangeResult>([&] { return commit_update(*impl_,ref,std::move(doc),std::move(plan),nullptr,op,"asset_created",Json{{"creation_kind",request.creation_kind}},failure_report,nullptr,request.asset_id.has_value()); });
+    if (!result && result.error().message_id == "am.commit.base_changed") fail(Errc::conflict,request.asset_id ? "am.repo.asset_id_exists" : "am.repo.asset_exists","Asset appeared during creation");
     return take(std::move(result));
   });
 }
@@ -1359,6 +1380,7 @@ Result<CopyResult> AssetRepository::copy_independent(const CopyRequest& request)
       fail(Errc::unsupported,"am.repo.copy_opaque_entries","Unregistered ZIP entries cannot be remapped");
     const AssetRef ref{impl_->options.library_id,identifier(request.new_asset_id)};
     Impl::Lease lock(*impl_,ref);
+    if (request.new_asset_id) impl_->require_absent(ref);
     if (std::filesystem::exists(paths::native(impl_->path(ref))) ||
         std::filesystem::exists(paths::native(impl_->root / "trash" / (ref.asset_id+".zip"))))
       fail(Errc::conflict,"am.repo.asset_exists","Asset already exists");
@@ -1385,10 +1407,10 @@ Result<CopyResult> AssetRepository::copy_independent(const CopyRequest& request)
     }
     const Json details{{"creation_kind","independent_copy"},{"source_asset",{{"asset_id",request.source.asset_id},{"revision",source.revision()}}}};
     auto result = guard<ChangeResult>([&] {
-      return commit_update(*impl_,ref,std::move(copy_doc),Plan{},nullptr,op,"asset_created",details,nullptr,&copy);
+      return commit_update(*impl_,ref,std::move(copy_doc),Plan{},nullptr,op,"asset_created",details,nullptr,&copy,request.new_asset_id.has_value());
     });
     if (!result && result.error().message_id == "am.commit.base_changed")
-      fail(Errc::conflict,"am.repo.asset_exists","Asset appeared during creation");
+      fail(Errc::conflict,request.new_asset_id ? "am.repo.asset_id_exists" : "am.repo.asset_exists","Asset appeared during creation");
     return CopyResult{ref,source.revision(),take(std::move(result))};
   });
 }

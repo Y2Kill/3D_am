@@ -451,23 +451,42 @@ class ImportAsset final : public jobs::JobHandler {
       auto lease = take(ctx.acquire(resources));
       if (ctx.stop().stop_requested()) return jobs::JobOutcome::interrupted();
       if (c.kind == CandidateKind::ready_asset) return ready(ctx, plan, c, params, std::move(row));
+      if (ctx.answer() == "skip") {
+        row["status"] = "skipped";
+        row["asset_id"] = params.at("asset_id");
+        return jobs::JobOutcome::success(row.dump());
+      }
       const repository::AssetRef ref{s_->catalog.library().config().library_id,
                                      params.at("asset_id").get<std::string>()};
       {
         const std::lock_guard lock(s_->catalog_mutex);
-        auto old = s_->catalog.library().assets().snapshot(ref);
+        auto old = s_->catalog.library().assets().snapshot(ref, true);
         if (old) {
           const auto& manifest = old->manifest().known();
           bool own = false;
           if (manifest.contains("inputs"))
             for (const auto& input : manifest.at("inputs"))
               if (input.at("id") == params.at("input_id")) own = true;
-          if (!own) throw error("am.import.run.asset_id_conflict", c.id, Errc::conflict);
+          if (!own || manifest.at("asset").at("id") != ref.asset_id)
+            throw error("am.import.run.asset_id_conflict", c.id, Errc::conflict);
+          if (old->in_trash()) {
+            row["status"] = "deferred";
+            row["asset_id"] = ref.asset_id;
+            row["in_trash"] = true;
+            row["message_id"] = "am.import.run.asset_in_trash";
+            row["reason"] = "source_changed_during_import";
+            row["warning_message_id"] = "am.import.run.restored_source_may_differ";
+            auto out = jobs::JobOutcome::ask({"am.import.run.asset_in_trash", {"retry", "skip"}, row.dump()});
+            out.result_json = row.dump();
+            return out;
+          }
           row["status"] = "created";
           row["asset_id"] = ref.asset_id;
           operation(*s_, ctx.record(), params, row);
           return jobs::JobOutcome::success(row.dump());
         }
+        if (old.error().message_id == "am.repo.asset_id_exists")
+          throw error("am.import.run.asset_id_conflict", c.id, Errc::conflict).caused_by(old.error());
         if (old.error().code != Errc::not_found) throw old.error();
       }
       std::map<std::size_t, PlanProblem> failed;
@@ -520,6 +539,8 @@ class ImportAsset final : public jobs::JobHandler {
         }
         if (!created) {
           if (created.error().code == Errc::cancelled) return jobs::JobOutcome::interrupted();
+          if (created.error().message_id == "am.repo.asset_id_exists")
+            throw error("am.import.run.asset_id_conflict", c.id, Errc::conflict).caused_by(created.error());
           if (source_failure) {
             auto at = std::find_if(selected.begin(), selected.end(), [&](const auto& e) {
               return params.at("nodes").at(plan.nodes().at(e.node).id).at("file_id") == source_failure->file_id;

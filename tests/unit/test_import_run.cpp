@@ -312,6 +312,120 @@ TEST_F(ImportRun, RecoveryAfterCommitFindsInputAndDoesNotRewriteAsset) {
   EXPECT_EQ(J::parse(children(q)[0].params_json), child_params);
   clean();
 }
+class ImportRunTrashRetry : public ImportRun, public testing::WithParamInterface<std::string> {};
+TEST_P(ImportRunTrashRetry, RetryNeverDuplicatesTrashedIdentity) {
+  RecordProperty("req", "SC-1|K-121|ADR-0025|NFR-14.4.3");
+  const auto path = source / "part";
+  write(path, "before");
+  const auto mtime = fs::last_write_time(path);
+  scan();
+  const auto q = enqueue();
+  const auto params = J::parse(children(q)[0].params_json);
+  imp::RunHooks hooks;
+  hooks.after_created = [&](auto) -> am::Result<void> {
+    write(path, "changed during import");
+    return {};
+  };
+  execute(hooks);
+  auto row = result(q)["candidates"][0];
+  ASSERT_EQ(row["error"]["message_id"], "am.import.source_changed_during_import");
+  const auto asset = ref(row);
+  const auto active = library / "assets" / asset.asset_id.substr(asset.asset_id.size()-2) / (asset.asset_id + ".zip");
+  const auto trash = library / "trash" / (asset.asset_id + ".zip");
+  const auto before = bytes(trash);
+  J original;
+  {
+    const auto snapshot = take(catalog->library().assets().snapshot(asset, true));
+    ASSERT_TRUE(snapshot.in_trash());
+    original = J::parse(snapshot.manifest_text());
+  }
+  write(path, "before");
+  fs::last_write_time(path, mtime);
+  auto child = children(q)[0];
+  take(catalog->job_store().transition(q.job_id, jc::JobState::failed, jc::JobState::queued));
+  take(catalog->job_store().transition(child.job_id, jc::JobState::failed, jc::JobState::queued));
+  execute();
+  child = children(q)[0];
+  ASSERT_EQ(child.state, jc::JobState::needs_decision);
+  ASSERT_TRUE(child.result_json);
+  row = result(q)["candidates"][0];
+  EXPECT_EQ(row["status"], "deferred");
+  EXPECT_EQ(row["asset_id"], asset.asset_id);
+  EXPECT_EQ(row["reason"], "source_changed_during_import");
+  EXPECT_EQ(row["warning_message_id"], "am.import.run.restored_source_may_differ");
+  EXPECT_EQ(bytes(trash), before);
+  EXPECT_FALSE(fs::exists(active));
+  EXPECT_EQ(take(catalog->indexer().count()), 1);
+  EXPECT_TRUE(take(catalog->indexer().list()).empty());
+  EXPECT_TRUE(take(catalog->indexer().list(true)).at(0).in_trash);
+  auto decision = J::parse(*child.decision_json);
+  EXPECT_NE(decision.dump().find("retry"), std::string::npos);
+  EXPECT_NE(decision.dump().find("skip"), std::string::npos);
+  const auto action = GetParam();
+  if (action == "restore") take(catalog->restore(asset));
+  if (action == "purge") take(catalog->purge(asset));
+  decision["answer"] = {{"option", action == "skip" ? "skip" : "retry"}};
+  jc::JobPatch answer;
+  answer.decision_json = decision.dump();
+  take(catalog->job_store().transition(child.job_id, jc::JobState::needs_decision, jc::JobState::queued, answer));
+  imp::RunHooks observe;
+  unsigned writes = 0, reads = 0;
+  observe.before_attempt = [&](auto&) { ++writes; };
+  observe.on_open = [&](auto) { ++reads; };
+  execute(observe);
+  row = result(q)["candidates"][0];
+  EXPECT_EQ(row["asset_id"], asset.asset_id);
+  EXPECT_EQ(J::parse(children(q)[0].params_json), params);
+  if (action == "skip") {
+    EXPECT_EQ(row["status"], "skipped");
+    EXPECT_EQ(bytes(trash), before);
+    EXPECT_FALSE(fs::exists(active));
+    EXPECT_EQ(take(catalog->indexer().count()), 1);
+    EXPECT_TRUE(take(catalog->indexer().list()).empty());
+  } else {
+    EXPECT_EQ(row["status"], "created") << row.dump();
+    EXPECT_FALSE(fs::exists(trash));
+    EXPECT_EQ(take(catalog->indexer().count()), 1);
+    const auto after = manifest(row);
+    EXPECT_EQ(after["asset"]["id"], original["asset"]["id"]);
+    EXPECT_EQ(after["inputs"][0]["id"], original["inputs"][0]["id"]);
+    EXPECT_EQ(after["inputs"][0]["objects"], original["inputs"][0]["objects"]);
+    EXPECT_EQ(after["inputs"][0]["entries"], original["inputs"][0]["entries"]);
+    if (action == "restore") EXPECT_EQ(bytes(active), before);
+  }
+  EXPECT_EQ(writes, action == "purge" ? 1u : 0u);
+  if (action != "purge") EXPECT_EQ(reads, 0u);
+  clean();
+}
+INSTANTIATE_TEST_SUITE_P(Decisions, ImportRunTrashRetry, testing::Values("restore", "purge", "skip"));
+
+TEST_F(ImportRun, ForeignTrashAndDualLocationsAreConflictsWithoutWrites) {
+  RecordProperty("req", "SC-1|K-121|ADR-0025");
+  write(source / "part", "payload");
+  scan();
+  const auto q = enqueue();
+  const auto params = J::parse(children(q)[0].params_json);
+  am::repository::CreateRequest request;
+  request.asset_id = params["asset_id"].get<std::string>();
+  take(catalog->create(request));
+  const am::repository::AssetRef asset{catalog->library().config().library_id, *request.asset_id};
+  take(catalog->trash(asset));
+  const auto trash = library / "trash" / (*request.asset_id + ".zip");
+  const auto before = bytes(trash);
+  execute();
+  EXPECT_EQ(result(q)["candidates"][0]["error"]["message_id"], "am.import.run.asset_id_conflict");
+  const auto active = library / "assets" / request.asset_id->substr(request.asset_id->size()-2) / (*request.asset_id + ".zip");
+  fs::create_directories(active.parent_path());
+  fs::copy_file(trash, active);
+  take(catalog->job_store().transition(q.job_id, jc::JobState::failed, jc::JobState::queued));
+  take(catalog->job_store().transition(children(q)[0].job_id, jc::JobState::failed, jc::JobState::queued));
+  execute();
+  EXPECT_EQ(result(q)["candidates"][0]["error"]["message_id"], "am.import.run.asset_id_conflict");
+  EXPECT_EQ(bytes(active), before);
+  EXPECT_EQ(bytes(trash), before);
+  fs::remove(active); // Remove only the synthetic conflicting fixture before verification.
+  clean();
+}
 TEST_F(ImportRun, ForeignAssetAtAllocatedIdIsNeverChanged) {
   RecordProperty("req", "SC-1|NFR-14.4.3");
   write(source / "part", "payload");

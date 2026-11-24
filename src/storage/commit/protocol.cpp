@@ -338,6 +338,7 @@ Result<CommitResult> commit_zip(const CommitRequest& r) {
     cancelled();
     row.op_id = r.op_id.empty() ? Uuid::v4().to_string() : r.op_id; row.asset_id = r.asset_id; row.kind = r.kind; row.base = r.base; row.expected_rev = r.expected_rev; row.job_id = r.job_id;
     lock.emplace(take(AssetLock::acquire(r.library_root, r.asset_id, r.lock_timeout))); hit(r.hooks, FaultPoint::after_lock); cancelled();
+    if (r.precondition) take(r.precondition());
     const auto paths = layout(r.library_root, r.target_path, r.asset_id, row.op_id); row.target_path = paths.target; row.temp_path = paths.temp;
     if (!r.producer && !r.copy_source) throw io("Producer is missing");
     if (r.producer && r.copy_source)
