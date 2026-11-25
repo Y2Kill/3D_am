@@ -326,7 +326,9 @@
 |---|---|---|---|
 | `tools\build_min.cmd --ci` | `100% tests passed, 0 tests failed out of 148`; SKIP 0 | 38.43 s | `final-min.log` |
 | `tools\build_cli.cmd --ci -LE periodic` | `100% tests passed, 0 tests failed out of 671`; SKIP 0 | 1760.04 s | `final-cli-online.log` |
-| `tools\build_cli.cmd --offline --ci -LE periodic` | выполняется | — | `final-cli-offline.log` |
-| `tools/build_linux.sh cli --offline --ci -LE periodic` (WSL) | ожидает завершения Windows-проверок | — | `final-linux-cli.log` |
+| `tools\build_cli.cmd --offline --ci -LE periodic` | `100% tests passed, 0 tests failed out of 671` | 1750.61 s | `final-cli-offline.log` |
+| `tools/build_linux.sh cli --offline --ci -LE periodic` (WSL) | не выполнен: исчерпан недельный лимит исполнителя; Linux покрыт CI при публикации | — | — |
 
 Online проверил код `448132c` до дополнения трёх английских шаблонов причин. Полные offline и Linux используют также `9927728`; C++-код после `448132c` не менялся. Каталог сообщений: `message_catalog_check: 420 messages; missing=0`. Сборки выполняются параллельно, но тесты Windows/WSL — последовательно из-за общих путей фикстур. JUnit online сохранён отдельно как `junit-cli-online.xml`; аналогично сохраняется offline.
+
+Отчёт дооформлен управляющим 2026-11-25: исполнитель остановился на офлайн-прогоне из-за недельного лимита; итог офлайн-прогона внесён по логу `final-cli-offline.log`, перевод в review — управляющим.
