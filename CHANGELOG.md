@@ -24,6 +24,9 @@ All notable user-visible changes are recorded here.
   nested archives are read in place; compressed ones are unpacked into the
   library's temporary area. Depth, temporary space and total unpacked bytes are
   limited, and the original nested archive is recorded but not stored.
+- A 3MF inside a ZIP input is checked for its `3D/3dmodel.model` part: verified
+  files are included with certainty, others ask whether to keep or expand them.
+  Opening a library removes import temporary areas older than the orphan age.
 - Ordinary ZIP inputs can be scanned into editable version 2 import plans and
   imported without temporary extraction, with original names, per-record outcomes,
   archive hashes, shared limits, and source freshness checks. Version 1 plans remain readable.

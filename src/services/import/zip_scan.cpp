@@ -193,15 +193,40 @@ void Inventory::list(archive::ZipInput& zip,std::size_t at,const std::string& ke
         decision["decision"]=rule.confidence==Confidence::certain?"exclude":"ask"; decision["explanation_id"]=rule.explanation_id;
       }
       if(decision["decision"]!="exclude" && detected && is_archive(*detected)) {
-        if(specialized_zip_hint(e.path,entry["detected"].get<std::string>())) {
+        const bool specialized=specialized_zip_hint(e.path,entry["detected"].get<std::string>());
+        // T-032 p. 8: a 3MF is verified by its central directory only, with the nested-archive access and limits.
+        std::optional<archive::ZipInput> unverified;  // opened 3MF without a model part, listed below
+        bool verified=false;
+        if(specialized && !decision.contains("rule_id") && decision["decision"]=="include" && entry["status"]=="available" &&
+           e.path_problem.empty() && depth<max_depth && (info.method==0 || !temp_dir.empty())) {
+          auto opened=zip.open_nested(info.index,temp_dir,{});
+          if(opened) {
+            const auto model=unicode::path_collision_key("3D/3dmodel.model");
+            const auto& records=opened->entries();
+            verified=std::any_of(records.begin(),records.end(),[&](const auto& r) {
+              return r.info.kind==asset_zip::EntryKind::regular && unicode::path_collision_key(r.path)==model;
+            });
+            if(!verified) unverified=std::move(*opened);
+          } else if(opened.error().code==Errc::cancelled) throw opened.error();
+          else if(!job->exceeded_limit().empty()) {
+            // The sticky limit ends this archive even when the 3MF is its last record.
+            hit(job->exceeded_limit());
+            auto& summary=plan.value["archives"][at];
+            summary["status"]="limit_exceeded"; summary["problem"]=archive_limit_problem(limits,*job);
+          }
+        }
+        if(verified) {
+          decision["confidence"]="certain"; decision["explanation_id"]="specialized_container_verified";
+        } else if(specialized && !unverified) {
+          // Unreadable here (no temporary area, depth, limit, damage): the T-031 outcome stays.
           decision["confidence"]="probable"; decision["explanation_id"]="specialized_container_unverified";
         } else if(entry["detected"]!="archive.zip") {
           decision["decision"]="ask"; decision["explanation_id"]="nested_archive_expand_unsupported";
         } else if(decision.contains("rule_id")) {
           // A probable exclusion rule asks first; its explanation stays visible.
-        } else if(action=="preserve") {
+        } else if(!specialized && action=="preserve") {
           decision["explanation_id"]="nested_archive_profile_preserve";
-        } else if(action=="exclude") {
+        } else if(!specialized && action=="exclude") {
           decision["decision"]="exclude"; decision["explanation_id"]="nested_archive_profile_exclude";
         } else if(decision["decision"]=="include" && entry["status"]=="available" && e.path_problem.empty()) {
           decision["decision"]="ask";
@@ -212,7 +237,10 @@ void Inventory::list(archive::ZipInput& zip,std::size_t at,const std::string& ke
             std::optional<archive::ZipInput> nested;
             std::optional<Error> problem;
             std::optional<std::string> digest;
-            if(auto opened=zip.open_nested(info.index,temp_dir,{})) {
+            if(unverified) {
+              if(auto hashed=unverified->sha256()) { digest=*hashed; nested=std::move(*unverified); }
+              else problem=hashed.error();
+            } else if(auto opened=zip.open_nested(info.index,temp_dir,{})) {
               if(auto hashed=opened->sha256()) { digest=*hashed; nested=std::move(*opened); }
               else problem=hashed.error();
             } else problem=opened.error();
@@ -230,12 +258,13 @@ void Inventory::list(archive::ZipInput& zip,std::size_t at,const std::string& ke
                 failed(*nested_at,*problem);
                 hit(job->exceeded_limit());
               }
-              decision["explanation_id"]="nested_archive_expandable";
+              // A 3MF without a model part asks: keep it as a file or expand it.
+              decision["explanation_id"]=specialized?"specialized_container_unverified":"nested_archive_expandable";
               if(nested) {
                 plan.value["archive_entries"].push_back(entry); entry_written=true;
                 auto lineage=ancestors; lineage.push_back(*digest);
                 list(*nested,*nested_at,id,top,std::move(lineage),depth+1);
-                if(action=="expand" && plan.value["archives"][*nested_at]["status"]=="listed") {
+                if(!specialized && action=="expand" &&plan.value["archives"][*nested_at]["status"]=="listed") {
                   decision["decision"]="expand"; decision["explanation_id"]="nested_archive_profile_expand";
                 }
               }

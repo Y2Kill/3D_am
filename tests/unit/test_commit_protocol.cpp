@@ -340,6 +340,39 @@ TEST(CommitProtocol, OrphanAgeAndBusyHandleProtectCleanup) {
   EXPECT_TRUE(std::filesystem::exists(dir / "young.zip")); EXPECT_FALSE(std::filesystem::exists(dir / "old.zip")); EXPECT_TRUE(std::filesystem::exists(dir / "busy.zip"));
   EXPECT_EQ(std::count_if(report.begin(), report.end(), [](const auto& x) { return x.outcome == RecoveryOutcome::cleaned; }), 1);
 }
+TEST(CommitProtocol, OrphanImportAreasFollowAgeAndBusyRules) {
+  RecordProperty("req", "ADR-0006|K-6");
+  const auto root = fresh(); const auto areas = root / ".am/.am-tmp/import";
+  for (const auto* name : {"young", "old", "busy"}) { std::filesystem::create_directories(areas / name / "deep"); write_version(areas / name / "deep/n.zip"); }
+  std::filesystem::create_directories(areas / "empty-old");
+  const auto old_time = std::filesystem::file_time_type::clock::now() - std::chrono::hours(25);
+  for (const auto* name : {"old", "busy"}) {
+    std::filesystem::last_write_time(areas / name / "deep/n.zip", old_time);
+    std::filesystem::last_write_time(areas / name / "deep", old_time); std::filesystem::last_write_time(areas / name, old_time);
+  }
+  std::filesystem::last_write_time(areas / "empty-old", old_time);
+  // A young file keeps an otherwise old area.
+  std::filesystem::last_write_time(areas / "young" / "deep", old_time); std::filesystem::last_write_time(areas / "young", old_time);
+  {
+#ifdef _WIN32
+    auto held = value(asset_zip::file_source(areas / "busy/deep/n.zip"));
+#else
+    struct SharedLock { int fd; ~SharedLock() { if (fd >= 0) ::close(fd); } };
+    SharedLock held{::open((areas / "busy/deep/n.zip").c_str(), O_RDONLY)};
+    ASSERT_GE(held.fd, 0); ASSERT_EQ(::flock(held.fd, LOCK_SH | LOCK_NB), 0);
+#endif
+    const auto report = value(recover(root));
+    EXPECT_TRUE(std::filesystem::exists(areas / "young/deep/n.zip"));
+    EXPECT_FALSE(std::filesystem::exists(areas / "old")); EXPECT_FALSE(std::filesystem::exists(areas / "empty-old"));
+    EXPECT_TRUE(std::filesystem::exists(areas / "busy/deep/n.zip"));
+    EXPECT_EQ(std::count_if(report.begin(), report.end(), [](const auto& x) { return x.outcome == RecoveryOutcome::cleaned; }), 2);
+    EXPECT_EQ(std::count_if(report.begin(), report.end(), [](const auto& x) { return x.outcome == RecoveryOutcome::failed; }), 0);
+  }
+  // The shared parent itself is never removed; a later open with a shifted clock cleans the young area.
+  RecoveryOptions later; later.now = std::chrono::system_clock::now() + std::chrono::hours(25);
+  value(recover(root, later));
+  EXPECT_TRUE(std::filesystem::exists(areas)); EXPECT_FALSE(std::filesystem::exists(areas / "young")); EXPECT_FALSE(std::filesystem::exists(areas / "busy"));
+}
 TEST(CommitProtocol, MixedRecoveryOperationsAndBusyAssetAreIndependent) {
   RecordProperty("req", "ADR-0006|ADR-0025");
   const auto root = fresh(); auto journal = value(db::StateJournal::open(root)); std::vector<std::string> assets;

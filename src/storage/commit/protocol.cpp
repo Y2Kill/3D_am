@@ -761,6 +761,33 @@ Result<std::vector<RecoveryItem>> recover(const Path& root, const RecoveryOption
       catch (const std::exception& e) { item.outcome = RecoveryOutcome::failed; item.error = io(e.what()); }
       report.push_back(std::move(item));
     }
+    // T-032: import scans and attempts keep nested-archive temporaries in .am-tmp/import/<uuid>/.
+    const auto areas = directory / "import";
+    if (file_exists(areas)) for (const auto& area : std::filesystem::directory_iterator(am::paths::native(areas))) {
+      // Links and junctions are never followed: cleanup must stay inside the library.
+      if (area.symlink_status().type() != std::filesystem::file_type::directory) continue;
+      RecoveryItem item; item.path = area.path();
+      try {
+        // Age is measured from the newest entry; the shift keeps options.now authoritative without clock_cast.
+        auto newest = std::filesystem::last_write_time(area.path());
+        std::vector<Path> files;
+        for (const auto& e : std::filesystem::recursive_directory_iterator(area.path())) {
+          newest = (std::max)(newest, e.last_write_time());
+          if (e.is_regular_file()) files.push_back(e.path());
+        }
+        const auto age = std::chrono::duration_cast<std::chrono::seconds>(std::filesystem::file_time_type::clock::now() - newest) +
+                         std::chrono::duration_cast<std::chrono::seconds>(options.now - std::chrono::system_clock::now());
+        if (age < options.orphan_age) { item.outcome = RecoveryOutcome::skipped; item.detail = "Orphan is younger than retention age"; }
+        else {
+          for (const auto& file : files) NativeFile::open(file, true, true)->close();  // a reader still holding it -> locked
+          std::error_code failed; std::filesystem::remove_all(area.path(), failed);
+          if (failed) throw io("Remove orphan import area failed: " + failed.message());
+          item.outcome = RecoveryOutcome::cleaned;
+        }
+      } catch (const Error& e) { item.outcome = e.code == Errc::locked ? RecoveryOutcome::skipped : RecoveryOutcome::failed; item.error = e; }
+      catch (const std::exception& e) { item.outcome = RecoveryOutcome::failed; item.error = io(e.what()); }
+      report.push_back(std::move(item));
+    }
     return report;
   } catch (const Error& e) { return e; } catch (const std::bad_alloc&) { return oom(); } catch (const std::exception& e) { return io(e.what()); }
   catch (...) { return io("Unknown recovery journal exception"); }
