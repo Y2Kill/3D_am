@@ -1,9 +1,11 @@
 #include "am/storage/archive/zip_input.hpp"
 #include "am/foundation/text_encoding.hpp"
 #include "am/foundation/unicode.hpp"
+#include "am/foundation/uuid.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <zlib.h>
@@ -87,6 +89,8 @@ bool unsafe(std::string_view p,asset_zip::EntryKind kind) {
 }
 class TimedSource final : public asset_zip::RandomAccessSource {
  public:
+  // Declared first so it is destroyed last: a temporary file is removed only after its handle closes.
+  std::shared_ptr<void> keep;
   std::shared_ptr<const asset_zip::RandomAccessSource> source;
   std::function<void()> check;
   std::uint64_t size() const noexcept override { return source->size(); }
@@ -99,6 +103,34 @@ class TimedSource final : public asset_zip::RandomAccessSource {
     });
   }
 };
+// A Stored nested archive read in place inside its parent.
+class RangeSource final : public asset_zip::RandomAccessSource {
+ public:
+  RangeSource(std::shared_ptr<const asset_zip::RandomAccessSource> s,std::uint64_t o,std::uint64_t n):source(std::move(s)),offset(o),length(n) {}
+  std::uint64_t size() const noexcept override { return length; }
+  Result<std::size_t> read_at(std::uint64_t at,std::span<std::byte> output) const override {
+    if(at>=length) return std::size_t{0};
+    const auto n=static_cast<std::size_t>(std::min<std::uint64_t>(output.size(),length-at));
+    return source->read_at(offset+at,output.first(n));
+  }
+ private:
+  std::shared_ptr<const asset_zip::RandomAccessSource> source;
+  std::uint64_t offset, length;
+};
+struct TempFile {
+  std::filesystem::path path;
+  std::uint64_t bytes=0;
+  std::function<void(std::uint64_t)> release;
+  ~TempFile() {
+    std::error_code ignored;
+    std::filesystem::remove(path,ignored);
+    if(release) release(bytes);
+  }
+};
+std::filesystem::path nested_label(std::filesystem::path parent,std::size_t index) {
+  parent+="!"+std::to_string(index);
+  return parent;
+}
 } // namespace
 struct ZipInputJob::Impl {
   ZipInputLimits limits;
@@ -107,6 +139,7 @@ struct ZipInputJob::Impl {
   mutable std::mutex mutex;
   std::map<std::filesystem::path,std::chrono::steady_clock::time_point> starts;
   std::string limit;
+  std::uint64_t temp_used=0;
   Impl(ZipInputLimits l,ZipInputHooks h):limits(std::move(l)),hooks(std::move(h)),
       bytes(std::min(limits.max_unpacked_bytes,asset_zip::ZipLimits{}.max_entry_bytes)) {
     const asset_zip::ZipLimits ceiling;
@@ -115,6 +148,19 @@ struct ZipInputJob::Impl {
     limits.zip.max_name_bytes=std::min(limits.zip.max_name_bytes,ceiling.max_name_bytes);
     limits.zip.max_entry_bytes=std::min(limits.zip.max_entry_bytes,ceiling.max_entry_bytes);
     limits.max_unpacked_bytes=std::min(limits.max_unpacked_bytes,ceiling.max_entry_bytes);
+    limits.max_depth=std::min(limits.max_depth,unconditional_max_depth);
+  }
+  void reserve_temp(std::uint64_t n) {
+    bool over=false;
+    {
+      const std::lock_guard lock(mutex);
+      over=n>limits.max_temp_bytes || temp_used>limits.max_temp_bytes-n;
+      if(!over) temp_used+=n;
+    }
+    if(over) exceeded("max_temp_bytes");
+  }
+  void release_temp(std::uint64_t n) noexcept {
+    const std::lock_guard lock(mutex); temp_used-=std::min(temp_used,n);
   }
   void mark(std::string name) {
     const std::lock_guard lock(mutex); if(limit.empty()) limit=std::move(name);
@@ -156,6 +202,8 @@ struct ZipInput::Impl {
   std::filesystem::path path;
   std::shared_ptr<ZipInputJob> job;
   std::vector<ZipInputEntry> entries;
+  std::uint64_t depth=1;
+  bool temporary=false;
   Impl(asset_zip::ZipArchive z,std::filesystem::path p,std::shared_ptr<ZipInputJob> j):zip(std::move(z)),path(std::move(p)),job(std::move(j)) {}
 };
 struct ZipInputStream::Impl {
@@ -202,8 +250,16 @@ Result<ZipInput> ZipInput::open(const std::filesystem::path& path,std::shared_pt
       throw failure(Errc::invalid_argument,"am.archive.invalid_limits");
     job->impl_->check(path);
     if(job->impl_->hooks.on_open) job->impl_->hooks.on_open(path);
+    return open_source(take(asset_zip::file_source(path)),path,std::move(job),1,false);
+  });
+}
+ZipInput ZipInput::open_source(std::shared_ptr<const asset_zip::RandomAccessSource> base,std::filesystem::path path,
+    std::shared_ptr<ZipInputJob> job,std::uint64_t depth,bool temporary) {
+  {
     auto source=std::make_shared<TimedSource>();
-    source->source=take(asset_zip::file_source(path));
+    // A temporary source arrives wrapped with its file owner; keep the owner, re-wrap the reader.
+    if(const auto* wrapped=dynamic_cast<const TimedSource*>(base.get())) { source->keep=wrapped->keep; base=wrapped->source; }
+    source->source=std::move(base);
     source->check=[job,path] { job->impl_->check(path); };
     auto opened=asset_zip::ZipArchive::open(source,job->impl_->limits.zip,asset_zip::ZipReadProfile::input);
     const auto limit_prefix=std::string("am.")+"archive.limit.";
@@ -211,7 +267,7 @@ Result<ZipInput> ZipInput::open(const std::filesystem::path& path,std::shared_pt
       job->impl_->exceeded(opened.error().message_id.substr(limit_prefix.size()),&opened.error());
     auto zip=take(std::move(opened));
     auto state=std::make_shared<Impl>(std::move(zip),path,std::move(job));
-    state->source=std::move(source);
+    state->source=std::move(source); state->depth=depth; state->temporary=temporary;
     std::map<std::string,std::vector<std::size_t>> raw_names, keys;
     for(const auto& info:state->zip.entries()) {
       state->job->impl_->check(path);
@@ -231,9 +287,64 @@ Result<ZipInput> ZipInput::open(const std::filesystem::path& path,std::shared_pt
     }
     state->job->impl_->check(path);
     return ZipInput(std::move(state));
-  });
+  }
 }
 std::span<const ZipInputEntry> ZipInput::entries() const noexcept { return impl_->entries; }
+std::uint64_t ZipInput::depth() const noexcept { return impl_->depth; }
+bool ZipInput::temporary() const noexcept { return impl_->temporary; }
+const std::filesystem::path& ZipInput::label() const noexcept { return impl_->path; }
+Result<ZipInput> ZipInput::open_nested(std::size_t index,const std::filesystem::path& temp_dir,std::stop_token stop) const {
+  return checked<ZipInput>([&] {
+    auto& job=*impl_->job->impl_;
+    job.check(impl_->path);
+    if(index>=entries().size()) throw failure(Errc::invalid_argument,"am.archive.invalid_index");
+    if(impl_->depth>=job.limits.max_depth) job.exceeded("max_depth");
+    const auto& info=entries()[index].info;
+    auto label=nested_label(impl_->path,index);
+    std::array<std::byte,65536> bytes{};
+    if(info.method!=0 && temp_dir.empty()) throw failure(Errc::unsupported,"am.archive.temp_unavailable");
+    auto stream=take(open_entry(index));
+    if(info.method==0 && !info.encrypted) {
+      // One pass verifies the CRC of the bytes that are then read in place.
+      for(;;) {
+        if(stop.stop_requested()) throw failure(Errc::cancelled,"am.import.cancelled");
+        if(!take(stream.read(bytes))) break;
+      }
+      const auto range=take(impl_->zip.raw_range(index));
+      if(range.length!=info.uncompressed_size) throw failure(Errc::corrupt_data,"am.archive.nested_range_mismatch");
+      return open_source(std::make_shared<RangeSource>(impl_->source,range.offset,range.length),std::move(label),impl_->job,impl_->depth+1,false);
+    }
+    if(temp_dir.empty()) throw failure(Errc::unsupported,"am.archive.temp_unavailable");
+    std::filesystem::create_directories(temp_dir);
+    auto file=std::make_shared<TempFile>();
+    file->path=temp_dir/(Uuid::v4().to_string()+".zip");
+    file->release=[job=impl_->job](std::uint64_t n) { job->impl_->release_temp(n); };
+    {
+      std::ofstream out(file->path,std::ios::binary|std::ios::trunc);
+      if(!out) throw failure(Errc::io_error,"am.archive.temp_write_failed");
+      for(;;) {
+        if(stop.stop_requested()) throw failure(Errc::cancelled,"am.import.cancelled");
+        const auto n=take(stream.read(bytes));
+        if(!n) break;
+        job.reserve_temp(n); file->bytes+=n;
+        out.write(reinterpret_cast<const char*>(bytes.data()),static_cast<std::streamsize>(n));
+        if(!out) throw failure(Errc::io_error,"am.archive.temp_write_failed");
+      }
+      out.close();
+      if(!out) throw failure(Errc::io_error,"am.archive.temp_write_failed");
+    }
+    auto timed=std::make_shared<TimedSource>();
+    timed->source=take(asset_zip::file_source(file->path));
+    timed->keep=std::move(file);
+    return open_source(std::move(timed),std::move(label),impl_->job,impl_->depth+1,true);
+  });
+}
+Result<ZipInput> open_snapshot(const ZipInputSnapshot& snapshot,std::shared_ptr<ZipInputJob> job,std::stop_token stop) {
+  if(!snapshot.parent) return ZipInput::open(snapshot.path,std::move(job));
+  auto parent=open_snapshot(*snapshot.parent,job,stop);
+  if(!parent) return parent.error();
+  return parent->open_nested(snapshot.parent_index,snapshot.temp_dir,stop);
+}
 const asset_zip::ArchiveSummary& ZipInput::summary() const noexcept { return impl_->zip.summary(); }
 std::vector<ZipInputIdentity> ZipInput::identity() const {
   std::vector<ZipInputIdentity> result; result.reserve(entries().size());

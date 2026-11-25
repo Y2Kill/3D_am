@@ -129,7 +129,7 @@ TEST(ImportPlan, SkipRequiresExactInputMatchForEveryObject) {
 TEST(ImportPlan, UnknownVersionAndSchemaViolationsAreRejected) {
   RecordProperty("req", "SC-1");
   auto p = plan();
-  for(const std::uint64_t version:{3ULL,0ULL,18446744073709551615ULL}) {
+  for(const std::uint64_t version:{4ULL,0ULL,18446744073709551615ULL}) {
     p["version"]=version;
     invalid(p,"/version");
   }

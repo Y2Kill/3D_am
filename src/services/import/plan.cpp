@@ -15,6 +15,7 @@
 #include "detail.hpp"
 #include "import_schema.hpp"
 #include "import_schema_v2.hpp"
+#include "import_schema_v3.hpp"
 
 namespace am::import {
 namespace {
@@ -180,19 +181,24 @@ Result<ImportPlan> parse_plan(std::string_view input) {
     auto checked = am::json::parse_strict(input, {limits.max_known_depth, limits.max_bytes});
     if (!checked) return error("am.import.plan_invalid").caused_by(checked.error());
     auto value = PlanJson::parse(input);
-    const bool v2=value.is_object() && value.contains("version") && value.at("version")==2;
-    static const auto normative_v1=PlanJson::parse(import_schema), normative_v2=PlanJson::parse(import_schema_v2);
+    const bool v3=value.is_object() && value.contains("version") && value.at("version")==3;
+    // v2 and v3 share the archive structure; v3 adds nested archives and expand decisions.
+    const bool v2=v3 || (value.is_object() && value.contains("version") && value.at("version")==2);
+    static const auto normative_v1=PlanJson::parse(import_schema), normative_v2=PlanJson::parse(import_schema_v2),
+      normative_v3=PlanJson::parse(import_schema_v3);
     static const auto schema_v1=jsoncons::jsonschema::make_json_schema(jsoncons::json::parse(import_schema));
     static const auto schema_v2=jsoncons::jsonschema::make_json_schema(jsoncons::json::parse(import_schema_v2));
-    const auto& schema=v2?schema_v2:schema_v1;
+    static const auto schema_v3=jsoncons::jsonschema::make_json_schema(jsoncons::json::parse(import_schema_v3));
+    const auto& schema=v3?schema_v3:v2?schema_v2:schema_v1;
     std::optional<std::string> problem;
-    schema.validate(jsoncons::json::parse(schema_instance(value,v2?normative_v2:normative_v1,v2).dump()), [&](const jsoncons::jsonschema::validation_message& message) {
+    schema.validate(jsoncons::json::parse(schema_instance(value,v3?normative_v3:v2?normative_v2:normative_v1,v2).dump()), [&](const jsoncons::jsonschema::validation_message& message) {
       problem = message.instance_location().string();
       return jsoncons::jsonschema::walk_state::abort;
     });
     if (problem) invalid(*problem);
     if(v2) for(const auto key:{"max_entries","max_unpacked_bytes","max_seconds_per_container","max_temp_bytes"})
       decimal(value.at("profile").at("limits").at(key),std::string("/profile/limits/")+key);
+    if(v3) decimal(value.at("profile").at("limits").at("max_depth"),"/profile/limits/max_depth");
     std::map<std::string, std::size_t> nodes;
     for (std::size_t i = 0; i < value["nodes"].size(); ++i) {
       const auto& n = value["nodes"][i];
@@ -215,20 +221,39 @@ Result<ImportPlan> parse_plan(std::string_view input) {
       if (it == nodes.end()) invalid(at);
       return value["nodes"][it->second];
     };
+    // An archive is keyed by its filesystem node (top level) or by the record that contains it (nested, v3).
     std::map<std::string,std::size_t> archives,archive_entries;
+    std::map<std::string,std::string> archive_root;  // archive key -> top-level node id
+    std::map<std::string,std::uint64_t> archive_depth;
     std::map<std::string,std::set<std::uint64_t>> archive_indices;
     if(v2) {
+      for(std::size_t i=0;i<value["archive_entries"].size();++i)
+        if(!archive_entries.emplace(text(value["archive_entries"][i],"id"),i).second) invalid("/archive_entries/"+std::to_string(i)+"/id");
       for(std::size_t i=0;i<value["archives"].size();++i) {
         const auto& a=value["archives"][i]; const auto at="/archives/"+std::to_string(i);
         for(const auto key:{"entry_count","comment_length","encrypted_entries","unsupported_entries"})
           if(!a.at(key).is_number_integer()) invalid(at+"/"+key);
-        const auto id=text(a,"node");
-        if(!archives.emplace(id,i).second || node(id,at+"/node")["kind"]!="file") invalid(at+"/node");
+        if(a.contains("node")) {
+          const auto id=text(a,"node");
+          if(!archives.emplace(id,i).second || node(id,at+"/node")["kind"]!="file") invalid(at+"/node");
+          if(v3 && a.at("depth")!=1) invalid(at+"/depth");
+          archive_root[id]=id; archive_depth[id]=1;
+        } else {
+          // The parent archive must precede its nested archive, which also rules out reference cycles.
+          const auto id=text(a,"entry");
+          const auto parent=archive_entries.find(id);
+          if(parent==archive_entries.end()) invalid(at+"/entry");
+          const auto& record=value["archive_entries"][parent->second];
+          const auto owner=text(record,"archive");
+          if(!archives.contains(owner) || record["kind"]!="file" || record["status"]!="available" || !archives.emplace(id,i).second) invalid(at+"/entry");
+          if(a.at("depth")!=archive_depth.at(owner)+1) invalid(at+"/depth");
+          if(a["status"]=="listed" && (!a.contains("sha256") || !a.contains("access"))) invalid(at+"/sha256");
+          archive_root[id]=archive_root.at(owner); archive_depth[id]=archive_depth.at(owner)+1;
+        }
         if(a["status"]!="listed" && !a.contains("problem")) invalid(at+"/problem");
       }
       for(std::size_t i=0;i<value["archive_entries"].size();++i) {
         const auto& e=value["archive_entries"][i]; const auto at="/archive_entries/"+std::to_string(i);
-        if(!archive_entries.emplace(text(e,"id"),i).second) invalid(at+"/id");
         const auto archive=text(e,"archive");
         if(!archives.contains(archive)) invalid(at+"/archive");
         if(!e["index"].is_number_unsigned() && !e["index"].is_number_integer()) invalid(at+"/index");
@@ -283,8 +308,12 @@ Result<ImportPlan> parse_plan(std::string_view input) {
           if(!archive_entries.contains(id) || !archive_decisions.emplace(id,eat).second) invalid(eat);
           const auto& source=value["archive_entries"][archive_entries.at(id)];
           if((source["kind"]=="symlink" || source["kind"]=="other") && e["decision"]!="skip") invalid(eat);
+          // expand needs a listed nested archive for exactly this record.
+          if(e["decision"]=="expand" && (!archives.contains(id) || value["archives"][archives.at(id)]["status"]!="listed"))
+            invalid(at+"/entries/"+std::to_string(ei)+"/decision");
           continue;
         }
+        if(e["decision"]=="expand") invalid(at+"/entries/"+std::to_string(ei)+"/decision");
         const auto eat = at + "/entries/" + std::to_string(ei) + "/node";
         const auto id = text(e, "node");
         if (!entries.insert(id).second) invalid(eat);
@@ -323,12 +352,12 @@ Result<ImportPlan> parse_plan(std::string_view input) {
         }
       }
       for(const auto& [id,pointer]:archive_decisions) {
-        const auto archive=text(value["archive_entries"][archive_entries.at(id)],"archive");
+        const auto archive=archive_root.at(text(value["archive_entries"][archive_entries.at(id)],"archive"));
         if(std::find(object_nodes.begin(),object_nodes.end(),archive)==object_nodes.end() || c["kind"]=="ready_asset") invalid(pointer);
       }
       if(v2) for(std::size_t i=0;i<value["archive_entries"].size();++i) {
         const auto& e=value["archive_entries"][i];
-        if(std::find(object_nodes.begin(),object_nodes.end(),text(e,"archive"))!=object_nodes.end() && !archive_decisions.contains(text(e,"id")))
+        if(std::find(object_nodes.begin(),object_nodes.end(),archive_root.at(text(e,"archive")))!=object_nodes.end() && !archive_decisions.contains(text(e,"id")))
           invalid(at+"/entries");
       }
       if (c["kind"] == "ready_asset") {
@@ -431,10 +460,11 @@ Result<PlanView> parse_plan_view(std::string_view input) {
     const auto& j=parsed->value;
     PlanView out;
     out.version_=j.at("version").get<unsigned>();
-    if(out.version_==2) {
+    if(out.version_>=2) {
       const auto& l=j.at("profile").at("limits");
       out.limits_=PlanLimits{*integer<std::uint64_t>(l,"max_entries"),*integer<std::uint64_t>(l,"max_unpacked_bytes"),
-        *integer<std::uint64_t>(l,"max_seconds_per_container"),*integer<std::uint64_t>(l,"max_temp_bytes"),l.at("max_ratio").get<double>()};
+        *integer<std::uint64_t>(l,"max_seconds_per_container"),*integer<std::uint64_t>(l,"max_temp_bytes"),l.at("max_ratio").get<double>(),
+        out.version_>=3?*integer<std::uint64_t>(l,"max_depth"):0};
     }
     out.mode_=j.at("mode")=="partial" ? ImportMode::partial : ImportMode::strict;
     out.scan_complete_=j.at("scan").at("completeness")=="complete";
@@ -453,16 +483,30 @@ Result<PlanView> parse_plan_view(std::string_view input) {
       indices.emplace(v.id,out.nodes_.size()); out.nodes_.push_back(std::move(v));
     }
     std::map<std::string,std::size_t> archive_indices,entry_indices;
-    if(out.version_==2) {
+    if(out.version_>=2) {
+      std::map<std::string,std::size_t> record_positions;  // entry id -> position in archive_entries
+      for(std::size_t i=0;i<j.at("archive_entries").size();++i) record_positions.emplace(j.at("archive_entries")[i].at("id").get<std::string>(),i);
       for(const auto& a:j.at("archives")) {
-        PlanArchive v; v.node=indices.at(a.at("node").get<std::string>());
+        PlanArchive v;
+        std::string key;
+        if(a.contains("node")) { key=a.at("node").get<std::string>(); v.node=indices.at(key); }
+        else {
+          // parse_plan guarantees that the parent archive precedes this one.
+          key=a.at("entry").get<std::string>();
+          v.parent_entry=record_positions.at(key);
+          v.node=out.archives_.at(archive_indices.at(j.at("archive_entries")[*v.parent_entry].at("archive").get<std::string>())).node;
+          v.depth=a.at("depth").get<std::uint64_t>();
+          if(a.contains("sha256")) v.sha256=a.at("sha256").get<std::string>();
+          v.temp=a.value("access",std::string{})=="temp";
+        }
         v.status=a.at("status")=="listed" ? PlanArchiveStatus::listed : a.at("status")=="unreadable" ? PlanArchiveStatus::unreadable : PlanArchiveStatus::limit_exceeded;
         v.entry_count=a.at("entry_count"); v.comment_length=a.at("comment_length");
         v.encrypted_entries=a.at("encrypted_entries"); v.unsupported_entries=a.at("unsupported_entries"); v.zip64=a.at("zip64");
         v.name_encodings=a.at("name_encodings").get<std::vector<std::string>>();
         if(a.contains("problem")) v.problem=read_problem(a.at("problem"));
-        archive_indices.emplace(a.at("node").get<std::string>(),out.archives_.size());
-        out.archive_by_node_.emplace(v.node,out.archives_.size());
+        archive_indices.emplace(key,out.archives_.size());
+        if(v.parent_entry) out.archive_by_entry_.emplace(*v.parent_entry,out.archives_.size());
+        else out.archive_by_node_.emplace(v.node,out.archives_.size());
         out.archives_.push_back(std::move(v));
       }
       for(const auto& e:j.at("archive_entries")) {
@@ -510,7 +554,7 @@ Result<PlanView> parse_plan_view(std::string_view input) {
         }
         v.inputs.push_back(std::move(item));
       }
-      const std::map<std::string,EntryDecision> decisions{{"include",EntryDecision::include},{"exclude",EntryDecision::exclude},{"ask",EntryDecision::ask},{"skip",EntryDecision::skip}};
+      const std::map<std::string,EntryDecision> decisions{{"include",EntryDecision::include},{"exclude",EntryDecision::exclude},{"ask",EntryDecision::ask},{"skip",EntryDecision::skip},{"expand",EntryDecision::expand}};
       for(const auto& e:c.at("entries")) {
         PlanEntry entry{e.contains("node")?indices.at(e.at("node").get<std::string>()):std::size_t(-1),
           decisions.at(e.at("decision").get<std::string>()),e.value("rule_id",std::string{}),e.value("confidence",std::string{}),e.value("explanation_id",std::string{})};

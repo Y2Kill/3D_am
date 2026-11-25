@@ -559,7 +559,7 @@ for name, positive, fixture_dir in (("log-record", log_example, ".cache/log-reco
                current.is_valid(json.loads(path.read_text("utf8"))))
     print(f"{name} schema: {len(cases)} contract cases and {len(actual)} actual records checked")
 import_plan_validators = {}
-for version in (1, 2):
+for version in (1, 2, 3):
     current = json.loads((Path(args.root) / f"schemas/import-plan.v{version}.schema.json").read_text("utf8"))
     jsonschema.Draft202012Validator.check_schema(current)
     import_plan_validators[version] = jsonschema.Draft202012Validator(current)
@@ -569,7 +569,7 @@ import_example = {"format": "am-import-plan", "version": 1, "created_at": "2026-
                   "mode": "strict", "roots": [{"path": "/synthetic"}],
                   "scan": {"completeness": "complete", "limits_hit": [], "counts": {"nodes": 0, "files": 0, "unavailable": 0}},
                   "nodes": [], "candidates": []}
-plan_contract_counts = {1: 0, 2: 0}
+plan_contract_counts = {1: 0, 2: 0, 3: 0}
 for label, value, expected in (("positive", import_example, True),
                                ("version", dict(import_example, version=2), False),
                                ("extra", dict(import_example, extra=True), False),
@@ -656,6 +656,47 @@ for label, value, expected in v2_cases:
     report("import-plan:v2:" + label, "SC-1", "static v2 plan", expected, import_plan_validators[2].is_valid(value))
     plan_contract_counts[2] += 1
 
+# T-032: v3 adds nested archives keyed by their parent record, depth, digest, access and expand.
+v3_example = copy.deepcopy(v2_example)
+v3_example["version"] = 3
+v3_example["profile"]["limits"]["max_depth"] = "3"
+v3_example["archives"][0]["depth"] = 1
+v3_example["archive_entries"][0]["path"] = "inner.zip"
+v3_example["archive_entries"][0]["path_raw"] = "696e6e65722e7a6970"
+v3_example["archive_entries"][0]["detected"] = "archive.zip"
+v3_example["archives"].append({"entry": "a1", "depth": 2, "sha256": "0" * 64, "access": "range", "container": "zip",
+                               "status": "listed", "entry_count": 1, "name_encodings": ["utf-8(valid)"], "zip64": False,
+                               "comment_length": 0, "encrypted_entries": 0, "unsupported_entries": 0})
+nested_record = copy.deepcopy(v2_example["archive_entries"][0])
+nested_record["id"] = "a2"
+nested_record["archive"] = "a1"
+v3_example["archive_entries"].append(nested_record)
+v3_example["candidates"][0]["entries"][-1]["decision"] = "expand"
+v3_example["candidates"][0]["entries"].append({"archive_entry": "a2", "decision": "include"})
+v3_cases = [("positive", copy.deepcopy(v3_example), True)]
+sample = copy.deepcopy(v3_example)
+del sample["profile"]["limits"]["max_depth"]
+v3_cases.append(("missing-max-depth", sample, False))
+sample = copy.deepcopy(v3_example)
+del sample["archives"][1]["depth"]
+v3_cases.append(("missing-depth", sample, False))
+sample = copy.deepcopy(v3_example)
+sample["archives"][1]["node"] = "n1"
+v3_cases.append(("node-and-entry", sample, False))
+sample = copy.deepcopy(v3_example)
+sample["archives"][0]["access"] = "temp"
+v3_cases.append(("top-level-access", sample, False))
+sample = copy.deepcopy(v3_example)
+sample["archives"][1]["access"] = "disk"
+v3_cases.append(("unknown-access", sample, False))
+sample = copy.deepcopy(v2_example)
+sample["candidates"][0]["entries"][-1]["decision"] = "expand"
+report("import-plan:v2:expand-decision", "SC-1", "static v2 plan", False, import_plan_validators[2].is_valid(sample))
+plan_contract_counts[2] += 1
+for label, value, expected in v3_cases:
+    report("import-plan:v3:" + label, "SC-1", "static v3 plan", expected, import_plan_validators[3].is_valid(value))
+    plan_contract_counts[3] += 1
+
 def plan_valid(value, label):
     if not isinstance(value, dict) or value.get("format") != "am-import-plan":
         print(f"import plan {label}: missing or unsupported format")
@@ -675,13 +716,13 @@ for label, field, replacement in (("unknown-version", "version", 99), ("missing-
         sample[field] = replacement
     report("import-plan:dispatch:" + label, "SC-1", "plan version/format dispatch", False, plan_valid(sample, label))
 actual_plans = sorted((Path(args.root) / ".cache/import-plan-cases").glob("*.json"))
-plan_actual_counts = {1: 0, 2: 0}
+plan_actual_counts = {1: 0, 2: 0, 3: 0}
 for path in actual_plans:
     value = json.loads(path.read_text("utf8"))
     report("import-plan:" + path.stem, "SC-1", "actual scan plan", True,
            plan_valid(value, path.name))
     if isinstance(value, dict) and type(value.get("version")) is int and value["version"] in plan_actual_counts:
         plan_actual_counts[value["version"]] += 1
-for version in (1, 2):
+for version in (1, 2, 3):
     print(f"import plan schema v{version}: {plan_contract_counts[version]} static contract cases and {plan_actual_counts[version]} actual plans checked")
 sys.exit(1 if failures else 0)

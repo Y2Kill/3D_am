@@ -10,10 +10,13 @@ struct ZipExecution {
   std::map<std::size_t, PlanProblem> failed;
   std::map<std::size_t, std::shared_ptr<archive::ZipInputSnapshot>> snapshots;
   std::shared_ptr<archive::ZipInputJob> job;
+  // Managed temporary area for compressed nested archives; removed when the attempt ends.
+  std::shared_ptr<TempArea> temp;
 };
 PlanEntry archive_node_decision(const PlanCandidate&, std::size_t node);
 PlanEntry archive_entry_decision(const PlanView&, const PlanCandidate&, std::size_t entry);
-ZipExecution zip_execution(const PlanView&, const PlanCandidate&, const RunHooks&, std::stop_token);
+ZipExecution zip_execution(const PlanView&, const PlanCandidate&, const RunHooks&, std::stop_token,
+                           const std::filesystem::path& library);
 Result<void> prepare_zip_execution(ZipExecution&, const PlanView&, const PlanCandidate&, std::stop_token);
 void append_zip_execution(ZipExecution&, const PlanView&, const PlanCandidate&, const PlanJson& params,
                          PlanJson& input, repository::AddFiles&, paths::ZipPathMapper&,

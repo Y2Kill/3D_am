@@ -450,7 +450,7 @@ TEST(ImportScan, TelegramContextDepthLooseInputsAndUrlAdvertisement) {
   EXPECT_TRUE(ad);
   EXPECT_TRUE(safe);
   EXPECT_TRUE(bundle);
-  EXPECT_EQ(p["profile"]["not_applied"], J::array({"nested", "previews", "groups", "limits.max_temp_bytes"}));
+  EXPECT_EQ(p["profile"]["not_applied"], J::array({"previews", "groups"}));
 }
 TEST(ImportScan, ReadyAssetsAreSeparatedEvenWithSingleAndInvalidAssetsAsk) {
   RecordProperty("req", "SC-14|SC-3|SC-2");

@@ -378,6 +378,7 @@ Library::Library(Library&&) noexcept = default;
 Library& Library::operator=(Library&&) noexcept = default;
 Library::~Library() = default;
 const Config& Library::config() const noexcept { return impl_->config; }
+const std::filesystem::path& Library::root() const noexcept { return impl_->root; }
 const StorageCapabilities& Library::capabilities() const noexcept { return impl_->caps; }
 Mode Library::mode() const noexcept { return impl_->mode; }
 const OwnerInfo& Library::owner() const noexcept { return impl_->owner; }

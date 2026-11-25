@@ -776,6 +776,29 @@ TEST(ManifestSemantics, SameInputObjectReferencesAndNestedExclusion) {
   j["inputs"][1]["entries"].push_back(entry);
   EXPECT_EQ(validate(j).findings[0].rule, "input_entry_object");
 }
+TEST(ManifestSemantics, ExtractedArchiveParentRecordIsExcludedWithoutFileId) {
+  // T-032 p. 6: the container record of an extracted nested archive is excluded by nested_extract.
+  RecordProperty("req", "X-01");
+  auto j = example();
+  auto child = j["inputs"][0]["objects"][0];
+  child["id"] = unknown;
+  child.erase("relative_path");
+  child["kind"] = "archive";
+  child["container"] = "zip";
+  child["parent_object_id"] = j["inputs"][0]["objects"][0]["id"];
+  child["parent_entry_id"] = j["inputs"][0]["entries"][0]["id"];
+  child["nested_action"] = "extract";
+  j["inputs"][0]["objects"].push_back(child);
+  auto& parent = j["inputs"][0]["entries"][0];
+  parent["result"] = "excluded";
+  parent["exclusion"] = J{{"rule", "nested_extract"}, {"by", "profile"}};
+  auto with_file = j;
+  parent.erase("file_id");
+  passes(j);
+  const auto findings = validate(with_file).findings;
+  ASSERT_FALSE(findings.empty());
+  EXPECT_EQ(findings[0].rule, "input_entry_file");
+}
 TEST(ManifestSemantics, LargeGraphAndClaimsMeasurement) {
   RecordProperty("req", "O-17|ADR-0035");
   auto j = example();

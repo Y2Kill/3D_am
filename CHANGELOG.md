@@ -20,6 +20,10 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Import expands ZIP archives nested inside ZIP inputs (plan version 3). Stored
+  nested archives are read in place; compressed ones are unpacked into the
+  library's temporary area. Depth, temporary space and total unpacked bytes are
+  limited, and the original nested archive is recorded but not stored.
 - Ordinary ZIP inputs can be scanned into editable version 2 import plans and
   imported without temporary extraction, with original names, per-record outcomes,
   archive hashes, shared limits, and source freshness checks. Version 1 plans remain readable.
