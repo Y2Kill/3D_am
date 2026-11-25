@@ -11,6 +11,7 @@
 #include "am/foundation/log.hpp"
 #include "am/foundation/uuid.hpp"
 #include "am/services/import/exclusion_rules.hpp"
+#include "am/services/import/zip_execution.hpp"
 #include "am/storage/asset_zip/source.hpp"
 #include "am/storage/db/job_store.hpp"
 #include "am/storage/db/operation_log.hpp"
@@ -78,7 +79,13 @@ PlanView load(const J& params) {
     throw error("am.import.run.plan_changed", {}, Errc::conflict).caused_by(e);
   }
 }
-J problem(const PlanProblem& p) { return {{"code", p.code}, {"message_id", p.message_id}}; }
+J problem(const PlanProblem& p) {
+  J out{{"code", p.code}, {"message_id", p.message_id}};
+  if(p.limit) out["limit"]=*p.limit;
+  if(p.effective_value) out["effective_value"]=*p.effective_value;
+  if(p.source) out["source"]=*p.source;
+  return out;
+}
 J failure(const Error& e) { return {{"code", errc_name(e.code)}, {"message_id", e.message_id}}; }
 J base_row(const PlanView& p, const PlanCandidate& c) {
   J row{{"candidate_id", c.id}};
@@ -92,36 +99,50 @@ std::optional<J> deferred(const PlanView& p, const PlanCandidate& c) {
   auto row = base_row(p, c);
   const auto unresolved =
       c.action == CandidateAction::ask ||
-      std::any_of(c.entries.begin(), c.entries.end(), [](const auto& e) { return e.decision == EntryDecision::ask; });
+      std::any_of(c.entries.begin(), c.entries.end(), [&](const auto& e) {
+        return (e.archive_entry?archive_entry_decision(p,c,*e.archive_entry):e).decision == EntryDecision::ask;
+      });
   if (!unresolved && c.action == CandidateAction::skip) {
     row["status"] = "skipped";
     return std::make_optional(std::move(row));
   }
-  const auto archive =
-      c.kind == CandidateKind::new_asset && std::any_of(c.inputs.begin(), c.inputs.end(), [](const auto& i) {
-        return i.kind == InputKind::archive || i.kind == InputKind::multivolume_archive;
-      });
+  std::string archive_reason;
+  if(c.kind==CandidateKind::new_asset) for(const auto& i:c.inputs) {
+    if(i.kind==InputKind::multivolume_archive) archive_reason="am.import.run.volume_set_unsupported";
+    else if(i.kind==InputKind::archive && archive_reason.empty()) {
+      if(p.version()==1) archive_reason="am.import.run.archive_plan_rescan_required";
+      else for(const auto& o:i.objects)
+        if(!o.node || !p.archive_for_node(*o.node)) archive_reason="am.import.run.archive_input_unsupported";
+    }
+  }
+  const auto archive=!archive_reason.empty();
   if (!unresolved && !archive) return {};
   row["status"] = "deferred";
-  row["message_id"] = unresolved ? "am.import.run.unresolved" : "am.import.run.archive_input_unsupported";
-  if (unresolved)
-    for (const auto& e : c.entries)
-      if (e.decision == EntryDecision::ask && !p.nodes().at(e.node).available) {
+  row["message_id"] = unresolved ? "am.import.run.unresolved" : archive_reason;
+  if (unresolved) {
+    for (const auto& e : c.entries) {
+      if(e.archive_entry && archive_entry_decision(p,c,*e.archive_entry).decision==EntryDecision::ask && !p.archive_entries().at(*e.archive_entry).available) {
+        row["has_unavailable"]=true;
+        if(p.archive_entries().at(*e.archive_entry).problem) row["unavailable_problem"]=problem(*p.archive_entries().at(*e.archive_entry).problem);
+      } else if (!e.archive_entry && e.decision == EntryDecision::ask && !p.nodes().at(e.node).available) {
         row["has_unavailable"] = true;
         if (p.nodes().at(e.node).problem) row["unavailable_problem"] = problem(*p.nodes().at(e.node).problem);
       }
+    }
+  }
   return std::make_optional(std::move(row));
 }
 std::vector<std::size_t> members(const PlanCandidate& c) {
   std::set<std::size_t> nodes(c.directories.begin(), c.directories.end());
-  for (const auto& e : c.entries) nodes.insert(e.node);
+  for (const auto& e : c.entries) if(!e.archive_entry) nodes.insert(e.node);
   for (const auto& i : c.inputs)
     for (const auto& r : i.objects)
       if (r.node) nodes.insert(*r.node);
   return {nodes.begin(), nodes.end()};
 }
 std::vector<PlanEntry> execution_entries(const PlanView& p, const PlanCandidate& c) {
-  auto entries = c.entries;
+  std::vector<PlanEntry> entries;
+  for(const auto& e:c.entries) if(!e.archive_entry) entries.push_back(e);
   for (const auto node : members(c)) {
     if (p.nodes().at(node).kind != NodeKind::file) continue;
     if (std::none_of(entries.begin(), entries.end(), [&](const auto& e) { return e.node == node; }))
@@ -153,6 +174,8 @@ J allocate(const PlanView& p, const PlanCandidate& c, const J& parent) {
   for (const auto n : members(c)) params["nodes"][p.nodes().at(n).id] = {{"entry_id", uuid()}, {"file_id", uuid()}};
   params["objects"] = J::object();
   for (const auto n : object_roots(p, c)) params["objects"][p.nodes().at(n).id] = uuid();
+  params["archives"]=J::object();
+  for(const auto n:members(c)) if(p.archive_for_node(n)) params["archives"][p.nodes().at(n).id]=uuid();
   params["sources"] = J::array();
   for (const auto& source : c.sources) {
     (void)source;
@@ -175,6 +198,9 @@ void ensure_children(const PlanView& p, const J& params, const std::vector<jc::J
 }
 J summary(const PlanView& p, const std::vector<jc::JobRecord>& children, bool reused) {
   J out{{"candidates", J::array()}};
+  if(!p.archives().empty()) {
+    out["archives"]=p.archives().size(); out["archive_entries"]=p.archive_entries().size();
+  }
   for (const auto& c : p.candidates()) {
     if (auto row = deferred(p, c)) {
       out["candidates"].push_back(*row);
@@ -207,6 +233,7 @@ J summary(const PlanView& p, const std::vector<jc::JobRecord>& children, bool re
     }
     out["candidates"].push_back(std::move(row));
   }
+  if(!p.archives().empty()) out["deferred"]=std::count_if(out["candidates"].begin(),out["candidates"].end(),[](const auto& row){return row.at("status")=="deferred";});
   return out;
 }
 std::string base64(std::string_view bytes) {
@@ -313,7 +340,7 @@ void operation(Shared& s, const jc::JobRecord& job, const J& params, const J& ro
 }
 repository::CreateRequest build(Shared& s, const PlanView& p, const PlanCandidate& c, const J& params,
                                 const std::map<std::size_t, PlanProblem>& failed,
-                                const std::map<std::size_t, std::string>& hashes, std::stop_token stop) {
+                                const std::map<std::size_t, std::string>& hashes, std::stop_token stop, ZipExecution& archives) {
   repository::CreateRequest request;
   request.asset_id = params.at("asset_id").get<std::string>();
   request.op_id = params.at("operation_id").get<std::string>();
@@ -333,6 +360,7 @@ repository::CreateRequest build(Shared& s, const PlanView& p, const PlanCandidat
   std::map<std::size_t, paths::MappedPath> names;
   for (const auto ri : roots) {
     const auto& n = p.nodes().at(ri);
+    if(p.archive_for_node(ri)) continue;
     J object{{"id", params.at("objects").at(n.id)},
              {"kind", n.kind == NodeKind::directory ? "directory" : "file"},
              {"name", n.name}};
@@ -354,6 +382,7 @@ repository::CreateRequest build(Shared& s, const PlanView& p, const PlanCandidat
   repository::AddFiles add;
   for (const auto ni : members(c)) {
     const auto& n = p.nodes().at(ni);
+    if(p.archive_for_node(ni)) continue;
     const auto root =
         std::find_if(roots.begin(), roots.end(), [&](auto ri) { return p.nodes().at(ri).root == n.root; });
     if (root == roots.end()) throw error("am.import.plan_invalid");
@@ -409,9 +438,27 @@ repository::CreateRequest build(Shared& s, const PlanView& p, const PlanCandidat
       file.expected_sha256 = n.sha256;
       if (!file.expected_sha256 && hashes.contains(ni)) file.expected_sha256 = hashes.at(ni);
       add.files.push_back(std::move(file));
+    } else if(n.kind==NodeKind::directory && !relative.empty()) {
+      // Reserve filesystem directory prefixes before assigning archive expansions.
+      auto original=relative;
+      if(roots.size()>1) original=names.at(*root).zip_path+"/"+relative;
+      (void)mapper.map(original);
     }
     input["entries"].push_back(std::move(entry));
   }
+  std::map<std::size_t,std::string> prefixes;
+  const bool only_archive=roots.size()==1 && p.archive_for_node(roots.front()).has_value() && archives.archives.size()==1;
+  if(!only_archive) for(const auto ai:archives.archives) {
+    const auto ni=p.archives().at(ai).node; const auto& n=p.nodes().at(ni);
+    const auto root=std::find_if(roots.begin(),roots.end(),[&](auto ri){return p.nodes().at(ri).root==n.root;});
+    if(root==roots.end()) throw error("am.import.plan_invalid");
+    const auto& object=p.nodes().at(*root);
+    auto relative=n.id==object.id?n.name:n.path.substr(object.path.empty()?0:object.path.size()+1);
+    if(roots.size()>1 && !p.archive_for_node(*root)) relative=names.at(*root).zip_path+"/"+relative;
+    auto relative_path=path(relative); relative_path.replace_extension();
+    prefixes[ni]=utf8(relative_path);
+  }
+  append_zip_execution(archives,p,c,params,input,add,mapper,prefixes);
   if (!c.sources.empty()) {
     J origin{{"sources", J::array()}};
     input["source_refs"] = J::array();
@@ -440,6 +487,8 @@ class ImportAsset final : public jobs::JobHandler {
   explicit ImportAsset(std::shared_ptr<Shared> state) : s_(std::move(state)) {}
   jobs::JobOutcome run(jobs::JobContext& ctx) override {
     J row;
+    ZipExecution archives;
+    std::optional<PlanLimits> limits;
     try {
       const auto params = J::parse(ctx.record().params_json);
       row = {{"candidate_id", params.at("candidate_id")}};
@@ -447,6 +496,18 @@ class ImportAsset final : public jobs::JobHandler {
       const auto candidate_id = params.at("candidate_id").get<std::string>();
       const auto& c = candidate(plan, candidate_id);
       row = base_row(plan, c);
+      archives=zip_execution(plan,c,s_->hooks,ctx.stop());
+      limits=plan.limits();
+      if(archives.job) {
+        row["archives"]=archives.archives.size(); row["archive_entries"]=archives.ids.size();
+        row["effective_limits"]=effective_archive_limits(*limits,*archives.job);
+        for(const auto ai:archives.archives) {
+          const auto& a=plan.archives().at(ai);
+          if(a.problem) row["archive_problems"].push_back(problem(*a.problem));
+          if(a.status==PlanArchiveStatus::limit_exceeded && a.problem && archive_node_decision(c,a.node).decision==EntryDecision::include)
+            row["problem"]=problem(*a.problem);
+        }
+      }
       const std::array resources{jobs::ResourceRequest{jobs::ResourceKind::write, s_->device},
                                  jobs::ResourceRequest{jobs::ResourceKind::cpu, {}}};
       auto lease = take(ctx.acquire(resources));
@@ -508,6 +569,7 @@ class ImportAsset final : public jobs::JobHandler {
           }
           if (n.kind == NodeKind::file) ++included;
         }
+      for(const auto& e:c.entries) if(e.archive_entry && archive_entry_decision(plan,c,*e.archive_entry).decision==EntryDecision::include) ++included;
       for (std::size_t attempt = 0; attempt <= included; ++attempt) {
         for (const auto& e : selected)
           if (e.decision == EntryDecision::include && !failed.contains(e.node)) {
@@ -516,7 +578,7 @@ class ImportAsset final : public jobs::JobHandler {
             // Stat checks remain mandatory on every retry. Hashing is outside the Catalog lock.
             row["node_id"] = n.id;
             fresh(*s_, plan, n);
-            if (!n.sha256 && !hashes.contains(e.node)) {
+            if (!plan.archive_for_node(e.node) && !n.sha256 && !hashes.contains(e.node)) {
               try {
                 hashes.emplace(e.node, source_hash(*s_, plan, n, ctx.stop()));
               } catch (const Error& err) {
@@ -528,7 +590,8 @@ class ImportAsset final : public jobs::JobHandler {
             }
           }
         row.erase("node_id");
-        auto request = build(*s_, plan, c, params, failed, hashes, ctx.stop());
+        take(prepare_zip_execution(archives,plan,c,ctx.stop()));
+        auto request = build(*s_, plan, c, params, failed, hashes, ctx.stop(),archives);
         std::optional<repository::SourceFailure> source_failure;
         request.source_failure = &source_failure;
         if (s_->hooks.before_attempt) s_->hooks.before_attempt(request);
@@ -543,6 +606,15 @@ class ImportAsset final : public jobs::JobHandler {
           if (created.error().message_id == "am.repo.asset_id_exists")
             throw error("am.import.run.asset_id_conflict", c.id, Errc::conflict).caused_by(created.error());
           if (source_failure) {
+            const auto archive_entry=std::find_if(archives.ids.begin(),archives.ids.end(),[&](const auto& item){return item.second.at("file_id")==source_failure->file_id;});
+            if(archive_entry!=archives.ids.end()) {
+              if(plan.mode()==ImportMode::partial && source_failure->read_failure && !archives.failed.contains(archive_entry->first)) {
+                archives.failed.emplace(archive_entry->first,PlanProblem{"read_failed",source_failure->error.message_id});
+                continue;
+              }
+              row["archive_entry_id"]=plan.archive_entries().at(archive_entry->first).id;
+              row["node_id"]=plan.nodes().at(plan.archives().at(plan.archive_entries().at(archive_entry->first).archive).node).id;
+            }
             auto at = std::find_if(selected.begin(), selected.end(), [&](const auto& e) {
               return params.at("nodes").at(plan.nodes().at(e.node).id).at("file_id") == source_failure->file_id;
             });
@@ -568,7 +640,7 @@ class ImportAsset final : public jobs::JobHandler {
         if (s_->hooks.after_created) take(s_->hooks.after_created(ref.asset_id));
         for (const auto& e : selected) {
           const auto& n = plan.nodes().at(e.node);
-          if (e.decision != EntryDecision::include || !n.available || n.sha256 || failed.contains(e.node) ||
+          if (e.decision != EntryDecision::include || !n.available || (n.sha256 && !plan.archive_for_node(e.node)) || failed.contains(e.node) ||
               n.kind != NodeKind::file)
             continue;
           try {
@@ -588,6 +660,7 @@ class ImportAsset final : public jobs::JobHandler {
       if (e.code == Errc::cancelled) return jobs::JobOutcome::interrupted();
       row["status"] = "failed";
       row["error"] = failure(e);
+      if(archives.job && !archives.job->exceeded_limit().empty()) row["problem"]=archive_limit_problem(*limits,*archives.job);
       const auto diagnostic = error(e.message_id, {}, e.code);
       AM_LOG(
           warning, "services.import", "import.run.candidate_failed", "Import candidate failed",
@@ -596,6 +669,8 @@ class ImportAsset final : public jobs::JobHandler {
       auto out = jobs::JobOutcome::failure(e);
       out.result_json = row.dump();
       return out;
+    } catch (const std::bad_alloc&) {
+      return jobs::JobOutcome::failure(error("am.import.out_of_memory",{},Errc::resource_exhausted));
     } catch (const std::exception& e) {
       return jobs::JobOutcome::failure(error("am.import.run.failed", e.what(), Errc::internal));
     }

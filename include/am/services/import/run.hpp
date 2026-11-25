@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include "am/jobs/executor.hpp"
 #include "am/services/catalog/indexer.hpp"
 #include "am/services/import/plan_view.hpp"
@@ -11,6 +12,8 @@ struct RunHooks {
   std::function<void(const std::filesystem::path&)> on_open;
   std::function<void(repository::CreateRequest&)> before_attempt;
   std::function<Result<void>(std::string_view)> after_created;
+  std::function<std::chrono::steady_clock::time_point()> archive_clock;
+  std::function<Result<void>(const std::filesystem::path&, std::size_t)> before_archive_read;
 };
 struct QueuedRun {
   std::string job_id, plan_sha256;

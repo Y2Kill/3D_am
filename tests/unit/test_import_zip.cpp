@@ -1,10 +1,14 @@
 #include <gtest/gtest.h>
 #include <fstream>
 #include <array>
+#include <set>
 #include <zlib.h>
 #include "am/foundation/uuid.hpp"
 #include "am/storage/archive/zip_input.hpp"
 #include "am/storage/repository/repository.hpp"
+#include "am/application/import_service.hpp"
+#include "am/services/import/plan_view.hpp"
+#include "am/services/import/run.hpp"
 #include "zip_builder.hpp"
 
 namespace {
@@ -37,7 +41,351 @@ zip_test::Bytes unicode_extra(const std::string& raw,const std::string& decoded,
   for(unsigned char c:decoded) value.push_back(static_cast<std::byte>(c));
   return value;
 }
+am::import::ImportPlan scan_zip(const fs::path& path,am::import::ImportProfile profile={}) {
+  am::import::ScanRequest r; r.roots={path};
+  r.profile=profile.settings.is_null()?take(am::application::load_import_profile()):std::move(profile);
+  auto plan=take(am::import::scan(r));
+  const auto valid=am::import::parse_plan_view(am::import::serialize_plan(plan));
+  if(!valid) throw std::runtime_error(am::to_log_string(valid.error()));
+  fs::create_directories(AM_IMPORT_PLAN_CASES);
+  std::ofstream(fs::path(AM_IMPORT_PLAN_CASES)/"zip-input-v2.json",std::ios::binary)<<am::import::serialize_plan(plan);
+  return plan;
+}
 } // namespace
+namespace {
+class ImportZipRun : public testing::Test {
+ protected:
+  fs::path work,source,library,plan_file;
+  am::import::ImportPlan plan;
+  std::optional<am::catalog::Catalog> catalog;
+  void SetUp() override {
+    work=fs::path(AM_IMPORT_SCAN_ROOT)/"zip-run"/am::Uuid::v4().to_string();
+    source=work/"source"; library=work/"library"; plan_file=work/"plan.json";
+    fs::create_directories(source);
+    take(am::library::Library::init(library));
+    am::library::OpenOptions options; options.application_version="test";
+    options.capabilities.emplace(); options.capabilities->mode=am::repository::StorageMode::full;
+    options.capabilities->filesystem="synthetic unit-test capabilities";
+    catalog.emplace(take(am::catalog::Catalog::open(library,options)));
+  }
+  fs::path fixture(const std::vector<zip_test::Entry>& entries,std::string name="model.zip") {
+    const auto target=source/name; fs::create_directories(target.parent_path());
+    const auto built=zip_test::build(entries);
+    std::ofstream out(target,std::ios::binary); out.write(reinterpret_cast<const char*>(built.bytes.data()),static_cast<std::streamsize>(built.bytes.size()));
+    return target;
+  }
+  void scan(const fs::path& root,bool hash=false) {
+    am::import::ScanRequest r; r.roots={root}; r.hash_inputs=hash; r.profile=take(am::application::load_import_profile());
+    plan=take(am::import::scan(r));
+  }
+  void include() {
+    for(auto& c:plan.value["candidates"]) {
+      c["action"]="import";
+      for(auto& e:c["entries"]) if(e["decision"]=="ask") e["decision"]="include";
+    }
+  }
+  am::import::QueuedRun enqueue() {
+    std::ofstream(plan_file,std::ios::binary)<<am::import::serialize_plan(plan);
+    return take(am::import::enqueue_run(*catalog,plan_file));
+  }
+  am::import::PlanJson execute(const am::import::QueuedRun& q,am::import::RunHooks hooks={}) {
+    am::jobs::HandlerRegistry registry;
+    if(auto r=am::import::register_import_jobs(registry,*catalog,"synthetic-test",std::move(hooks));!r) throw std::runtime_error(am::to_log_string(r.error()));
+    am::jobs::ExecutorOptions options; options.auto_retries=0;
+    am::jobs::ResourceManager resources(options.limits);
+    am::jobs::Executor executor(catalog->job_store(),resources,registry,options);
+    take(executor.run_until_idle());
+    return take(am::import::run_summary(*catalog,q))["candidates"][0];
+  }
+  am::repository::AssetRef ref(const am::import::PlanJson& row) {return {catalog->library().config().library_id,row.at("asset_id")};}
+  am::import::PlanJson manifest(const am::import::PlanJson& row) {
+    const auto snapshot=take(catalog->library().assets().snapshot(ref(row)));
+    return am::import::PlanJson::parse(snapshot.manifest().known().dump());
+  }
+  std::multiset<std::string> payloads(const am::import::PlanJson& row) {
+    const auto snapshot=take(catalog->library().assets().snapshot(ref(row)));
+    zip::ReadBudget budget(10000000); std::multiset<std::string> result;
+    for(const auto& e:snapshot.archive().entries()) if(e.raw_name.starts_with("content/")) {
+      auto stream=take(snapshot.archive().open_entry(e.index,budget,true)); std::string bytes; std::array<std::byte,65536> block{};
+      for(;;) {const auto n=take(stream.read(block)); if(!n) break; bytes.append(reinterpret_cast<const char*>(block.data()),n);}
+      result.insert(std::move(bytes));
+    }
+    return result;
+  }
+  void clean(bool empty=false) {
+    const auto tmp=library/".am/.am-tmp"; EXPECT_TRUE(!fs::exists(tmp) || fs::is_empty(tmp));
+    if(empty) { EXPECT_TRUE(take(catalog->indexer().list()).empty()); }
+    am::catalog::LibraryVerifyOptions options; options.level=am::catalog::LibraryVerifyLevel::full;
+    const auto report=take(catalog->verify(options)); EXPECT_EQ(report.corrupt,0u); EXPECT_EQ(report.unreadable,0u); EXPECT_FALSE(report.database_failed);
+  }
+};
+}
+TEST_F(ImportZipRun, StoredDeflateAndDuplicateRecordsPreserveDistinctBytesAndVerify) {
+  RecordProperty("req","SC-1|K-5|K-6|ADR-0025");
+  zip_test::Entry a,b,d; a.name=b.name="same.bin"; a.data="first"; b.data="second"; b.method=8; d.name="empty/"; d.data="";
+  const auto file=fixture({a,b,d}); scan(file); include();
+  const auto q=enqueue(); const auto row=execute(q);
+  ASSERT_EQ(row["status"],"created")<<row.dump();
+  EXPECT_EQ(payloads(row),(std::multiset<std::string>{"first","second"}));
+  const auto m=manifest(row); const auto& input=m["inputs"][0];
+  ASSERT_EQ(input["objects"].size(),1u); EXPECT_EQ(input["objects"][0]["kind"],"archive");
+  EXPECT_EQ(input["objects"][0]["sha256"].get<std::string>().size(),64u);
+  EXPECT_EQ(input["objects"][0]["relative_path"],"model.zip");
+  for(std::size_t i=0;i<2;++i) {
+    EXPECT_EQ(input["entries"][i]["result"],"included_renamed"); EXPECT_EQ(input["entries"][i]["rename_reason"],"collision");
+    EXPECT_TRUE(input["entries"][i].contains("path_raw")); EXPECT_TRUE(input["entries"][i].contains("crc32"));
+  }
+  EXPECT_EQ(execute(enqueue())["status"],"already_imported");
+  clean();
+}
+TEST_F(ImportZipRun, NestedPreserveAndSpecializedDeflateFollowPlanWithoutOpeningInnerArchive) {
+  RecordProperty("req","SC-1|SC-10|K-6");
+  const auto inner=zip_test::build({zip_test::Entry{}}).bytes;
+  const std::string bytes(reinterpret_cast<const char*>(inner.data()),inner.size());
+  zip_test::Entry a,b,r; a.name="model.3mf"; b.name="inner.zip"; a.data=b.data=bytes; a.method=8;
+  r.name="inner.rar"; r.data=std::string("Rar!\x1a\x07\0",7);
+  scan(fixture({a,b,r}));
+  auto q=enqueue(); EXPECT_EQ(execute(q)["status"],"deferred");
+  EXPECT_EQ(plan.value["candidates"][0]["entries"][3]["decision"],"ask");
+  include(); plan.value["candidates"][0]["entries"][3]["decision"]="exclude";
+  q=enqueue(); const auto row=execute(q); ASSERT_EQ(row["status"],"created")<<row.dump();
+  const auto m=manifest(row); const auto& objects=m["inputs"][0]["objects"];
+  ASSERT_EQ(objects.size(),3u); EXPECT_EQ(objects[1]["name"],"inner.zip"); EXPECT_EQ(objects[1]["nested_action"],"preserve");
+  EXPECT_EQ(objects[2]["container"],"rar4"); EXPECT_EQ(objects[2]["nested_action"],"exclude");
+  EXPECT_EQ(payloads(row),(std::multiset<std::string>{bytes,bytes})); clean();
+}
+TEST_F(ImportZipRun, FilesystemArchiveHasNoParentEntryAndExpansionPrefixCollisionsAreRenamed) {
+  RecordProperty("req","SC-1|K-5|K-6");
+  zip_test::Entry a; a.name="part.bin"; a.data="zip bytes";
+  fixture({a},"sub/model.zip"); fs::create_directories(source/"sub/model");
+  std::ofstream(source/"sub/model/part.bin",std::ios::binary)<<"filesystem bytes";
+  scan(source); include(); const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created")<<row.dump();
+  const auto m=manifest(row); const auto& in=m["inputs"][0]; ASSERT_EQ(in["objects"].size(),2u);
+  EXPECT_EQ(in["objects"][1]["relative_path"],"sub/model.zip"); EXPECT_FALSE(in["objects"][1].contains("parent_object_id"));
+  unsigned renamed=0;
+  for(const auto& e:in["entries"]) { EXPECT_NE(e["path"],"sub/model.zip"); if(e.value("rename_reason",std::string{})=="collision") ++renamed; }
+  EXPECT_EQ(renamed,1u); EXPECT_EQ(payloads(row),(std::multiset<std::string>{"zip bytes","filesystem bytes"})); clean();
+}
+TEST_F(ImportZipRun, OuterExcludeOverridesInnerAskAndAvoidsAllArchiveReads) {
+  RecordProperty("req","SC-1|K-5|K-6|ADR-0011");
+  zip_test::Entry a; a.name="../unsafe.bin"; a.data="payload";
+  const auto file=fixture({a}); scan(file); auto& c=plan.value["candidates"][0]; c["action"]="import";
+  c["entries"][0]["decision"]="exclude";
+  am::import::RunHooks hooks; hooks.on_open=[&](const auto& p){EXPECT_NE(p,file);};
+  const auto row=execute(enqueue(),hooks); ASSERT_EQ(row["status"],"created")<<row.dump();
+  const auto m=manifest(row); EXPECT_EQ(m["inputs"][0]["entries"][0]["result"],"excluded");
+  EXPECT_EQ(m["inputs"][0]["entries"][0]["exclusion"]["by"],"user"); EXPECT_TRUE(payloads(row).empty()); clean();
+}
+TEST_F(ImportZipRun, UnsupportedRecordsStrictFailPartialAccountAndExcludedAreNeverOpened) {
+  RecordProperty("req","SC-1|K-5|K-6|ADR-0011");
+  zip_test::Entry a,c; a.name="encrypted"; a.flags|=1;
+  std::vector<zip_test::Entry> entries{a};
+  for(const auto method:{12,14,93,99}) {zip_test::Entry e;e.name="method"+std::to_string(method);e.method=static_cast<std::uint16_t>(method);e.compressed=zip_test::Bytes{};e.declared_size=0;entries.push_back(e);}
+  c.name="good"; c.data="good"; entries.push_back(c); scan(fixture(entries)); include();
+  const auto strict=execute(enqueue()); EXPECT_EQ(strict["status"],"failed"); clean(true);
+  plan.value["mode"]="partial";
+  unsigned opened=0; am::import::RunHooks hooks; hooks.before_archive_read=[&](auto,auto index)->am::Result<void>{EXPECT_EQ(index,5u);++opened;return {};};
+  const auto row=execute(enqueue(),hooks); ASSERT_EQ(row["status"],"created")<<row.dump(); EXPECT_GT(opened,0u);
+  const auto m=manifest(row); EXPECT_EQ(m["inputs"][0]["completeness"],"incomplete");
+  for(std::size_t i=0;i<5;++i) EXPECT_EQ(m["inputs"][0]["entries"][i]["result"],"unavailable");
+  EXPECT_EQ(payloads(row),(std::multiset<std::string>{"good"})); clean();
+  plan.value["mode"]="strict";
+  for(std::size_t i=1;i<=5;++i) plan.value["candidates"][0]["entries"][i]["decision"]="exclude";
+  const auto excluded=execute(enqueue(),hooks); ASSERT_EQ(excluded["status"],"created")<<excluded.dump(); clean();
+}
+TEST_F(ImportZipRun, ActualByteLimitFailsBothModesWithoutAnAssetOrPartialRetry) {
+  RecordProperty("req","SC-1|K-6|ADR-0011");
+  zip_test::Entry a; a.data="1234567890"; scan(fixture({a})); include();
+  plan.value["profile"]["limits"]["max_unpacked_bytes"]="15";
+  for(const auto& mode:{"strict","partial"}) {
+    plan.value["mode"]=mode;
+    unsigned attempts=0; am::import::RunHooks hooks; hooks.before_attempt=[&](auto&){++attempts;};
+    const auto row=execute(enqueue(),hooks); EXPECT_EQ(row["status"],"failed")<<row.dump();
+    ASSERT_EQ(row.at("error").at("message_id"),"am.import.archive.limit_exceeded")<<row.dump();
+    EXPECT_EQ(row.at("error").at("code"),"am.unsupported");
+    ASSERT_TRUE(row.contains("problem"))<<row.dump(); EXPECT_EQ(row["problem"]["limit"],"max_unpacked_bytes");
+    EXPECT_EQ(row["problem"]["source"],"plan"); EXPECT_EQ(attempts,1u); clean(true);
+  }
+}
+TEST_F(ImportZipRun, CrcFailureIsFailedInPartialAndAbortsStrictWithoutRetry) {
+  RecordProperty("req","SC-1|K-5|K-6");
+  zip_test::Entry a,b; a.name="bad"; a.data=std::string(1000,'x'); a.method=8; a.declared_crc=0; b.name="good"; b.data="good";
+  scan(fixture({a,b})); include();
+  unsigned attempts=0; am::import::RunHooks hooks; hooks.before_attempt=[&](auto&){++attempts;};
+  auto row=execute(enqueue(),hooks); EXPECT_EQ(row["status"],"failed"); EXPECT_EQ(attempts,1u); clean(true);
+  plan.value["mode"]="partial"; attempts=0; row=execute(enqueue(),hooks);
+  ASSERT_EQ(row["status"],"created")<<row.dump(); EXPECT_EQ(attempts,2u);
+  const auto m=manifest(row); EXPECT_EQ(m["inputs"][0]["entries"][0]["result"],"failed");
+  EXPECT_EQ(m["inputs"][0]["completeness"],"incomplete"); EXPECT_EQ(payloads(row),(std::multiset<std::string>{"good"})); clean();
+}
+TEST_F(ImportZipRun, UnsafeAndGuessedNamesRemainAuditableAndLinksNeverMaterialize) {
+  RecordProperty("req","SC-1|K-6|ADR-0012|ADR-0035");
+  std::vector<zip_test::Entry> entries;
+  for(const auto& name:std::vector<std::string>{"../x","/abs","C:\\x","\\\\srv\\x","a\\b","a//b",std::string("x\0y",3),"A.txt","a.txt","\xc3\xa9","e\xcc\x81"}) {
+    zip_test::Entry e; e.name=name; e.data=name; entries.push_back(e);
+  }
+  zip_test::Entry guessed; guessed.name=std::string("\x8c\xae\xa4\xa5\xab\xec.bin",10); guessed.flags=0; guessed.data="guess"; entries.push_back(guessed);
+  zip_test::Entry link,special; link.name="symlink"; link.made_by=0x314; link.attributes=0120777u<<16;
+  special.name="fifo"; special.made_by=0x314; special.attributes=0010644u<<16; entries.push_back(link); entries.push_back(special);
+  scan(fixture(entries)); include();
+  const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created")<<row.dump();
+  const auto m=manifest(row); const auto& in=m["inputs"][0]; ASSERT_EQ(in["entries"].size(),entries.size());
+  for(std::size_t i=0;i<11;++i) {EXPECT_EQ(in["entries"][i]["result"],"included_renamed"); EXPECT_TRUE(in["entries"][i].contains("path_raw"));}
+  EXPECT_TRUE(in["objects"][0]["name_encoding"].get<std::string>().find("heuristic")!=std::string::npos);
+  EXPECT_EQ(in["entries"][12]["result"],"not_processed"); EXPECT_EQ(in["entries"][13]["problem"]["code"],"special_not_materialized");
+  EXPECT_EQ(payloads(row).size(),12u); clean();
+}
+TEST_F(ImportZipRun, ArchiveFreshnessChecksPlanListingShaAndPostCommitStat) {
+  RecordProperty("req","SC-1|K-6|NFR-14.4.3");
+  zip_test::Entry a; a.name="part"; a.data="before"; const auto file=fixture({a}); scan(file,true); include();
+  auto q=enqueue(); const auto timestamp=fs::last_write_time(file);
+  a.data="after!"; fixture({a}); fs::last_write_time(file,timestamp);
+  auto row=execute(q); EXPECT_EQ(row["status"],"failed"); EXPECT_EQ(row["error"]["message_id"],"am.import.source_changed"); clean(true);
+  scan(file,true); include(); q=enqueue();
+  const auto same_time=fs::last_write_time(file);
+  auto broken=zip_test::build({a}); broken.bytes[broken.central[0]]=std::byte{0};
+  {std::ofstream out(file,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(broken.bytes.data()),static_cast<std::streamsize>(broken.bytes.size()));}
+  fs::last_write_time(file,same_time);
+  row=execute(q); EXPECT_EQ(row["status"],"failed"); EXPECT_EQ(row["error"]["message_id"],"am.import.source_changed"); clean(true);
+  fixture({a});
+  scan(file); include(); q=enqueue();
+  am::import::RunHooks hooks; hooks.after_created=[&](auto)->am::Result<void> {
+    fs::last_write_time(file,fs::last_write_time(file)+std::chrono::seconds(2)); return {};
+  };
+  row=execute(q,hooks); EXPECT_EQ(row["status"],"failed"); EXPECT_TRUE(row["in_trash"]);
+  EXPECT_EQ(row["error"]["message_id"],"am.import.source_changed_during_import");
+  EXPECT_TRUE(take(catalog->library().assets().snapshot(ref(row),true)).in_trash()); clean();
+}
+TEST_F(ImportZipRun, DurableParametersDoNotGrowWithArchiveEntryCountAndLegacyV1Defers) {
+  RecordProperty("req","SC-1|K-5|K-121");
+  std::vector<zip_test::Entry> entries; std::size_t small=0;
+  for(const auto count:{10,10000}) {
+    entries.clear();
+    for(int i=0;i<count;++i) {zip_test::Entry e; e.name="f"+std::to_string(i); e.data=""; entries.push_back(e);}
+    scan(fixture(entries)); include(); const auto q=enqueue(); am::contracts::JobFilter f; f.parent_id=q.job_id;
+    const auto children=take(catalog->job_store().list(f)); ASSERT_EQ(children.size(),1u);
+    if(count==10) small=children[0].params_json.size(); else EXPECT_EQ(children[0].params_json.size(),small);
+  }
+  plan.value["version"]=1; plan.value.erase("archives"); plan.value.erase("archive_entries"); plan.value["profile"].erase("limits");
+  plan.value["profile"]["not_applied"]=am::import::PlanJson::array();
+  auto& decisions=plan.value["candidates"][0]["entries"];
+  decisions.erase(std::remove_if(decisions.begin(),decisions.end(),[](const auto& e){return e.contains("archive_entry");}),decisions.end());
+  const auto legacy=enqueue();
+  const auto row=take(am::import::run_summary(*catalog,legacy))["candidates"][0];
+  am::contracts::JobFilter filter; filter.parent_id=legacy.job_id; EXPECT_TRUE(take(catalog->job_store().list(filter)).empty());
+  EXPECT_EQ(row["status"],"deferred"); EXPECT_EQ(row["message_id"],"am.import.run.archive_plan_rescan_required");
+}
+TEST_F(ImportZipRun, UnreadableArchiveRequiresExplicitExcludeAndRetainsItsObjectWithoutInventedEntries) {
+  RecordProperty("req","SC-1|SC-13|K-5|K-6");
+  zip_test::Entry e; auto built=zip_test::build({e}); built.bytes.resize(built.cd);
+  const auto file=source/"broken.zip";
+  {std::ofstream out(file,std::ios::binary);out.write(reinterpret_cast<const char*>(built.bytes.data()),static_cast<std::streamsize>(built.bytes.size()));}
+  scan(file); ASSERT_EQ(plan.value["archives"][0]["status"],"unreadable");
+  EXPECT_EQ(execute(enqueue())["status"],"deferred"); include();
+  for(const auto& mode:{"strict","partial"}) {
+    plan.value["mode"]=mode; const auto row=execute(enqueue()); EXPECT_EQ(row["status"],"failed");
+    EXPECT_EQ(row["error"]["message_id"],"am.import.run.archive_unreadable"); clean(true);
+  }
+  plan.value["candidates"][0]["entries"][0]["decision"]="exclude";
+  const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created")<<row.dump();
+  EXPECT_TRUE(row.contains("archive_problems")); const auto m=manifest(row);
+  EXPECT_EQ(m["inputs"][0]["objects"].size(),1u); EXPECT_TRUE(m["inputs"][0]["entries"].empty()); clean();
+}
+TEST_F(ImportZipRun, ExcludingArchiveDirectoryCascadesAndRecordsUseTheOuterRuleProvenance) {
+  RecordProperty("req","SC-1|K-5|K-6|ADR-0011");
+  zip_test::Entry d,f; d.name="dir/"; d.data=""; f.name="dir/a";
+  scan(fixture({d,f})); include();
+  auto& c=plan.value["candidates"][0]; c["entries"][1]["decision"]="exclude";
+  c["entries"][1]["rule_id"]="macos.macosx_dir"; c["entries"][1]["confidence"]="certain";
+  const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created")<<row.dump();
+  const auto m=manifest(row); for(const auto& e:m["inputs"][0]["entries"]) {EXPECT_EQ(e["result"],"excluded");EXPECT_EQ(e["exclusion"]["by"],"auto");}
+  clean();
+}
+TEST_F(ImportZipRun, RatioTimeAndEntryLimitsCannotBeBypassedInPartialMode) {
+  RecordProperty("req","SC-1|K-6|ADR-0011");
+  zip_test::Entry a,b; a.name="a"; a.data=std::string(2*1024*1024,'x'); a.method=8; b.name="b";
+  const auto file=fixture({a,b});
+  for(const auto& name:{"max_ratio","max_seconds_per_container","max_entries"}) {
+    scan(file); include();
+    if(std::string_view(name)=="max_ratio") plan.value["profile"]["limits"][name]=2;
+    else plan.value["profile"]["limits"][name]="1";
+    for(const auto& mode:{"strict","partial"}) {
+      plan.value["mode"]=mode;
+      am::import::RunHooks hooks; std::chrono::steady_clock::time_point time{};
+      if(std::string_view(name)=="max_seconds_per_container") hooks.archive_clock=[&]{time+=std::chrono::seconds(2);return time;};
+      const auto row=execute(enqueue(),hooks); ASSERT_EQ(row["status"],"failed")<<row.dump();
+      ASSERT_TRUE(row.contains("problem"))<<row.dump(); EXPECT_EQ(row["problem"]["limit"],name);
+      EXPECT_EQ(row["error"]["code"],"am.unsupported"); EXPECT_TRUE(row["problem"].contains("effective_value")); EXPECT_EQ(row["problem"]["source"],"plan");
+      const auto stored=take(catalog->job_store().get(row.at("job_id").get<std::string>())); ASSERT_TRUE(stored); EXPECT_EQ(stored->state,am::contracts::JobState::failed); EXPECT_TRUE(stored->result_json);
+      clean(true);
+    }
+  }
+}
+TEST_F(ImportZipRun, MachineAllocationFailureKeepsResourceErrorAndDoesNotBecomeAnInputLimit) {
+  RecordProperty("req","SC-1|K-6|ADR-0033");
+  zip_test::Entry a; scan(fixture({a})); include(); const auto q=enqueue();
+  am::import::RunHooks hooks; hooks.before_archive_read=[](auto,auto)->am::Result<void>{throw std::bad_alloc();};
+  const auto row=execute(q,hooks); EXPECT_EQ(row["status"],"failed"); EXPECT_FALSE(row.contains("problem"));
+  am::contracts::JobFilter filter; filter.parent_id=q.job_id; const auto children=take(catalog->job_store().list(filter));
+  ASSERT_EQ(children.size(),1u); EXPECT_EQ(children[0].state,am::contracts::JobState::resource_error); EXPECT_FALSE(children[0].result_json);
+  ASSERT_TRUE(children[0].error_json); EXPECT_NE(children[0].error_json->find("am.resource_exhausted"),std::string::npos); clean(true);
+}
+TEST_F(ImportZipRun, SnapshotLimitsClampToUnconditionalAndDoNotRereadChangedProfile) {
+  RecordProperty("req","SC-1|K-6|ADR-0011");
+  zip_test::Entry a; const auto file=fixture({a});
+  const auto profile=work/"profile.toml";
+  {std::ofstream out(profile);out<<"id=\"custom\"\nversion=1\n[limits]\nmax_entries=200000\n";}
+  am::import::ScanRequest request; request.roots={file}; request.profile=take(am::application::load_import_profile(profile.string()));
+  plan=take(am::import::scan(request)); include();
+  {std::ofstream out(profile,std::ios::trunc);out<<"broken TOML [";}
+  const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created")<<row.dump();
+  EXPECT_EQ(row["effective_limits"]["max_entries"]["value"],"100000"); EXPECT_EQ(row["effective_limits"]["max_entries"]["source"],"unconditional"); clean();
+}
+TEST_F(ImportZipRun, RarSevenZipAndZipVolumeSetsRemainDeferredWithoutChildJobs) {
+  RecordProperty("req","SC-2|SC-6|K-6");
+  for(const auto& signature:{std::string("Rar!\x1a\x07\0",7),std::string("7z\xbc\xaf\x27\x1c",6)}) {
+    const auto file=source/"unsupported.bin";
+    {std::ofstream out(file,std::ios::binary|std::ios::trunc);out<<signature;}
+    scan(file); include(); const auto q=enqueue();
+    const auto row=take(am::import::run_summary(*catalog,q))["candidates"][0];
+    EXPECT_EQ(row["status"],"deferred"); EXPECT_EQ(row["message_id"],"am.import.run.archive_input_unsupported");
+    am::contracts::JobFilter filter; filter.parent_id=q.job_id; EXPECT_TRUE(take(catalog->job_store().list(filter)).empty());
+  }
+  zip_test::Entry a; fixture({a},"split/base.zip");
+  {std::ofstream out(source/"split/base.z01",std::ios::binary);out<<"first volume";}
+  scan(source/"split"); include(); const auto q=enqueue();
+  const auto row=take(am::import::run_summary(*catalog,q))["candidates"][0];
+  EXPECT_EQ(row["status"],"deferred"); EXPECT_EQ(row["message_id"],"am.import.run.volume_set_unsupported");
+  am::contracts::JobFilter filter; filter.parent_id=q.job_id; EXPECT_TRUE(take(catalog->job_store().list(filter)).empty());
+}
+TEST(ImportZipPlan, LimitsRawFieldsAndMetadataAreValidatedBeforeEnqueue) {
+  RecordProperty("req","SC-1|K-6|ADR-0038");
+  zip_test::Entry e; const auto plan=scan_zip(install(zip_test::build({e}))).value;
+  auto invalid=[&](am::import::PlanJson value,const std::string& pointer) {
+    const auto result=am::import::parse_plan_view(value.dump()); ASSERT_FALSE(result)<<pointer;
+    EXPECT_EQ(result.error().message_id,"am.import.plan_invalid"); EXPECT_TRUE(result.error().ctx.detail.find(pointer)!=std::string::npos)<<am::to_log_string(result.error());
+  };
+  auto value=plan; value["profile"].erase("limits"); invalid(value,"/profile");
+  for(const auto& bad:am::import::PlanJson::array({"0","-1",0,true,"18446744073709551616"})) {
+    value=plan; value["profile"]["limits"]["max_entries"]=bad; invalid(value,"/profile/limits/max_entries");
+  }
+  value=plan; value["profile"]["limits"]["extra"]="1"; invalid(value,"/profile/limits");
+  for(const auto& raw:{"AA","0","xz"}) {value=plan;value["archive_entries"][0]["path_raw"]=raw;invalid(value,"/archive_entries/0/path_raw");}
+  value=plan; value["archive_entries"][0]["path_raw"]=std::string(40000,'a'); EXPECT_TRUE(am::import::parse_plan_view(value.dump()));
+  const auto schema_file=fs::path(AM_MANIFEST_SCHEMA).parent_path()/"import-plan.v2.schema.json";
+  std::ifstream source(schema_file,std::ios::binary);
+  const auto schema=am::import::PlanJson::parse(std::string{std::istreambuf_iterator<char>(source),{}});
+  std::set<std::string> actual,handled;
+  std::function<void(const am::import::PlanJson&,std::string)> visit=[&](const auto& item,std::string pointer) {
+    if(item.is_object()) {
+      const auto pattern=item.value("pattern",std::string{});
+      if(pattern=="^([0-9a-f]{2})+$" || pattern=="^([0-9a-f]{2})*$") actual.insert(pointer);
+      for(auto it=item.begin();it!=item.end();++it) visit(it.value(),pointer+"/"+it.key());
+    } else if(item.is_array()) for(std::size_t i=0;i<item.size();++i) visit(item[i],pointer+"/"+std::to_string(i));
+  };
+  visit(schema,""); for(const auto field:am::import::plan_raw_schema_fields) handled.insert(std::string(field));
+  handled.insert(std::string(am::import::plan_archive_raw_schema_field)); EXPECT_EQ(actual,handled);
+}
 TEST(ZipInput, DuplicateNamesRemainDistinctAndAssetModeRemainsStrict) {
   RecordProperty("req","K-2|K-6|ADR-0011|ADR-0025");
   zip_test::Entry a,b; a.name=b.name="same.bin"; a.data="first"; b.data="second";
@@ -146,6 +494,43 @@ TEST(ZipInput, EntryCountLimitAndUnsupportedEntriesDoNotReadPayload) {
   auto archive=take(input::ZipInput::open(path,context));
   ASSERT_EQ(archive.entries().size(),2u); EXPECT_FALSE(archive.open_entry(0)); EXPECT_FALSE(archive.open_entry(1)); EXPECT_EQ(reads,0u);
 }
+TEST(ZipInput, ContextualOwnManifestProbeKeepsLegacyProbeAndChargesSharedBudgetOnce) {
+  RecordProperty("req","SC-1|K-6|ADR-0035");
+  zip_test::Entry manifest,a,b; manifest.name="manifest.json";
+  manifest.data=R"({"format":{"id":"urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128","version":{"major":1,"minor":0}}})";
+  a.name=b.name="same"; a.data="first"; b.data="second";
+  const auto path=install(zip_test::build({manifest,a,b}));
+  const auto legacy=take(zip::probe_container(take(zip::file_source(path))));
+  EXPECT_EQ(legacy.outcome,zip::ProbeOutcome::invalid_zip);
+  input::ZipInputLimits limits; limits.max_unpacked_bytes=manifest.data.size();
+  auto context=job(limits);
+  const auto probe=take(input::ZipInput::probe(take(zip::file_source(path)),path,context));
+  EXPECT_EQ(probe.outcome,zip::ProbeOutcome::own_corrupt); ASSERT_TRUE(probe.error);
+  EXPECT_EQ(probe.error->message_id,"am.zip.duplicate_name");
+  EXPECT_EQ(context->remaining(),0u); EXPECT_TRUE(context->exceeded_limit().empty());
+  limits.max_unpacked_bytes=0; context=job(limits);
+  const auto limited=take(input::ZipInput::probe(take(zip::file_source(path)),path,context));
+  EXPECT_EQ(limited.outcome,zip::ProbeOutcome::invalid_zip);
+  EXPECT_EQ(context->exceeded_limit(),"max_unpacked_bytes");
+  EXPECT_FALSE(input::ZipInput::open(path,context));
+  for(const auto& text:{std::string("broken"),std::string(R"({"format":{"id":"foreign"}})")}) {
+    manifest.data=text;
+    const auto other=install(zip_test::build({manifest,a,b}));
+    const auto result=take(input::ZipInput::probe(take(zip::file_source(other)),other,job()));
+    EXPECT_EQ(result.outcome,zip::ProbeOutcome::invalid_zip);
+  }
+  manifest.data=R"({"format":{"id":"urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128","version":{"major":1,"minor":0}}})";
+  auto overlap=zip_test::build({manifest,a,b});
+  zip_test::put(overlap.bytes,overlap.central[2]+42,overlap.local[1],4);
+  const auto bad=install(overlap);
+  EXPECT_EQ(take(input::ZipInput::probe(take(zip::file_source(bad)),bad,job())).outcome,zip::ProbeOutcome::invalid_zip);
+  manifest.method=8;
+  manifest.data=std::string(R"({"format":{"id":"urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128","version":{"major":1,"minor":0}},"padding":")")+std::string(2*1024*1024,'x')+R"("})";
+  const auto compressed=install(zip_test::build({manifest,a,b}));
+  context=job();
+  const auto ratio=take(input::ZipInput::probe(take(zip::file_source(compressed)),compressed,context));
+  EXPECT_EQ(ratio.outcome,zip::ProbeOutcome::invalid_zip); EXPECT_EQ(context->exceeded_limit(),"max_ratio");
+}
 TEST(ImportZipManifest, FilesystemArchiveIsAnIndependentTopLevelObject) {
   RecordProperty("req","SC-1|K-5|K-6|ADR-0037");
   namespace repo=am::repository;
@@ -180,4 +565,113 @@ TEST(ImportZipManifest, FilesystemArchiveIsAnIndependentTopLevelObject) {
   EXPECT_FALSE(input["objects"][1].contains("parent_entry_id"));
   EXPECT_FALSE(input["objects"][1].contains("nested_action"));
   for(const auto& entry:input["entries"]) EXPECT_NE(entry["path"],"sub/model.zip");
+}
+TEST(ImportZipScan, VersionTwoListsAllRecordsAndRetainsOuterArchiveDecision) {
+  RecordProperty("req","SC-1|K-5|K-6");
+  zip_test::Entry directory,a,b; directory.name="folder/"; directory.data="";
+  a.name="folder/part.bin"; a.data="payload"; b.name="other.bin"; b.data="other"; b.method=8;
+  const auto path=install(zip_test::build({directory,a,b},true,"comment"));
+  const auto plan=scan_zip(path).value;
+  EXPECT_EQ(plan["version"],2); ASSERT_EQ(plan["archives"].size(),1u); ASSERT_EQ(plan["archive_entries"].size(),3u);
+  EXPECT_EQ(plan["archives"][0]["entry_count"],3); EXPECT_TRUE(plan["archives"][0]["zip64"]);
+  EXPECT_EQ(plan["archives"][0]["comment_length"],7);
+  EXPECT_EQ(plan["archive_entries"][0]["kind"],"directory");
+  EXPECT_EQ(plan["archive_entries"][1]["path"],a.name);
+  EXPECT_EQ(plan["candidates"][0]["entries"].size(),4u);
+  EXPECT_TRUE(plan["candidates"][0]["entries"][0].contains("node"));
+  EXPECT_EQ(plan["candidates"][0]["action"],"import");
+  EXPECT_EQ(plan["profile"]["limits"]["max_entries"],"100000");
+}
+TEST(ImportZipScan, DuplicateOwnManifestIsReadyInvalidWhileOtherDuplicatesAreArchives) {
+  RecordProperty("req","SC-1|K-6|ADR-0035");
+  zip_test::Entry manifest,a,b; manifest.name="manifest.json";
+  manifest.data=R"({"format":{"id":"urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128","version":{"major":1,"minor":0}}})";
+  a.name=b.name="same";
+  auto plan=scan_zip(install(zip_test::build({manifest,a,b}))).value;
+  EXPECT_EQ(plan["candidates"][0]["kind"],"ready_asset"); EXPECT_EQ(plan["candidates"][0]["action"],"ask");
+  EXPECT_TRUE(plan["archives"].empty());
+  EXPECT_NE(plan["candidates"][0]["warnings"].dump().find("am.zip.duplicate_name"),std::string::npos);
+  plan=scan_zip(install(zip_test::build({a,b}))).value;
+  EXPECT_EQ(plan["candidates"][0]["kind"],"new_asset"); EXPECT_EQ(plan["archive_entries"].size(),2u);
+  EXPECT_EQ(plan["candidates"][0]["entries"][1]["explanation_id"],"duplicate_entry_name");
+  EXPECT_EQ(plan["candidates"][0]["entries"][2]["explanation_id"],"duplicate_entry_name");
+}
+TEST(ImportZipScan, NestedArchivesAskButSpecializedExtensionAndAppleDoubleFollowDecisionSeven) {
+  RecordProperty("req","SC-1|SC-10|K-6|ADR-0011");
+  const auto inner=zip_test::build({zip_test::Entry{}}).bytes;
+  const std::string data(reinterpret_cast<const char*>(inner.data()),inner.size());
+  zip_test::Entry model,nested,junk; model.name="model.3mf"; model.data=data; model.method=8;
+  nested.name="inner.zip"; nested.data=data;
+  junk.name="._model.3mf"; junk.data=std::string("\0\5\x16\7",4);
+  const auto plan=scan_zip(install(zip_test::build({model,nested,junk}))).value;
+  const auto& entries=plan["candidates"][0]["entries"];
+  EXPECT_EQ(entries[1]["decision"],"include");
+  EXPECT_EQ(entries[1]["confidence"],"probable"); EXPECT_EQ(entries[1]["explanation_id"],"specialized_container_unverified");
+  EXPECT_EQ(entries[2]["decision"],"ask"); EXPECT_EQ(entries[2]["explanation_id"],"nested_archive_expand_unsupported");
+  EXPECT_EQ(entries[3]["decision"],"exclude"); EXPECT_EQ(entries[3]["rule_id"],"macos.appledouble");
+  EXPECT_EQ(plan["archive_entries"][0]["detected"],"archive.zip");
+}
+TEST(ImportZipScan, EntryLimitIsExplicitAndCannotBecomeAnOrdinaryUnreadableArchive) {
+  RecordProperty("req","SC-1|K-6|ADR-0011");
+  zip_test::Entry a,b; a.name="a"; b.name="b";
+  auto profile=take(am::application::load_import_profile()); profile.settings["limits"]["max_entries"]=1;
+  const auto plan=scan_zip(install(zip_test::build({a,b})),profile).value;
+  ASSERT_EQ(plan["archives"].size(),1u);
+  EXPECT_EQ(plan["archives"][0]["status"],"limit_exceeded");
+  EXPECT_EQ(plan["archives"][0]["problem"]["limit"],"max_entries");
+  EXPECT_EQ(plan["archives"][0]["problem"]["effective_value"],"1");
+  EXPECT_EQ(plan["archives"][0]["problem"]["source"],"plan");
+  EXPECT_EQ(plan["candidates"][0]["action"],"ask");
+}
+TEST(ImportZipRepository, ArchivePassesDistinguishCorruptionReplacementDestinationFailureAndCancellation) {
+  RecordProperty("req","SC-1|K-6|ADR-0025");
+  namespace repo=am::repository;
+  using J=repo::Json;
+  for(const auto scenario:{"ok","crc","replacement","destination","cancel","sha"}) {
+    SCOPED_TRACE(scenario);
+    zip_test::Entry e; e.name="part.bin"; e.data="payload"; e.method=8;
+    if(std::string_view(scenario)=="crc") e.declared_crc=0;
+    const auto file=install(zip_test::build({e}));
+    auto snapshot=std::make_shared<input::ZipInputSnapshot>(); snapshot->path=file;
+    snapshot->job=job();
+    {const auto opened=take(input::ZipInput::open(file,snapshot->job));snapshot->entries=opened.identity();snapshot->sha256=take(opened.sha256());}
+    repo::RepositoryOptions options; options.library_id=am::Uuid::v4().to_string(); options.application_version="test";
+    options.capabilities.emplace(); options.capabilities->mode=repo::StorageMode::full;
+    std::stop_source stop;
+    if(std::string_view(scenario)=="replacement") options.test_hooks.after_preflight=[&] {
+      e.data="changed"; const auto bytes=zip_test::build({e}).bytes;
+      std::ofstream out(file,std::ios::binary|std::ios::trunc); out.write(reinterpret_cast<const char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));
+    };
+    if(std::string_view(scenario)=="cancel") options.test_hooks.after_preflight=[&]{stop.request_stop();};
+    if(std::string_view(scenario)=="destination") options.test_hooks.commit.create_sink=[](const auto&)->am::Result<std::shared_ptr<zip::RandomAccessSink>> {
+      return am::Error::make(am::Errc::io_error,"Injected destination error").id("test.destination");
+    };
+    const auto root=file.parent_path()/am::Uuid::v4().to_string(); fs::create_directories(root);
+    auto repository=take(repo::AssetRepository::open(root,options));
+    const auto oid=am::Uuid::v4().to_string(), fid=am::Uuid::v4().to_string();
+    repo::AddFiles add;
+    add.input={{"id",am::Uuid::v4().to_string()},{"imported_at","2026-11-25T00:00:00Z"},{"mode","strict"},{"completeness","complete"},
+      {"objects",J::array({J{{"id",oid},{"kind","archive"},{"name","source.zip"},{"container","zip"},{"sha256",*snapshot->sha256}}})},
+      {"entries",J::array({J{{"id",am::Uuid::v4().to_string()},{"object_id",oid},{"entry_kind","file"},{"path","part.bin"},{"result","included"},{"file_id",fid}}})}};
+    repo::FileInput source; source.path="part.bin"; source.file_id=fid; source.archive_entry=repo::ArchiveEntryInput{snapshot,0};
+    if(std::string_view(scenario)=="sha") source.expected_sha256=std::string(64,'0');
+    add.files.push_back(source); repo::CreateRequest request; request.files.push_back(add); request.stop=stop.get_token();
+    std::optional<repo::SourceFailure> failure; request.source_failure=&failure;
+    const auto result=repository.create(request);
+    if(std::string_view(scenario)=="ok") { ASSERT_TRUE(result)<<am::to_log_string(result.error()); EXPECT_FALSE(failure); }
+    else {
+      ASSERT_FALSE(result);
+      if(std::string_view(scenario)=="crc") {ASSERT_TRUE(failure);EXPECT_TRUE(failure->read_failure);EXPECT_EQ(failure->file_id,fid);}
+      else if(std::string_view(scenario)=="replacement" || std::string_view(scenario)=="sha") {
+        ASSERT_TRUE(failure); EXPECT_FALSE(failure->read_failure); EXPECT_EQ(result.error().message_id,"am.repo.source_changed");
+      } else EXPECT_FALSE(failure);
+      if(std::string_view(scenario)=="cancel") { EXPECT_EQ(result.error().code,am::Errc::cancelled); }
+      const auto assets=root/"assets";
+      if(fs::exists(assets)) {
+        for(const auto& entry:fs::recursive_directory_iterator(assets)) { EXPECT_FALSE(entry.is_regular_file()); }
+      }
+      const auto tmp=root/".am/.am-tmp"; EXPECT_TRUE(!fs::exists(tmp) || fs::is_empty(tmp));
+      EXPECT_TRUE(take(take(am::db::StateJournal::open(root))->list()).empty());
+    }
+  }
 }

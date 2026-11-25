@@ -20,6 +20,10 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- Ordinary ZIP inputs can be scanned into editable version 2 import plans and
+  imported without temporary extraction, with original names, per-record outcomes,
+  archive hashes, shared limits, and source freshness checks. Version 1 plans remain readable.
+- Nested archives can be preserved as files or excluded; expansion remains deferred.
 - Durable `am import run` for edited file/directory plans and ready assets, with
   source freshness checks, partial import, resumable jobs, and explicit deferred outcomes.
 

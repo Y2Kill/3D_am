@@ -558,23 +558,130 @@ for name, positive, fixture_dir in (("log-record", log_example, ".cache/log-reco
         report(name + ":" + path.stem, "NFR-14.4.9", "actual serialized record", True,
                current.is_valid(json.loads(path.read_text("utf8"))))
     print(f"{name} schema: {len(cases)} contract cases and {len(actual)} actual records checked")
-import_plan_schema = json.loads((Path(args.root) / "schemas/import-plan.v1.schema.json").read_text("utf8"))
-jsonschema.Draft202012Validator.check_schema(import_plan_schema)
-import_plan_validator = jsonschema.Draft202012Validator(import_plan_schema)
+import_plan_validators = {}
+for version in (1, 2):
+    current = json.loads((Path(args.root) / f"schemas/import-plan.v{version}.schema.json").read_text("utf8"))
+    jsonschema.Draft202012Validator.check_schema(current)
+    import_plan_validators[version] = jsonschema.Draft202012Validator(current)
 import_example = {"format": "am-import-plan", "version": 1, "created_at": "2026-11-23T00:00:00.000Z",
                   "generator": {"name": "am", "version": "test"},
                   "profile": {"id": "default", "version": 1, "sha256": "0" * 64, "not_applied": []},
                   "mode": "strict", "roots": [{"path": "/synthetic"}],
                   "scan": {"completeness": "complete", "limits_hit": [], "counts": {"nodes": 0, "files": 0, "unavailable": 0}},
                   "nodes": [], "candidates": []}
+plan_contract_counts = {1: 0, 2: 0}
 for label, value, expected in (("positive", import_example, True),
                                ("version", dict(import_example, version=2), False),
                                ("extra", dict(import_example, extra=True), False),
                                ("missing", {key: value for key, value in import_example.items() if key != "roots"}, False)):
-    report("import-plan:" + label, "SC-1", "import plan schema", expected, import_plan_validator.is_valid(value))
+    report("import-plan:v1:" + label, "SC-1", "import plan schema", expected, import_plan_validators[1].is_valid(value))
+    plan_contract_counts[1] += 1
+
+# Static nonempty v1 cases survive replacement of the scan-generated cache by v2.
+def source_candidate():
+    return {"id": "c1", "kind": "new_asset", "root": 0, "base_path": "", "title_hint": "Synthetic",
+            "context": {}, "confidence": "high", "reasons": ["root_file"],
+            "inputs": [{"id": "i1", "kind": "file", "objects": [{"node": "n1"}]}],
+            "entries": [{"node": "n1", "decision": "include"}], "directories": [], "volume_sets": [],
+            "suggested_links": [], "matches": [], "warnings": [], "action": "import"}
+
+v1_nonempty = copy.deepcopy(import_example)
+v1_nonempty["nodes"] = [{"id": "n1", "root": 0, "path": "source", "name": "source", "kind": "file",
+                          "status": "available", "size": "3", "mtime_ns": "123", "detected": "unknown"}]
+v1_nonempty["candidates"] = [source_candidate()]
+v1_cases = [("file", copy.deepcopy(v1_nonempty))]
+for kind in ("directory", "archive", "multivolume_archive"):
+    sample = copy.deepcopy(v1_nonempty)
+    sample["candidates"][0]["inputs"][0]["kind"] = kind
+    if kind == "directory":
+        sample["nodes"][0]["kind"] = "directory"
+        sample["candidates"][0]["directories"] = ["n1"]
+        sample["candidates"][0]["entries"] = []
+    if kind == "multivolume_archive":
+        sample["candidates"][0]["volume_sets"] = [{"id": "v1", "scheme": "rar_part", "base": "source",
+            "members": ["n1"], "missing_indices": [], "confirmed": False}]
+        sample["candidates"][0]["inputs"][0]["objects"] = [{"volume_set": "v1"}]
+    v1_cases.append((kind, sample))
+sample = copy.deepcopy(v1_nonempty)
+sample["candidates"][0]["kind"] = "ready_asset"
+sample["nodes"][0]["detected"] = "archive.zip"
+sample["candidates"][0]["reasons"] = ["ready_asset_invalid"]
+sample["candidates"][0]["action"] = "ask"
+v1_cases.append(("ready", sample))
+sample = copy.deepcopy(v1_nonempty)
+sample["nodes"][0].update(status="unavailable", problem={"code": "cloud_placeholder", "message_id": "am.import.cloud_placeholder"},
+                           name_raw="ffff", path_raw="ffff", raw_encoding="utf-16le")
+sample["candidates"][0]["entries"][0]["decision"] = "ask"
+v1_cases.append(("raw-unavailable", sample))
+sample = copy.deepcopy(v1_nonempty)
+sample["nodes"][0]["kind"] = "symlink"
+sample["candidates"][0]["entries"][0]["decision"] = "skip"
+v1_cases.append(("link", sample))
+for label, value in v1_cases:
+    report("import-plan:v1:" + label, "SC-1", "static v1 plan", True, import_plan_validators[1].is_valid(value))
+    plan_contract_counts[1] += 1
+
+v2_example = copy.deepcopy(v1_nonempty)
+v2_example["version"] = 2
+v2_example["profile"]["limits"] = {"max_entries": "100000", "max_unpacked_bytes": "214748364800", "max_ratio": 200,
+                                    "max_seconds_per_container": "3600", "max_temp_bytes": "107374182400"}
+v2_example["candidates"][0]["inputs"][0]["kind"] = "archive"
+v2_example["archives"] = [{"node": "n1", "container": "zip", "status": "listed", "entry_count": 1,
+                            "name_encodings": ["utf-8(valid)"], "zip64": False, "comment_length": 0,
+                            "encrypted_entries": 0, "unsupported_entries": 0}]
+v2_example["archive_entries"] = [{"id": "a1", "archive": "n1", "index": 0, "path": "part.bin", "path_raw": "706172742e62696e",
+    "name_encoding": "utf-8(valid)", "encoding_exact": True, "kind": "file", "size": "3", "compressed_size": "3",
+    "crc32": "00000000", "method": 0, "encrypted": False, "detected": "unknown", "status": "available"}]
+v2_example["candidates"][0]["entries"].append({"archive_entry": "a1", "decision": "include"})
+v2_cases = [("positive", copy.deepcopy(v2_example), True)]
+for label, section, field, value in (("entry-kind", "archive_entries", "kind", "device"),
+                                      ("entry-extra", "archive_entries", "extra", True),
+                                      ("entry-hex", "archive_entries", "path_raw", "AB")):
+    sample = copy.deepcopy(v2_example)
+    sample[section][0][field] = value
+    v2_cases.append((label, sample, False))
+sample = copy.deepcopy(v2_example)
+sample["candidates"][0]["entries"][0]["archive_entry"] = "a1"
+v2_cases.append(("both-references", sample, False))
+sample = copy.deepcopy(v2_example)
+del sample["profile"]["limits"]
+v2_cases.append(("missing-limits", sample, False))
+sample = copy.deepcopy(v2_example)
+sample["profile"]["limits"]["extra"] = "1"
+v2_cases.append(("extra-limit", sample, False))
+sample = copy.deepcopy(v2_example)
+sample["profile"]["limits"]["max_entries"] = "0"
+v2_cases.append(("zero-limit", sample, False))
+for label, value, expected in v2_cases:
+    report("import-plan:v2:" + label, "SC-1", "static v2 plan", expected, import_plan_validators[2].is_valid(value))
+    plan_contract_counts[2] += 1
+
+def plan_valid(value, label):
+    if not isinstance(value, dict) or value.get("format") != "am-import-plan":
+        print(f"import plan {label}: missing or unsupported format")
+        return False
+    version = value.get("version")
+    if type(version) is not int or version not in import_plan_validators:
+        print(f"import plan {label}: missing or unsupported version {version!r}")
+        return False
+    return import_plan_validators[version].is_valid(value)
+
+for label, field, replacement in (("unknown-version", "version", 99), ("missing-version", "version", None),
+                                   ("unknown-format", "format", "other"), ("missing-format", "format", None)):
+    sample = copy.deepcopy(v2_example)
+    if replacement is None:
+        del sample[field]
+    else:
+        sample[field] = replacement
+    report("import-plan:dispatch:" + label, "SC-1", "plan version/format dispatch", False, plan_valid(sample, label))
 actual_plans = sorted((Path(args.root) / ".cache/import-plan-cases").glob("*.json"))
+plan_actual_counts = {1: 0, 2: 0}
 for path in actual_plans:
+    value = json.loads(path.read_text("utf8"))
     report("import-plan:" + path.stem, "SC-1", "actual scan plan", True,
-           import_plan_validator.is_valid(json.loads(path.read_text("utf8"))))
-print(f"import plan schema: 4 contract cases and {len(actual_plans)} actual plans checked")
+           plan_valid(value, path.name))
+    if isinstance(value, dict) and type(value.get("version")) is int and value["version"] in plan_actual_counts:
+        plan_actual_counts[value["version"]] += 1
+for version in (1, 2):
+    print(f"import plan schema v{version}: {plan_contract_counts[version]} static contract cases and {plan_actual_counts[version]} actual plans checked")
 sys.exit(1 if failures else 0)

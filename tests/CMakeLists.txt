@@ -169,6 +169,10 @@ if(AM_PYTHON_TESTS)
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_import_run_cli.py
           --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/import-run-cli-tests)
       set_tests_properties(cli_import_run PROPERTIES LABELS "req:SC-1;req:SC-2;req:K-5;req:K-121" TIMEOUT 180)
+      add_test(NAME cli_import_zip
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_import_zip_cli.py
+          --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/import-zip-cli-tests)
+      set_tests_properties(cli_import_zip PROPERTIES LABELS "req:SC-1;req:SC-10;req:K-5;req:K-6" TIMEOUT 180)
       foreach(_am_import_case summary errors profiles ready overlap signal)
         if(_am_import_case STREQUAL "summary")
           set(_am_import_name cli_import_scan)

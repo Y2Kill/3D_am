@@ -107,30 +107,52 @@ struct ZipInputJob::Impl {
   mutable std::mutex mutex;
   std::map<std::filesystem::path,std::chrono::steady_clock::time_point> starts;
   std::string limit;
-  Impl(ZipInputLimits l,ZipInputHooks h):limits(std::move(l)),hooks(std::move(h)),bytes(limits.max_unpacked_bytes) {}
-  [[noreturn]] void exceeded(std::string name) {
-    { const std::lock_guard lock(mutex); if(limit.empty()) limit=std::move(name); }
-    throw failure(Errc::resource_exhausted,"am.import.archive.limit_exceeded");
+  Impl(ZipInputLimits l,ZipInputHooks h):limits(std::move(l)),hooks(std::move(h)),
+      bytes(std::min(limits.max_unpacked_bytes,asset_zip::ZipLimits{}.max_entry_bytes)) {
+    const asset_zip::ZipLimits ceiling;
+    limits.zip.max_entries=std::min(limits.zip.max_entries,ceiling.max_entries);
+    limits.zip.max_directory_bytes=std::min(limits.zip.max_directory_bytes,ceiling.max_directory_bytes);
+    limits.zip.max_name_bytes=std::min(limits.zip.max_name_bytes,ceiling.max_name_bytes);
+    limits.zip.max_entry_bytes=std::min(limits.zip.max_entry_bytes,ceiling.max_entry_bytes);
+    limits.max_unpacked_bytes=std::min(limits.max_unpacked_bytes,ceiling.max_entry_bytes);
+  }
+  void mark(std::string name) {
+    const std::lock_guard lock(mutex); if(limit.empty()) limit=std::move(name);
+  }
+  [[noreturn]] void exceeded(std::string name,const Error* cause=nullptr) {
+    const auto original=cause?*cause:failure(Errc::resource_exhausted,std::string("am.")+"archive.limit."+name);
+    mark(std::move(name));
+    throw failure(Errc::unsupported,"am.import.archive.limit_exceeded").caused_by(original);
   }
   void check(const std::filesystem::path& path) {
+    if(hooks.cancelled && hooks.cancelled()) throw failure(Errc::cancelled,"am.import.cancelled");
     const auto now=hooks.clock?hooks.clock():std::chrono::steady_clock::now();
-    bool timed_out=false, failed=false;
+    bool timed_out=false;
+    std::string failed;
     {
       const std::lock_guard lock(mutex);
       const auto [at,inserted]=starts.try_emplace(path.lexically_normal(),now);
       (void)inserted;
       timed_out=now-at->second>=limits.max_seconds_per_container;
-      failed=!limit.empty();
+      failed=limit;
     }
     if(timed_out) exceeded("max_seconds_per_container");
-    if(failed) throw failure(Errc::resource_exhausted,"am.import.archive.limit_exceeded");
+    if(!failed.empty()) exceeded(std::move(failed));
+  }
+  void output(std::uint64_t compressed,std::uint64_t produced) {
+    // The warm-up output threshold is a hypothesis (O-17), not a format limit.
+    constexpr std::uint64_t ratio_warmup=1024*1024;
+    if(produced>ratio_warmup && static_cast<long double>(produced)>
+        static_cast<long double>(compressed)*limits.max_ratio) exceeded("max_ratio");
   }
 };
 ZipInputJob::ZipInputJob(ZipInputLimits l,ZipInputHooks h):impl_(std::make_shared<Impl>(std::move(l),std::move(h))) {}
 std::uint64_t ZipInputJob::remaining() const noexcept { return impl_->bytes.remaining(); }
 std::string ZipInputJob::exceeded_limit() const { const std::lock_guard lock(impl_->mutex); return impl_->limit; }
+const ZipInputLimits& ZipInputJob::limits() const noexcept { return impl_->limits; }
 struct ZipInput::Impl {
   asset_zip::ZipArchive zip;
+  std::shared_ptr<const asset_zip::RandomAccessSource> source;
   std::filesystem::path path;
   std::shared_ptr<ZipInputJob> job;
   std::vector<ZipInputEntry> entries;
@@ -147,6 +169,32 @@ struct ZipInputStream::Impl {
     :stream(std::move(s)),path(std::move(p)),job(std::move(j)),index(e.index),compressed(e.compressed_size) {}
 };
 ZipInput::ZipInput(std::shared_ptr<Impl> p):impl_(std::move(p)) {}
+Result<asset_zip::ProbeResult> ZipInput::probe(std::shared_ptr<const asset_zip::RandomAccessSource> original,
+    const std::filesystem::path& path,std::shared_ptr<ZipInputJob> job,const manifest::CodecLimits& codec,std::stop_token stop) {
+  return checked<asset_zip::ProbeResult>([&]() -> Result<asset_zip::ProbeResult> {
+    if(!job || !original) return failure(Errc::invalid_argument,"am.archive.invalid_job");
+    auto source=std::make_shared<TimedSource>(); source->source=std::move(original);
+    source->check=[job,path] { job->impl_->check(path); };
+    asset_zip::ProbeContext context;
+    context.budget=&job->impl_->bytes;
+    context.stop=stop;
+    context.check_deadline=[job,path] { return checked<void>([&]() -> Result<void> {job->impl_->check(path);return {};}); };
+    context.check_output=[job,path](const asset_zip::EntryInfo& entry,std::uint64_t produced) {
+      return checked<void>([&]() -> Result<void> {job->impl_->check(path);job->impl_->output(entry.compressed_size,produced);return {};});
+    };
+    context.open_input=[source,job] { return asset_zip::ZipArchive::open(source,job->limits().zip,asset_zip::ZipReadProfile::input); };
+    auto result=asset_zip::probe_container(source,job->limits().zip,codec,context);
+    const auto cause=!result ? std::optional<Error>(result.error()) : result->error;
+    if(cause) {
+      const auto& root=cause->root_cause();
+      if(root.message_id=="am.archive.limit.manifest_bytes") job->impl_->mark("manifest_bytes");
+      else if(root.message_id=="am.zip.limit_exceeded" && !job->remaining()) job->impl_->mark("max_unpacked_bytes");
+      if(!result && (result.error().code==Errc::resource_exhausted || result.error().message_id=="am.import.archive.limit_exceeded") && !job->exceeded_limit().empty())
+        return asset_zip::ProbeResult{asset_zip::ProbeOutcome::invalid_zip,{},result.error()};
+    }
+    return result;
+  });
+}
 Result<ZipInput> ZipInput::open(const std::filesystem::path& path,std::shared_ptr<ZipInputJob> job) {
   return checked<ZipInput>([&] {
     if(!job) throw failure(Errc::invalid_argument,"am.archive.invalid_job");
@@ -158,10 +206,12 @@ Result<ZipInput> ZipInput::open(const std::filesystem::path& path,std::shared_pt
     source->source=take(asset_zip::file_source(path));
     source->check=[job,path] { job->impl_->check(path); };
     auto opened=asset_zip::ZipArchive::open(source,job->impl_->limits.zip,asset_zip::ZipReadProfile::input);
-    if(!opened && opened.error().message_id.starts_with("am.archive.limit."))
-      job->impl_->exceeded(opened.error().message_id.substr(std::string_view("am.archive.limit.").size()));
+    const auto limit_prefix=std::string("am.")+"archive.limit.";
+    if(!opened && opened.error().message_id.starts_with(limit_prefix))
+      job->impl_->exceeded(opened.error().message_id.substr(limit_prefix.size()),&opened.error());
     auto zip=take(std::move(opened));
     auto state=std::make_shared<Impl>(std::move(zip),path,std::move(job));
+    state->source=std::move(source);
     std::map<std::string,std::vector<std::size_t>> raw_names, keys;
     for(const auto& info:state->zip.entries()) {
       state->job->impl_->check(path);
@@ -185,6 +235,31 @@ Result<ZipInput> ZipInput::open(const std::filesystem::path& path,std::shared_pt
 }
 std::span<const ZipInputEntry> ZipInput::entries() const noexcept { return impl_->entries; }
 const asset_zip::ArchiveSummary& ZipInput::summary() const noexcept { return impl_->zip.summary(); }
+std::vector<ZipInputIdentity> ZipInput::identity() const {
+  std::vector<ZipInputIdentity> result; result.reserve(entries().size());
+  for(const auto& e:entries()) result.push_back({e.info.raw_name,e.path,e.name_encoding,e.info.uncompressed_size,
+    e.info.compressed_size,e.info.crc32,e.info.method,e.info.kind,e.info.encrypted});
+  return result;
+}
+Result<std::string> ZipInput::sha256(std::stop_token stop) const {
+  return checked<std::string>([&] {
+    auto hash=take(asset_zip::Sha256::create());
+    std::array<std::byte,65536> bytes{};
+    std::uint64_t offset=0;
+    while(offset<impl_->source->size()) {
+      if(stop.stop_requested()) throw failure(Errc::cancelled,"am.import.cancelled");
+      const auto n=take(impl_->source->read_at(offset,bytes));
+      if(!n) throw failure(Errc::conflict,"am.archive.source_changed");
+      const auto updated=hash.update(std::span(bytes).first(n)); if(!updated) throw updated.error();
+      offset+=n;
+    }
+    const auto digest=take(hash.finish());
+    constexpr char digits[]="0123456789abcdef";
+    std::string result;
+    for(const auto b:digest) { const auto n=std::to_integer<unsigned>(b); result+=digits[n>>4]; result+=digits[n&15]; }
+    return result;
+  });
+}
 Result<ZipInputStream> ZipInput::open_entry(std::size_t index,bool sha) const {
   return checked<ZipInputStream>([&] {
     impl_->job->impl_->check(impl_->path);
@@ -212,13 +287,10 @@ Result<std::size_t> ZipInputStream::read(std::span<std::byte> output) {
     }
     const auto r=impl_->stream.read(output);
     job.check(impl_->path);
-    if(!r && r.error().message_id=="am.zip.limit_exceeded" && job.bytes.remaining()==0) job.exceeded("max_unpacked_bytes");
+    if(!r && r.error().message_id=="am.zip.limit_exceeded" && job.bytes.remaining()==0) job.exceeded("max_unpacked_bytes",&r.error());
     const auto n=take(r);
     impl_->produced+=n;
-    // The warm-up output threshold is a hypothesis (O-17), not a format limit.
-    constexpr std::uint64_t ratio_warmup=1024*1024;
-    if(impl_->produced>ratio_warmup && static_cast<long double>(impl_->produced)>
-        static_cast<long double>(impl_->compressed)*job.limits.max_ratio) job.exceeded("max_ratio");
+    job.output(impl_->compressed,impl_->produced);
     job.check(impl_->path);
     return n;
   });

@@ -17,6 +17,7 @@
 #include "am/foundation/version.hpp"
 #include "am/services/catalog/indexer.hpp"
 #include "am/services/import/exclusion_rules.hpp"
+#include "am/services/import/zip_support.hpp"
 #include "am/storage/archive/volume_detect.hpp"
 #include "am/storage/asset_zip/probe.hpp"
 #include "detail.hpp"
@@ -185,9 +186,11 @@ struct Scanner {
   ScanProgress progress;
   ExclusionEngine exclusions;
   std::vector<std::string> rules;
+  std::shared_ptr<archive::ZipInputJob> zip_job;
   explicit Scanner(const ScanRequest& r) : request(r), settings(r.profile.settings) {
     rules = settings.value("exclusions", J::object()).value("rules", exclusions.rule_ids());
     max_entries = settings.value("limits", J::object()).value("max_entries", max_entries);
+    zip_job=scan_archive_job(r);
   }
   void cancel() const {
     if (request.cancelled && request.cancelled()) throw error("am.import.cancelled", {}, Errc::cancelled);
@@ -249,12 +252,14 @@ struct Scanner {
       io(n.actual, ScanIo::zip_probe);
       if (request.hooks.on_open) request.hooks.on_open(n.actual, false);
       auto source = take(asset_zip::file_source(n.actual, true));
-      const auto probe = take(asset_zip::probe_container(source));
+      const auto probe = take(archive::ZipInput::probe(source,n.actual,zip_job));
       n.ready = probe.outcome == asset_zip::ProbeOutcome::own ||
                 probe.outcome == asset_zip::ProbeOutcome::own_corrupt ||
                 probe.outcome == asset_zip::ProbeOutcome::own_unsupported_version;
       if (n.ready) {
         n.asset = {{"valid", false}};
+        if(probe.error) n.asset["probe_error"]=probe.error->message_id;
+        if(probe.error && probe.error->message_id=="am.zip.duplicate_name") n.asset["manifest_detected"]=true;
         repository::ContainerContents contents;
         auto verified = take(repository::verify_container(n.actual, {}, &contents));
         n.asset["valid"] = !verified.error.has_value() && probe.outcome == asset_zip::ProbeOutcome::own;
@@ -268,10 +273,10 @@ struct Scanner {
           }
         }
       } else if (probe.outcome == asset_zip::ProbeOutcome::foreign_zip) {
-        auto archive = asset_zip::ZipArchive::open(source);
-        if (archive)
-          for (const auto& entry : archive->entries())
-            if (entry.raw_name == "3D/3dmodel.model") n.value["detected"] = "project.3mf";
+        auto input_archive = archive::ZipInput::open(n.actual,zip_job);
+        if (input_archive)
+          for (const auto& entry : input_archive->entries())
+            if (entry.info.raw_name == "3D/3dmodel.model") n.value["detected"] = "project.3mf";
       }
     }
     if (folded(name(n.actual.extension()).display) == ".url" &&
@@ -553,6 +558,8 @@ std::vector<Candidate> Scanner::candidates() {
         if (!n.asset.value("valid", false)) c.value["action"] = "ask";
         for (const auto* field : {"asset_id", "revision"})
           if (n.asset.contains(field)) c.value[field] = n.asset[field];
+        if(n.asset.value("probe_error",std::string{})=="am.zip.duplicate_name") c.value["warnings"].push_back(n.asset["probe_error"]);
+        if(n.asset.value("manifest_detected",false)) c.value["warnings"].push_back("am.import.ready_asset_manifest_detected");
       }
       if (leaf && !n.ready) {
         const auto parts = components(n.value["path"].get<std::string>());
@@ -866,9 +873,11 @@ Result<ImportPlan> scan(const ScanRequest& request) {
     std::vector<std::string> not_applied;
     for (const auto* key : {"nested", "previews", "groups"})
       if (request.profile.settings.contains(key)) not_applied.push_back(key);
+    not_applied.push_back("limits.max_temp_bytes");
+    const auto limits=snapshot_import_limits(request.profile);
     J value = {
         {"format", "am-import-plan"},
-        {"version", 1},
+        {"version", 2},
         {"created_at", time_text(request.hooks.clock ? request.hooks.clock() : std::chrono::system_clock::now())},
         {"generator", {{"name", "am"}, {"version", kAppVersion}}},
         {"profile",
@@ -884,8 +893,13 @@ Result<ImportPlan> scan(const ScanRequest& request) {
           {"counts", {{"nodes", nodes.size()}, {"files", files}, {"unavailable", unavailable}}}}},
         {"nodes", std::move(nodes)},
         {"candidates", std::move(output)}};
+    value["profile"]["limits"]={{"max_entries",std::to_string(limits.max_entries)},{"max_unpacked_bytes",std::to_string(limits.max_unpacked_bytes)},
+      {"max_ratio",limits.max_ratio},{"max_seconds_per_container",std::to_string(limits.max_seconds_per_container)},{"max_temp_bytes",std::to_string(limits.max_temp_bytes)}};
+    value["archives"]=J::array(); value["archive_entries"]=J::array();
+    ImportPlan plan{std::move(value)};
+    take(inventory_zip_entries(plan,request,scanner.zip_job));
     end.finished = true;
-    return ImportPlan{std::move(value)};
+    return plan;
   } catch (const Error& e) {
     return e;
   } catch (const std::bad_alloc&) {

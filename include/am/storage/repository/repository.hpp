@@ -9,6 +9,7 @@
 #include "am/storage/commit/protocol.hpp"
 #include "am/storage/repository/media.hpp"
 
+namespace am::archive { struct ZipInputSnapshot; }
 namespace am::repository {
 using Json = nlohmann::ordered_json;
 using StorageCapabilities = commit::StorageCapabilities;
@@ -98,6 +99,10 @@ struct SourceFailure {
   Error error;
   bool read_failure = true;
 };
+struct ArchiveEntryInput {
+  std::shared_ptr<const archive::ZipInputSnapshot> archive;
+  std::size_t index=0;
+};
 struct FileInput {
   std::string path;
   std::filesystem::path source;
@@ -105,6 +110,8 @@ struct FileInput {
   std::optional<std::string> file_id;
   std::optional<Json> metadata;
   std::optional<std::string> expected_sha256;
+  // Exactly one content source: a filesystem path or an archive record.
+  std::optional<ArchiveEntryInput> archive_entry{};
 };
 struct AddFiles { Json input; std::vector<FileInput> files; };
 struct RemoveFile { std::string file_id; };
