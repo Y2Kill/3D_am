@@ -30,6 +30,8 @@ struct ScanHooks {
   std::function<void(const std::filesystem::path&, bool writable)> on_open;
   std::function<void(const std::filesystem::path&)> on_library_asset_read;
   std::function<std::chrono::system_clock::time_point()> clock;
+  std::function<std::chrono::steady_clock::time_point()> archive_clock;
+  std::function<void(const std::filesystem::path&,std::size_t)> on_archive_read;
 };
 struct ScanRequest {
   std::vector<std::filesystem::path> roots;

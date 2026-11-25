@@ -54,7 +54,12 @@ bool extras(Bytes data, U64& usize, U64& csize, U64& offset, std::uint32_t& disk
 }
 struct Region { U64 begin, end; };
 struct Parsed { std::vector<EntryInfo> entries; ArchiveSummary summary; };
-Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) {
+Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits, ZipReadProfile profile) {
+  auto metadata_limit = [&](const char* name, const char* detail) {
+    if (profile == ZipReadProfile::input)
+      throw error(Errc::resource_exhausted, std::string("am.")+"archive.limit."+name, detail);
+    limit(detail);
+  };
   const auto search = find_end(source);
   if (!search.offset) fail(search.signature_seen ? "No EOCD with exact comment boundary" : "EOCD not found");
   const auto end_offset = *search.offset;
@@ -93,8 +98,8 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     if (disk16 != 0 || cd_disk16 != 0 || count_disk16 != count16) unsupported("Multi-disk archive");
   }
   // Check metadata budgets before reserving/reading count-dependent structures.
-  if (count > limits.max_entries || count > std::numeric_limits<std::size_t>::max()) limit("Entry count exceeds hypothesis max_entries");
-  if (cd_size > limits.max_directory_bytes || cd_size > std::numeric_limits<std::size_t>::max()) limit("Directory exceeds hypothesis max_directory_bytes");
+  if (count > limits.max_entries || count > std::numeric_limits<std::size_t>::max()) metadata_limit("max_entries","Entry count exceeds hypothesis max_entries");
+  if (cd_size > limits.max_directory_bytes || cd_size > std::numeric_limits<std::size_t>::max()) metadata_limit("max_directory_bytes","Directory exceeds hypothesis max_directory_bytes");
   const auto cd_end = end_at(cd_offset, cd_size, source.size());
   if (cd_end > metadata_begin || count > cd_size / 46) fail("Central directory boundary/count is inconsistent");
   parsed.summary = {count, cd_offset, cd_size, 0, zip64, parsed.summary.comment_length};
@@ -107,7 +112,7 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     const auto header = Bytes(directory).subspan(cursor, 46);
     if (u32(header, 0) != central_sig) fail("Invalid central directory signature");
     const auto name_length = u16(header, 28), extra_length = u16(header, 30), comment_length = u16(header, 32);
-    if (name_length > limits.max_name_bytes) limit("Entry name exceeds hypothesis max_name_bytes");
+    if (name_length > limits.max_name_bytes) metadata_limit("max_name_bytes","Entry name exceeds hypothesis max_name_bytes");
     const auto variable_length = static_cast<std::size_t>(name_length) + extra_length + comment_length;
     cursor += 46;
     if (variable_length > directory.size() - cursor) fail("Central directory variable fields exceed directory");
@@ -125,7 +130,7 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     std::uint32_t start_disk = u16(header, 34);
     entry.has_zip64 = extras(extra, entry.uncompressed_size, entry.compressed_size, entry.local_offset, start_disk);
     if (start_disk != 0) unsupported("Entry starts on another disk");
-    if (entry.uncompressed_size > limits.max_entry_bytes) limit("Entry size exceeds hypothesis max_entry_bytes");
+    if (entry.uncompressed_size > limits.max_entry_bytes) metadata_limit("max_entry_bytes","Entry size exceeds hypothesis max_entry_bytes");
     entry.encrypted = (entry.flags & encryption_flags) != 0 || entry.method == 99;
     entry.data_descriptor = (entry.flags & 8) != 0; entry.utf8_flag = (entry.flags & 0x800) != 0;
     if (entry.utf8_flag && unicode::is_valid_utf8(entry.raw_name)) entry.utf8_name = entry.raw_name;
@@ -145,7 +150,8 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     if (parsed.entries[order[i - 1]].local_offset == parsed.entries[order[i]].local_offset) overlap("Entries share one local header");
   std::set<std::string_view> names;
   for (const auto& entry : parsed.entries)
-    if (!names.insert(entry.raw_name).second) throw error(Errc::corrupt_data, "am.zip.duplicate_name", entry_detail(entry));
+    if (!names.insert(entry.raw_name).second && profile == ZipReadProfile::asset)
+      throw error(Errc::corrupt_data, "am.zip.duplicate_name", entry_detail(entry));
   for (std::size_t rank = 0; rank < order.size(); ++rank) {
     auto& entry = parsed.entries[order[rank]];
     const auto boundary = rank + 1 < order.size() ? parsed.entries[order[rank + 1]].local_offset : cd_offset;
@@ -154,7 +160,7 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     const auto local = bytes(source, entry.local_offset, 30);
     if (u32(local, 0) != local_sig) fail("Invalid local header signature: " + entry_detail(entry));
     const auto name_length = u16(local, 26), extra_length = u16(local, 28);
-    if (name_length > limits.max_name_bytes) limit("Local name exceeds hypothesis max_name_bytes");
+    if (name_length > limits.max_name_bytes) metadata_limit("max_name_bytes","Local name exceeds hypothesis max_name_bytes");
     const auto variable_length = static_cast<std::size_t>(name_length) + extra_length;
     entry.data_offset = end_at(entry.local_offset, 30 + variable_length, source.size());
     const auto data_end = end_at(entry.data_offset, entry.compressed_size, source.size());
@@ -209,11 +215,15 @@ struct ZipArchive::Impl {
 };
 ZipArchive::ZipArchive(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
 Result<ZipArchive> ZipArchive::open(std::shared_ptr<const RandomAccessSource> source, const ZipLimits& limits) {
+  return open(std::move(source),limits,ZipReadProfile::asset);
+}
+Result<ZipArchive> ZipArchive::open(std::shared_ptr<const RandomAccessSource> source, const ZipLimits& limits,
+                                    ZipReadProfile profile) {
   try {
     if (!source) return error(Errc::io_error, "am.zip.io_error", "Null ZIP source");
     auto impl = std::make_shared<Impl>();
     impl->source = std::move(source); impl->limits = limits;
-    impl->parsed = parse_archive(*impl->source, limits);
+    impl->parsed = parse_archive(*impl->source, limits, profile);
     return ZipArchive(std::move(impl));
   } catch (const Error& e) { return e; }
   catch (const std::bad_alloc&) { return oom(); }
@@ -308,59 +318,127 @@ bool first_has_marker(const ZipArchive& archive, U64 cap) {
   return false;
 }
 }
-Result<ProbeResult> probe_container(std::shared_ptr<const RandomAccessSource> source, const ZipLimits& limits, const manifest::CodecLimits& codec_limits) {
+namespace {
+struct ManifestFormat {
+  bool own=false, foreign=false;
+  std::optional<FormatVersion> version;
+};
+ManifestFormat manifest_format(const manifest::ManifestDocument& document) {
+  ManifestFormat result;
+  const auto& dom=document.known();
+  const auto format=dom.is_object()?dom.find("format"):dom.end();
+  if(format==dom.end() || !format->is_object()) return result;
+  const auto id=format->find("id"), version=format->find("version");
+  if(id==format->end() || !id->is_string()) return result;
+  result.own=id->get_ref<const std::string&>()==format_id;
+  result.foreign=!result.own;
+  if(result.own && version!=format->end() && version->is_object()) {
+    const auto major=version->find("major"), minor=version->find("minor");
+    if(major!=version->end() && major->is_number_integer())
+      result.version=FormatVersion{major->dump(),minor!=version->end() && minor->is_number_integer()?minor->dump():std::string{}};
+  }
+  return result;
+}
+void probe_checkpoint(const ProbeContext* context) {
+  if(!context) return;
+  if(context->stop.stop_requested()) throw error(Errc::cancelled,"am.import.cancelled","Probe cancelled");
+  if(context->check_deadline) {
+    const auto checked=context->check_deadline();
+    if(!checked) throw checked.error();
+  }
+}
+Result<std::string> read_probe_manifest(const ZipArchive& zip,std::size_t index,const manifest::CodecLimits& limits,
+                                      const ProbeContext* context,std::string* partial=nullptr) {
+  std::string json;
+  try {
+    if(zip.entries()[index].uncompressed_size>limits.max_bytes)
+      return error(Errc::resource_exhausted,context?"am.archive.limit.manifest_bytes":"am.zip.limit_exceeded","Manifest exceeds CodecLimits::max_bytes");
+    ReadBudget local(limits.max_bytes);
+    auto stream=zip.open_entry(index,context && context->budget?*context->budget:local);
+    if(!stream) return stream.error();
+    std::array<std::byte,65536> buffer{};
+    for(;;) {
+      probe_checkpoint(context);
+      auto n=stream->read(buffer);
+      probe_checkpoint(context);
+      if(!n) throw n.error();
+      if(!*n) break;
+      if(context && context->check_output) {
+        const auto checked=context->check_output(zip.entries()[index],static_cast<std::uint64_t>(json.size())+*n);
+        if(!checked) throw checked.error();
+      }
+      if(*n>limits.max_bytes-json.size()) return error(Errc::resource_exhausted,context?"am.archive.limit.manifest_bytes":"am.zip.limit_exceeded","Manifest exceeds CodecLimits::max_bytes");
+      json.append(reinterpret_cast<const char*>(buffer.data()),*n);
+    }
+    return json;
+  } catch(const Error& e) { if(partial) *partial=std::move(json); return e; }
+  catch(const std::bad_alloc&) { return oom(); }
+}
+Result<ProbeResult> probe_impl(std::shared_ptr<const RandomAccessSource> source,const ZipLimits& limits,
+                               const manifest::CodecLimits& codec_limits,const ProbeContext* context) {
   try {
     if (!source) return error(Errc::io_error, "am.zip.io_error", "Null ZIP source");
+    probe_checkpoint(context);
     const auto search = find_end(*source);
     if (!search.signature_seen) return ProbeResult{ProbeOutcome::not_zip, {}, {}};
     auto archive = ZipArchive::open(source, limits);
     if (!archive) {
       auto outer = Error::make(archive.error().code, "ZIP mechanism rejected archive", archive.error().ctx.detail)
           .in("storage.asset_zip").op("zip.probe").id(archive.error().message_id).caused_by(archive.error());
+      if(context && context->budget && context->open_input && archive.error().message_id=="am.zip.duplicate_name") {
+        probe_checkpoint(context);
+        auto input=context->open_input();
+        if(input && !input->entries().empty() && input->entries()[0].raw_name=="manifest.json") {
+          auto json=read_probe_manifest(*input,0,codec_limits,context);
+          if(json) {
+            auto document=manifest::parse_manifest(*json,codec_limits);
+            if(document) {
+              auto format=manifest_format(*document);
+              if(format.own) return ProbeResult{ProbeOutcome::own_corrupt,std::move(format.version),std::move(outer)};
+            }
+          } else {
+            // Retain the strict rejection as well as the extra read's outcome.
+            outer.code=json.error().code;
+            outer=std::move(outer).caused_by(json.error());
+          }
+        } else if(!input) {
+          outer.code=input.error().code;
+          outer=std::move(outer).caused_by(input.error());
+        }
+      }
       return ProbeResult{ProbeOutcome::invalid_zip, {}, std::move(outer)};
     }
     const auto entry = std::find_if(archive->entries().begin(), archive->entries().end(), [](const auto& e) { return e.raw_name == "manifest.json"; });
     if (entry == archive->entries().end()) return ProbeResult{ProbeOutcome::foreign_zip, {}, {}};
     std::optional<Error> failure;
-    std::string json;
-    if (entry->uncompressed_size > codec_limits.max_bytes) failure = error(Errc::resource_exhausted, "am.zip.limit_exceeded", "Manifest exceeds CodecLimits::max_bytes");
-    else {
-      ReadBudget budget(codec_limits.max_bytes);
-      auto stream = archive->open_entry(entry->index, budget);
-      if (!stream) failure = stream.error();
-      else {
-        std::array<std::byte, 65536> buffer{};
-        for (;;) {
-          auto n = stream->read(buffer);
-          if (!n) { failure = n.error(); break; }
-          if (*n == 0) break;
-          json.append(reinterpret_cast<const char*>(buffer.data()), *n);
-        }
-      }
+    std::string observed;
+    auto read=read_probe_manifest(*archive,entry->index,codec_limits,context,context?&observed:nullptr);
+    if(!read) failure=read.error();
+    if (failure) {
+      const bool marker=context ? failure->code!=Errc::resource_exhausted && failure->code!=Errc::unsupported && !archive->entries().empty() &&
+          archive->entries()[0].index==entry->index && observed.find(format_id)!=std::string::npos : first_has_marker(*archive,codec_limits.max_bytes);
+      return ProbeResult{marker?ProbeOutcome::own_corrupt:ProbeOutcome::invalid_zip,{},probe_error(*failure)};
     }
-    if (failure) return ProbeResult{first_has_marker(*archive, codec_limits.max_bytes) ? ProbeOutcome::own_corrupt : ProbeOutcome::invalid_zip, {}, probe_error(*failure)};
-    auto document = manifest::parse_manifest(json, codec_limits);
+    auto document = manifest::parse_manifest(*read, codec_limits);
     if (document) {
-      const auto& dom = document->known();
-      const auto format = dom.is_object() ? dom.find("format") : dom.end();
-      if (format != dom.end() && format->is_object()) {
-        const auto id = format->find("id");
-        const auto version = format->find("version");
-        if (id != format->end() && id->is_string() && id->get_ref<const std::string&>() != format_id)
-          return ProbeResult{ProbeOutcome::foreign_zip, {}, {}};
-        if (id != format->end() && id->is_string() && id->get_ref<const std::string&>() == format_id && version != format->end() && version->is_object()) {
-          const auto major = version->find("major"), minor = version->find("minor");
-          if (major != version->end() && major->is_number_integer()) {
-            FormatVersion value{major->dump(), minor != version->end() && minor->is_number_integer() ? minor->dump() : std::string{}};
-            return ProbeResult{value.major == "1" ? ProbeOutcome::own : ProbeOutcome::own_unsupported_version, std::move(value), {}};
-          }
-        }
-      }
+      auto format=manifest_format(*document);
+      if(format.foreign) return ProbeResult{ProbeOutcome::foreign_zip,{}, {}};
+      if(format.version) return ProbeResult{format.version->major=="1"?ProbeOutcome::own:ProbeOutcome::own_unsupported_version,std::move(format.version),{}};
       failure = error(Errc::corrupt_data, "am.zip.entry_corrupt", "Manifest format fields are not readable");
     } else failure = document.error();
-    return ProbeResult{first_has_marker(*archive, codec_limits.max_bytes) ? ProbeOutcome::own_corrupt : ProbeOutcome::foreign_zip, {}, probe_error(*failure)};
+    const bool marker=context ? !archive->entries().empty() && archive->entries()[0].index==entry->index &&
+        read->find(format_id)!=std::string::npos : first_has_marker(*archive,codec_limits.max_bytes);
+    return ProbeResult{marker?ProbeOutcome::own_corrupt:ProbeOutcome::foreign_zip,{},probe_error(*failure)};
   } catch (const Error& e) { return e; }
   catch (const std::bad_alloc&) { return oom(); }
   catch (const std::exception& e) { return error(Errc::io_error, "am.zip.io_error", e.what()); }
+}
+} // namespace
+Result<ProbeResult> probe_container(std::shared_ptr<const RandomAccessSource> source,const ZipLimits& limits,const manifest::CodecLimits& codec_limits) {
+  return probe_impl(std::move(source),limits,codec_limits,nullptr);
+}
+Result<ProbeResult> probe_container(std::shared_ptr<const RandomAccessSource> source,const ZipLimits& limits,
+                                    const manifest::CodecLimits& codec_limits,const ProbeContext& context) {
+  return probe_impl(std::move(source),limits,codec_limits,&context);
 }
 }  // namespace am::asset_zip

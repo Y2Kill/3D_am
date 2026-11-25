@@ -211,7 +211,14 @@ TEST(ImportScan, StableByteOrderAndDeterministicSerialization) {
   write(root / "Z", "three");
   auto r = request({root});
   auto first = take(imp::scan(r)), second = take(imp::scan(r));
-  EXPECT_EQ(imp::serialize_plan(first), imp::serialize_plan(second));
+  const auto stable = [](imp::ImportPlan plan) {
+    // NTFS may finish updating directory mtime after its child's write closes.
+    // Compare every other field byte-for-byte, including all file timestamps.
+    for (auto& n : plan.value["nodes"])
+      if (n["kind"] == "directory" && n.contains("mtime_ns")) n["mtime_ns"] = "0";
+    return imp::serialize_plan(plan);
+  };
+  EXPECT_EQ(stable(first), stable(second));
   std::vector<std::string> paths;
   for (const auto& n : first.value["nodes"]) paths.push_back(n["path"].get<std::string>());
   EXPECT_TRUE(std::is_sorted(paths.begin(), paths.end()));
@@ -443,7 +450,7 @@ TEST(ImportScan, TelegramContextDepthLooseInputsAndUrlAdvertisement) {
   EXPECT_TRUE(ad);
   EXPECT_TRUE(safe);
   EXPECT_TRUE(bundle);
-  EXPECT_EQ(p["profile"]["not_applied"], J::array({"nested", "previews", "groups"}));
+  EXPECT_EQ(p["profile"]["not_applied"], J::array({"nested", "previews", "groups", "limits.max_temp_bytes"}));
 }
 TEST(ImportScan, ReadyAssetsAreSeparatedEvenWithSingleAndInvalidAssetsAsk) {
   RecordProperty("req", "SC-14|SC-3|SC-2");

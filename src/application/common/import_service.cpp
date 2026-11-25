@@ -142,6 +142,8 @@ Result<AssetOutcome> scan_import(import::ScanRequest request, const fs::path& ou
                  {"ask", 0},
                  {"matches", 0},
                  {"completeness", plan.value["scan"]["completeness"]}};
+    summary["archives"]=plan.value["archives"].size();
+    summary["archive_entries"]=plan.value["archive_entries"].size();
     for (const auto& c : plan.value["candidates"]) {
       const auto kind = c["kind"].get<std::string>(), action = c["action"].get<std::string>();
       summary["kinds"][kind] = summary["kinds"].value(kind, std::uint64_t{}) + 1;

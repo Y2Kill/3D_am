@@ -1,5 +1,6 @@
 #include "am/storage/repository/repository.hpp"
 #include "am/storage/asset_zip/probe.hpp"
+#include "am/storage/archive/zip_input.hpp"
 #include "am/foundation/json_text.hpp"
 #include "am/foundation/paths.hpp"
 #include "am/foundation/unicode.hpp"
@@ -859,6 +860,12 @@ Result<ImportReadyResult> AssetRepository::import_ready(const ImportReadyRequest
 }
 
 namespace {
+struct ArchivePassState {
+  std::shared_ptr<const archive::ZipInputSnapshot> expected;
+  std::shared_ptr<archive::ZipInputJob> job;
+  std::optional<archive::ZipInput> preflight, packing;
+  std::optional<std::string> sha256;
+};
 struct NewSource {
   Path path; U64 size; std::string sha;
   asset_zip::CompressionMethod method;
@@ -866,6 +873,8 @@ struct NewSource {
   std::optional<std::string> expected_sha256;
   std::string file_id;
   std::optional<SourceFailure>* failure = nullptr;
+  std::shared_ptr<ArchivePassState> archive{};
+  std::size_t archive_index=0;
 };
 void check_stop(std::stop_token stop) {
   if (stop.stop_requested()) fail(Errc::cancelled,"am.commit.cancelled","Import cancelled before publication");
@@ -880,6 +889,49 @@ template<class T> T read_source(Result<T> result, const std::string& id, std::op
   if(failure) *failure=SourceFailure{id,cause,false};
   throw cause;
 }
+template<class T> T read_archive(Result<T> result,const std::string& id,std::optional<SourceFailure>* failure) {
+  if(!result && failure && (result.error().code==Errc::io_error || result.error().code==Errc::not_found || result.error().code==Errc::corrupt_data))
+    *failure=SourceFailure{id,result.error(),true};
+  return take(std::move(result));
+}
+archive::ZipInput& archive_pass(ArchivePassState& state,bool packing,std::stop_token stop,
+                               const std::string& id,std::optional<SourceFailure>* failure) {
+  auto& current=packing?state.packing:state.preflight;
+  if(!current) {
+    check_stop(stop);
+    auto attempt=archive::ZipInput::open(state.expected->path,state.job);
+    if(!attempt) {
+      if((state.sha256 || state.expected->sha256) && (attempt.error().code==Errc::corrupt_data || attempt.error().code==Errc::unsupported || attempt.error().code==Errc::not_found))
+        changed_source(id,failure,"Archive became unreadable after its snapshot");
+      throw attempt.error(); // Whole-container failures must not become per-record retries.
+    }
+    auto opened=take(std::move(attempt));
+    if(opened.identity()!=state.expected->entries) changed_source(id,failure,"Archive listing differs from its snapshot");
+    auto digest=take(opened.sha256(stop));
+    if((state.expected->sha256 && digest!=*state.expected->sha256) || (state.sha256 && digest!=*state.sha256))
+      changed_source(id,failure,"Archive SHA-256 changed between passes");
+    state.sha256=digest; current=std::move(opened);
+  }
+  return *current;
+}
+NewSource preflight_archive(std::shared_ptr<ArchivePassState> state,std::size_t index,std::string_view name,
+                             std::stop_token stop,const std::string& id,std::optional<SourceFailure>* failure) {
+  auto& zip=archive_pass(*state,false,stop,id,failure);
+  if(index>=zip.entries().size()) changed_source(id,failure,"Archive index changed");
+  auto stream=read_archive(zip.open_entry(index),id,failure);
+  auto hash=take(asset_zip::Sha256::create());
+  std::array<std::byte,65536> bytes{}; std::vector<std::byte> sample;
+  U64 size=0;
+  for(;;) {
+    check_stop(stop);
+    const auto n=read_archive(stream.read(bytes),id,failure); if(!n) break;
+    if(size==0) sample.assign(bytes.begin(),bytes.begin()+static_cast<std::ptrdiff_t>(n));
+    take(hash.update(std::span(bytes).first(n))); size+=n;
+  }
+  NewSource source{state->expected->path,size,hex(take(hash.finish())),take(asset_zip::choose_method(name,sample)),stop,{},id,failure};
+  source.archive=std::move(state); source.archive_index=index;
+  return source;
+}
 NewSource preflight(const Path& path, std::string_view name, std::stop_token stop = {},
                     const std::string& id = {}, std::optional<SourceFailure>* failure = nullptr) {
   check_stop(stop);
@@ -893,7 +945,11 @@ NewSource preflight(const Path& path, std::string_view name, std::stop_token sto
   }
   return {path,source->size(),hex(take(hash.finish())),take(asset_zip::choose_method(name,sample)),stop,{},id,failure};
 }
-struct Plan { std::stop_token stop; std::optional<SourceFailure>* failure = nullptr; std::map<std::string,NewSource> sources; std::set<std::string> removed_ids; Json changes = Json::array(); };
+struct Plan {
+  std::stop_token stop; std::optional<SourceFailure>* failure = nullptr;
+  std::map<std::string,NewSource> sources; std::set<std::string> removed_ids; Json changes = Json::array();
+  std::map<Path,std::shared_ptr<ArchivePassState>> archives;
+};
 Json& file(Json& j, const std::string& id) {
   if (j.contains("files")) for (auto& f : j["files"]) if (string(f,"id") == id) return f;
   fail(Errc::invalid_argument,"am.repo.invalid_operation","Unknown FileID: " + id);
@@ -930,7 +986,26 @@ void add_files(Json& j, Plan& plan, const AddFiles& add, const std::set<std::str
     if (f.origin_kind != "imported" && f.origin_kind != "user_added") fail(Errc::invalid_argument,"am.repo.invalid_operation","AddFiles origin must be imported or user_added");
     const auto id = identifier(f.file_id), path = "content/" + input_id + "/" + f.path;
     if (!ids.insert(id).second) fail(Errc::conflict,"am.repo.path_collision","FileID already exists: " + id);
-    auto source = preflight(f.source,path,plan.stop,id,plan.failure);
+    auto source = [&] {
+      if(!f.archive_entry) return preflight(f.source,path,plan.stop,id,plan.failure);
+      if(!f.source.empty() || !f.archive_entry->archive)
+        fail(Errc::invalid_argument,"am.repo.invalid_operation","Archive input requires exactly one content source");
+      const auto& expected=f.archive_entry->archive;
+      const auto key=std::filesystem::absolute(expected->path).lexically_normal();
+      auto& state=plan.archives[key];
+      if(!state) {
+        state=std::make_shared<ArchivePassState>(); state->expected=expected;
+        if(expected->job) state->job=expected->job;
+        else {
+          archive::ZipInputHooks hooks;
+          hooks.cancelled=[stop=plan.stop] { return stop.stop_requested(); };
+          state->job=std::make_shared<archive::ZipInputJob>(archive::ZipInputLimits{},std::move(hooks));
+        }
+      } else if(state->expected.get()!=expected.get() &&
+          (state->expected->entries!=expected->entries || state->expected->sha256!=expected->sha256))
+        changed_source(id,plan.failure,"Conflicting archive snapshots in one request");
+      return preflight_archive(state,f.archive_entry->index,path,plan.stop,id,plan.failure);
+    }();
     source.expected_sha256 = f.expected_sha256;
     if (f.expected_sha256 && source.sha != *f.expected_sha256)
       changed_source(id,plan.failure,"Source differs from expected SHA-256");
@@ -1070,6 +1145,22 @@ void write_text(asset_zip::ZipWriter& writer, const std::string& text) {
 }
 void write_source(asset_zip::ZipWriter& writer, const std::string& name, const NewSource& fresh) {
   check_stop(fresh.stop);
+  if(fresh.archive) {
+    auto& zip=archive_pass(*fresh.archive,true,fresh.stop,fresh.file_id,fresh.failure);
+    auto stream=read_archive(zip.open_entry(fresh.archive_index),fresh.file_id,fresh.failure);
+    asset_zip::EntryOptions options; options.uncompressed_size=fresh.size; options.method=fresh.method;
+    auto entry=take(writer.begin_entry(name,options)); std::array<std::byte,65536> bytes{};
+    for(;;) {
+      check_stop(fresh.stop);
+      const auto n=read_archive(stream.read(bytes),fresh.file_id,fresh.failure); if(!n) break;
+      take(entry.write(std::span(bytes).first(n)));
+    }
+    const auto actual=take(entry.finish());
+    if(actual.uncompressed_size!=fresh.size || !actual.sha256 || hex(*actual.sha256)!=fresh.sha ||
+        (fresh.expected_sha256 && hex(*actual.sha256)!=*fresh.expected_sha256))
+      changed_source(fresh.file_id,fresh.failure,"Archive record SHA-256 changed between passes");
+    return;
+  }
   auto source = read_source(asset_zip::file_source(fresh.path),fresh.file_id,fresh.failure);
   if (source->size() != fresh.size) changed_source(fresh.file_id,fresh.failure,"Source size changed between passes");
   asset_zip::EntryOptions options; options.uncompressed_size = fresh.size; options.method = fresh.method;
@@ -1268,6 +1359,8 @@ template<class Repo> ChangeResult commit_update(Repo& repo, const AssetRef& ref,
   const auto estimated = copy ? estimate(copy->source.manifest().known(),output,plan,&copy->source.archive(),allowed)
                               : estimate(doc.known(),output,plan,old ? &old->archive() : nullptr,allowed);
   if (estimated > repo.capabilities.max_file_size) fail(Errc::insufficient_space,"am.repo.file_too_large","Estimate exceeds storage maximum file size");
+  // Release preflight handles so the packing pass reopens and checks a fresh snapshot.
+  for(auto& [path,state]:plan.archives) { (void)path; state->preflight.reset(); }
   if (repo.options.test_hooks.after_preflight) repo.options.test_hooks.after_preflight();
   asset_zip::ReadBudget budget(repo.options.read_budget); commit::CommitRequest request(budget);
   request.library_root = repo.root; request.asset_id = ref.asset_id; request.target_path = repo.path(ref); request.op_id = op;

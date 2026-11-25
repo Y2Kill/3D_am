@@ -53,9 +53,10 @@ class ImportScanCli(unittest.TestCase):
         self.assertEqual(summary['completeness'], 'complete')
         self.assertEqual(self.snapshot(), before)
         plan = json.loads(self.output.read_text('utf8'))
+        self.assertEqual(plan['version'], 2)
         sys.path.insert(0, str(CONFIG.pylib))
         import jsonschema
-        schema = json.loads((CONFIG.source / 'schemas/import-plan.v1.schema.json').read_text('utf8'))
+        schema = json.loads((CONFIG.source / 'schemas/import-plan.v2.schema.json').read_text('utf8'))
         jsonschema.Draft202012Validator(schema).validate(plan)
         self.assertEqual(list(self.profile.iterdir()), [])
         self.output.unlink()

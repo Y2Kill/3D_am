@@ -71,6 +71,43 @@ TEST(ImportPlanView, ExactIntegerLimitsAreValidatedByParsePlan) {
   n["size"] = "18446744073709551616";
   EXPECT_FALSE(imp::parse_plan(imp::serialize_plan(p)));
 }
+TEST(ImportPlanView, VersionTwoRetainsLimitsAndArchiveReferencesAndVersionOneStillReads) {
+  RecordProperty("req","SC-1|K-6|ADR-0038");
+  auto plan=fixture();
+  auto& j=plan.value;
+  j["version"]=2;
+  j["profile"]["limits"]={{"max_entries","100000"},{"max_unpacked_bytes","18446744073709551615"},
+    {"max_ratio",200},{"max_seconds_per_container","3600"},{"max_temp_bytes","107374182400"}};
+  const std::string node=j["nodes"][1]["id"];
+  j["nodes"][1]["detected"]="archive.zip";
+  j["archives"]=imp::PlanJson::array({{{"node",node},{"container","zip"},{"status","listed"},{"entry_count",1},
+    {"name_encodings",imp::PlanJson::array({"utf-8(valid)"})},{"zip64",false},{"comment_length",0},{"encrypted_entries",0},{"unsupported_entries",0}}});
+  j["archive_entries"]=imp::PlanJson::array({{{"id","a1"},{"archive",node},{"index",0},{"path","part.bin"},
+    {"path_raw","706172742e62696e"},{"name_encoding","utf-8(valid)"},{"encoding_exact",true},{"kind","file"},
+    {"size","3"},{"compressed_size","3"},{"crc32","00000000"},{"method",0},{"encrypted",false},{"detected","unknown"},{"status","available"}}});
+  j["candidates"][0]["inputs"].push_back({{"id","archive-input"},{"kind","archive"},{"objects",imp::PlanJson::array({{{"node",node}}})}});
+  j["candidates"][0]["entries"].push_back({{"archive_entry","a1"},{"decision","include"}});
+  auto view=imp::parse_plan_view(imp::serialize_plan(plan));
+  ASSERT_TRUE(view)<<am::to_log_string(view.error());
+  EXPECT_EQ(view->version(),2u); ASSERT_TRUE(view->limits());
+  EXPECT_EQ(view->limits()->max_unpacked_bytes,UINT64_MAX);
+  ASSERT_EQ(view->archives().size(),1u); ASSERT_EQ(view->archive_entries().size(),1u);
+  EXPECT_EQ(view->archive_entries()[0].raw_path,"part.bin");
+  EXPECT_EQ(view->candidates()[0].entries.back().archive_entry,0u);
+  const auto reject=[&](imp::ImportPlan broken,std::string pointer) {
+    const auto bad=imp::parse_plan(imp::serialize_plan(broken));
+    EXPECT_FALSE(bad);
+    if(!bad) { EXPECT_EQ(bad.error().ctx.detail,pointer); }
+  };
+  auto bad=plan; bad.value["archive_entries"][0]["archive"]="missing"; reject(bad,"/archive_entries/0/archive");
+  bad=plan; bad.value["candidates"][0]["entries"].back()["archive_entry"]="missing"; reject(bad,"/candidates/0/entries/1/archive_entry");
+  bad=plan; bad.value["archive_entries"][0]["path_raw"]="AB"; reject(bad,"/archive_entries/0/path_raw");
+  bad=plan; bad.value["profile"]["limits"]["max_entries"]="18446744073709551616"; reject(bad,"/profile/limits/max_entries");
+  auto legacy=fixture(); legacy.value["version"]=1; legacy.value.erase("archives"); legacy.value.erase("archive_entries");
+  legacy.value["profile"].erase("limits");
+  legacy.value["profile"]["not_applied"]=imp::PlanJson::array();
+  ASSERT_TRUE(imp::parse_plan_view(imp::serialize_plan(legacy)));
+}
 TEST(ImportPlanView, RawFieldLocationsMatchSchemaAndLongHexUsesLinearValidation) {
   RecordProperty("req", "SC-1|ADR-0012");
   const auto file = std::filesystem::path(AM_MANIFEST_SCHEMA).parent_path() / "import-plan.v1.schema.json";
