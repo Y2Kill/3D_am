@@ -75,9 +75,8 @@ TempArea::TempArea(const std::filesystem::path& library)
   : path(library/".am"/".am-tmp"/"import"/Uuid::v4().to_string()) {}
 TempArea::~TempArea() {
   std::error_code ignored;
+  // The shared parent stays: a concurrent scan or attempt may be creating its own area in it.
   std::filesystem::remove_all(path,ignored);
-  // Succeeds only when no other scan or attempt still uses the shared parent.
-  std::filesystem::remove(path.parent_path(),ignored);
 }
 bool specialized_zip_hint(std::string_view path,std::string_view detected) {
   if(detected!="archive.zip") return false;
@@ -128,6 +127,11 @@ struct Inventory {
   void list(archive::ZipInput& zip,std::size_t at,const std::string& key,const std::string& top,
             std::vector<std::string> ancestors,std::uint64_t depth);
 };
+// Digests of the enclosing archives; the top-level one is read only when a nested ZIP appears.
+std::vector<std::string> lineage_of(archive::ZipInput& zip,std::vector<std::string> ancestors,std::uint64_t depth) {
+  if(depth==1 && ancestors.empty()) ancestors.push_back(detail::take(zip.sha256()));
+  return ancestors;
+}
 void Inventory::list(archive::ZipInput& zip,std::size_t at,const std::string& key,const std::string& top,
                      std::vector<std::string> ancestors,std::uint64_t depth) {
   {
@@ -193,6 +197,8 @@ void Inventory::list(archive::ZipInput& zip,std::size_t at,const std::string& ke
           decision["confidence"]="probable"; decision["explanation_id"]="specialized_container_unverified";
         } else if(entry["detected"]!="archive.zip") {
           decision["decision"]="ask"; decision["explanation_id"]="nested_archive_expand_unsupported";
+        } else if(decision.contains("rule_id")) {
+          // A probable exclusion rule asks first; its explanation stays visible.
         } else if(action=="preserve") {
           decision["explanation_id"]="nested_archive_profile_preserve";
         } else if(action=="exclude") {
@@ -211,6 +217,7 @@ void Inventory::list(archive::ZipInput& zip,std::size_t at,const std::string& ke
               else problem=hashed.error();
             } else problem=opened.error();
             if(problem && problem->code==Errc::cancelled) throw *problem;
+            if(digest) ancestors=lineage_of(zip,std::move(ancestors),depth);
             if(digest && std::find(ancestors.begin(),ancestors.end(),*digest)!=ancestors.end()) {
               decision["explanation_id"]="nested_archive_cycle"; reasons[top].insert("nested_archive_cycle");
             } else {
@@ -292,16 +299,7 @@ Result<void> inventory_zip_entries(ImportPlan& plan,const ScanRequest& request,s
       const auto at=plan.value["archives"].size()-1;
       summaries[node.id]=at;
       if(!zip) inv.failed(at,opened.error());
-      else {
-        std::vector<std::string> lineage;
-        // The top-level digest is needed only to detect a nested copy of itself.
-        if(std::any_of(zip->entries().begin(),zip->entries().end(),[](const auto& e){return e.info.kind==asset_zip::EntryKind::regular;}) && inv.action!="preserve" && inv.action!="exclude") {
-          auto digest=zip->sha256();
-          if(digest) lineage.push_back(*digest);
-          else if(digest.error().code==Errc::cancelled) return digest.error();
-        }
-        inv.list(*zip,at,node.id,node.id,std::move(lineage),1);
-      }
+      else inv.list(*zip,at,node.id,node.id,{},1);
       const auto& recorded=plan.value["archives"][at];
       if(recorded["status"]!="listed") plan.value["scan"]["completeness"]="incomplete";
       if(recorded["status"]=="limit_exceeded") inv.hit(job->exceeded_limit());

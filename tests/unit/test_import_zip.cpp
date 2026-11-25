@@ -113,7 +113,10 @@ class ImportZipRun : public testing::Test {
     return result;
   }
   void clean(bool empty=false) {
-    const auto tmp=library/".am/.am-tmp"; EXPECT_TRUE(!fs::exists(tmp) || fs::is_empty(tmp));
+    const auto tmp=library/".am/.am-tmp";
+    // T-032: the shared parent of temporary areas may remain, but it must be empty.
+    if(fs::exists(tmp/"import")) EXPECT_TRUE(fs::is_empty(tmp/"import"));
+    if(fs::exists(tmp)) for(const auto& item:fs::directory_iterator(tmp)) EXPECT_EQ(item.path().filename(),"import");
     if(empty) {
       EXPECT_TRUE(take(catalog->indexer().list()).empty());
       EXPECT_TRUE(take(take(am::db::StateJournal::open(library))->list()).empty());
@@ -819,7 +822,7 @@ TEST_F(ImportZipRun, NestedArchivesExpandUnderTheirStemAndRecordExtractProvenanc
   r.profile=take(am::application::load_import_profile()); r.library=library;
   plan=take(am::import::scan(r));
   ASSERT_EQ(plan.value["archives"].size(),3u);
-  EXPECT_FALSE(fs::exists(library/".am/.am-tmp/import"));
+  EXPECT_EQ(files_in(library/".am/.am-tmp"),0u);
   EXPECT_EQ(plan.value["archives"][2]["access"],"temp");
   include();
   const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created") << row.dump();

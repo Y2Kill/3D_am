@@ -67,12 +67,11 @@ ZIP читается с конца (центральный каталог), по
 План v2 опубликован в репозитории и не меняется, его `additionalProperties: false` не допускает новых полей. Поэтому вводится версия 3 (`schemas/import-plan.v3.schema.json`), а строка в `docs/specifications/versioning.md` дополняется.
 
 - `archives[]`:
-  - новое обязательное поле `id`, уникальное в плане;
-  - источник — `oneOf`: `{node}` для архива файловой системы или `{entry}` (ID записи `archive_entries[]` родителя) для вложенного;
+  - источник — `oneOf`: `{node}` для архива файловой системы или `{entry}` (ID записи `archive_entries[]` родителя) для вложенного. Ключ архива — этот `node` или `entry`, отдельного поля `id` нет (уточнение при реализации 32a: идентификаторы узлов и записей не пересекаются, а T-031 уже ссылался на архив по узлу);
   - `depth` — целое ≥ 1;
   - `sha256` обязателен для перечисленного вложенного архива;
   - `access`: `range` или `temp` — только для вложенного.
-- `archive_entries[].archive` ссылается на `archives[].id`.
+- `archive_entries[].archive` ссылается на ключ архива (`node` или `entry`). Родитель стоит в `archives[]` раньше вложенного.
 - Перечень решений дополняется значением `expand`, причины — `nested_archive_depth_limit`, `nested_archive_cycle`, `nested_archive_temp_unavailable`, `specialized_container_verified`.
 - `profile.limits` содержит `max_depth` в той же форме, что прочие лимиты. `limits_hit` дополняется `max_depth` и `max_temp_bytes`.
 - Скан пишет только v3. Run принимает v1, v2 и v3. План v2 выполняется как в T-031 и не раскрывает вложенные архивы. Неизвестная версия → `plan_invalid`.
