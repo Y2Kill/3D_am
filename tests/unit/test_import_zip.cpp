@@ -942,3 +942,37 @@ TEST_F(ImportZipRun, NestedPrefixCollidingWithADirectoryIsRenamed) {
   EXPECT_EQ(payloads(row),(std::multiset<std::string>{"nested","plain"}));
   clean();
 }
+TEST_F(ImportZipRun, ThreeMfIsVerifiedByItsModelPartThroughNestedAccess) {
+  RecordProperty("req","SC-1|SC-10|K-6");
+  const auto model=blob(zip_test::build({member("[Content_Types].xml","types"),member("3D/3dmodel.model","<model/>")}));
+  const auto bare=blob(zip_test::build({member("[Content_Types].xml","types"),member("Metadata/thumbnail.png","png")}));
+  const auto target=fixture({member("a.3mf",model),member("b.3mf",model,8),member("e.3mf","PK\x03\x04 broken"),member("c.3mf",bare)});
+  am::import::ScanRequest r; r.roots={target}; r.profile=take(am::application::load_import_profile()); r.library=library;
+  plan=take(am::import::scan(r));
+  EXPECT_EQ(files_in(library/".am/.am-tmp"),0u);
+  const auto& entries=plan.value["candidates"][0]["entries"];
+  for(const auto i:{1,2}) {
+    EXPECT_EQ(entries[i]["decision"],"include") << entries.dump();
+    EXPECT_EQ(entries[i]["confidence"],"certain"); EXPECT_EQ(entries[i]["explanation_id"],"specialized_container_verified");
+  }
+  // Unreadable: the T-031 outcome.
+  EXPECT_EQ(entries[3]["decision"],"include"); EXPECT_EQ(entries[3]["confidence"],"probable");
+  EXPECT_EQ(entries[3]["explanation_id"],"specialized_container_unverified");
+  // Readable but without a model part: listed, asks to keep it as a file or expand it.
+  EXPECT_EQ(entries[4]["decision"],"ask"); EXPECT_EQ(entries[4]["explanation_id"],"specialized_container_unverified");
+  ASSERT_EQ(plan.value["archives"].size(),2u); EXPECT_EQ(plan.value["archives"][1]["depth"],2);
+  // Verified 3MF records are kept as files; no nesting object is written for them.
+  include();
+  const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created") << row.dump();
+  EXPECT_EQ(manifest(row)["inputs"][0]["objects"].size(),1u);
+  clean();
+}
+TEST(ImportZipScan, ThreeMfWithoutTemporaryAreaKeepsTheT031Outcome) {
+  RecordProperty("req","SC-1|SC-10|K-6");
+  const auto bare=blob(zip_test::build({member("x","y")}));
+  const auto plan=scan_zip(install(zip_test::build({member("a.3mf",bare,8),member("b.3mf",bare)}))).value;
+  const auto& entries=plan["candidates"][0]["entries"];
+  // Deflate without a library cannot be read: probable include; Stored is read in place and asks.
+  EXPECT_EQ(entries[1]["decision"],"include"); EXPECT_EQ(entries[1]["confidence"],"probable");
+  EXPECT_EQ(entries[2]["decision"],"ask"); EXPECT_EQ(entries[2]["explanation_id"],"specialized_container_unverified");
+}
