@@ -209,9 +209,9 @@ ZIP читается с конца (центральный каталог), по
 
 | Команда | Итог | Время тестов |
 |---|---|---|
-| `toolsuild_min.cmd --ci` | 148/148 | 34 с |
-| `toolsuild_cli.cmd --ci -LE periodic` | 687/687 | 1680 с |
-| `toolsuild_cli.cmd --offline --ci -LE periodic` | 687/687 | 1850 с |
+| `tools\build_min.cmd --ci` | 148/148 | 34 с |
+| `tools\build_cli.cmd --ci -LE periodic` | 687/687 | 1680 с |
+| `tools\build_cli.cmd --offline --ci -LE periodic` | 687/687 | 1850 с |
 | WSL `tools/build_linux.sh cli --offline --ci -LE periodic` | 684/684 | 2245 с |
 
 ### Приёмка 32a (управляющий, 2026-11-25)
