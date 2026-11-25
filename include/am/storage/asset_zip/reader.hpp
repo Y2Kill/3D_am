@@ -10,6 +10,7 @@
 #include "am/storage/asset_zip/sha256.hpp"
 
 namespace am::asset_zip {
+enum class ZipReadProfile { asset, input };
 struct ZipLimits {
   std::uint64_t max_entries = 100000;                         // hypothesis, O-17
   std::uint64_t max_directory_bytes = 64ULL * 1024 * 1024;    // hypothesis, O-17
@@ -69,7 +70,10 @@ class EntryStream {
 };
 class ZipArchive {
  public:
+  // Existing callers always use the strict asset profile. Only zip_input selects input.
   static Result<ZipArchive> open(std::shared_ptr<const RandomAccessSource> source, const ZipLimits& limits = {});
+  static Result<ZipArchive> open(std::shared_ptr<const RandomAccessSource> source, const ZipLimits& limits,
+                                 ZipReadProfile profile);
   std::span<const EntryInfo> entries() const noexcept;
   const ArchiveSummary& summary() const noexcept;
   Result<ByteRange> raw_range(std::size_t index) const;

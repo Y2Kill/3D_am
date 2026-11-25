@@ -54,7 +54,12 @@ bool extras(Bytes data, U64& usize, U64& csize, U64& offset, std::uint32_t& disk
 }
 struct Region { U64 begin, end; };
 struct Parsed { std::vector<EntryInfo> entries; ArchiveSummary summary; };
-Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) {
+Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits, ZipReadProfile profile) {
+  auto metadata_limit = [&](const char* name, const char* detail) {
+    if (profile == ZipReadProfile::input)
+      throw error(Errc::resource_exhausted, std::string("am.archive.limit.")+name, detail);
+    limit(detail);
+  };
   const auto search = find_end(source);
   if (!search.offset) fail(search.signature_seen ? "No EOCD with exact comment boundary" : "EOCD not found");
   const auto end_offset = *search.offset;
@@ -93,8 +98,8 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     if (disk16 != 0 || cd_disk16 != 0 || count_disk16 != count16) unsupported("Multi-disk archive");
   }
   // Check metadata budgets before reserving/reading count-dependent structures.
-  if (count > limits.max_entries || count > std::numeric_limits<std::size_t>::max()) limit("Entry count exceeds hypothesis max_entries");
-  if (cd_size > limits.max_directory_bytes || cd_size > std::numeric_limits<std::size_t>::max()) limit("Directory exceeds hypothesis max_directory_bytes");
+  if (count > limits.max_entries || count > std::numeric_limits<std::size_t>::max()) metadata_limit("max_entries","Entry count exceeds hypothesis max_entries");
+  if (cd_size > limits.max_directory_bytes || cd_size > std::numeric_limits<std::size_t>::max()) metadata_limit("max_directory_bytes","Directory exceeds hypothesis max_directory_bytes");
   const auto cd_end = end_at(cd_offset, cd_size, source.size());
   if (cd_end > metadata_begin || count > cd_size / 46) fail("Central directory boundary/count is inconsistent");
   parsed.summary = {count, cd_offset, cd_size, 0, zip64, parsed.summary.comment_length};
@@ -107,7 +112,7 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     const auto header = Bytes(directory).subspan(cursor, 46);
     if (u32(header, 0) != central_sig) fail("Invalid central directory signature");
     const auto name_length = u16(header, 28), extra_length = u16(header, 30), comment_length = u16(header, 32);
-    if (name_length > limits.max_name_bytes) limit("Entry name exceeds hypothesis max_name_bytes");
+    if (name_length > limits.max_name_bytes) metadata_limit("max_name_bytes","Entry name exceeds hypothesis max_name_bytes");
     const auto variable_length = static_cast<std::size_t>(name_length) + extra_length + comment_length;
     cursor += 46;
     if (variable_length > directory.size() - cursor) fail("Central directory variable fields exceed directory");
@@ -125,7 +130,7 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     std::uint32_t start_disk = u16(header, 34);
     entry.has_zip64 = extras(extra, entry.uncompressed_size, entry.compressed_size, entry.local_offset, start_disk);
     if (start_disk != 0) unsupported("Entry starts on another disk");
-    if (entry.uncompressed_size > limits.max_entry_bytes) limit("Entry size exceeds hypothesis max_entry_bytes");
+    if (entry.uncompressed_size > limits.max_entry_bytes) metadata_limit("max_entry_bytes","Entry size exceeds hypothesis max_entry_bytes");
     entry.encrypted = (entry.flags & encryption_flags) != 0 || entry.method == 99;
     entry.data_descriptor = (entry.flags & 8) != 0; entry.utf8_flag = (entry.flags & 0x800) != 0;
     if (entry.utf8_flag && unicode::is_valid_utf8(entry.raw_name)) entry.utf8_name = entry.raw_name;
@@ -145,7 +150,8 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     if (parsed.entries[order[i - 1]].local_offset == parsed.entries[order[i]].local_offset) overlap("Entries share one local header");
   std::set<std::string_view> names;
   for (const auto& entry : parsed.entries)
-    if (!names.insert(entry.raw_name).second) throw error(Errc::corrupt_data, "am.zip.duplicate_name", entry_detail(entry));
+    if (!names.insert(entry.raw_name).second && profile == ZipReadProfile::asset)
+      throw error(Errc::corrupt_data, "am.zip.duplicate_name", entry_detail(entry));
   for (std::size_t rank = 0; rank < order.size(); ++rank) {
     auto& entry = parsed.entries[order[rank]];
     const auto boundary = rank + 1 < order.size() ? parsed.entries[order[rank + 1]].local_offset : cd_offset;
@@ -154,7 +160,7 @@ Parsed parse_archive(const RandomAccessSource& source, const ZipLimits& limits) 
     const auto local = bytes(source, entry.local_offset, 30);
     if (u32(local, 0) != local_sig) fail("Invalid local header signature: " + entry_detail(entry));
     const auto name_length = u16(local, 26), extra_length = u16(local, 28);
-    if (name_length > limits.max_name_bytes) limit("Local name exceeds hypothesis max_name_bytes");
+    if (name_length > limits.max_name_bytes) metadata_limit("max_name_bytes","Local name exceeds hypothesis max_name_bytes");
     const auto variable_length = static_cast<std::size_t>(name_length) + extra_length;
     entry.data_offset = end_at(entry.local_offset, 30 + variable_length, source.size());
     const auto data_end = end_at(entry.data_offset, entry.compressed_size, source.size());
@@ -209,11 +215,15 @@ struct ZipArchive::Impl {
 };
 ZipArchive::ZipArchive(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
 Result<ZipArchive> ZipArchive::open(std::shared_ptr<const RandomAccessSource> source, const ZipLimits& limits) {
+  return open(std::move(source),limits,ZipReadProfile::asset);
+}
+Result<ZipArchive> ZipArchive::open(std::shared_ptr<const RandomAccessSource> source, const ZipLimits& limits,
+                                    ZipReadProfile profile) {
   try {
     if (!source) return error(Errc::io_error, "am.zip.io_error", "Null ZIP source");
     auto impl = std::make_shared<Impl>();
     impl->source = std::move(source); impl->limits = limits;
-    impl->parsed = parse_archive(*impl->source, limits);
+    impl->parsed = parse_archive(*impl->source, limits, profile);
     return ZipArchive(std::move(impl));
   } catch (const Error& e) { return e; }
   catch (const std::bad_alloc&) { return oom(); }

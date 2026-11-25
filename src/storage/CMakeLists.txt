@@ -20,7 +20,7 @@ if(AM_WITH_CONTAINER)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/schemas/sql/state.sql")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/state_schema.hpp"
     CONTENT "#pragma once\ninline constexpr const char state_schema_sql[] = R\"AMSQL(${AM_STATE_SCHEMA_SQL})AMSQL\";\n")
-  list(APPEND AM_STORAGE_SOURCES asset_zip/source.cpp asset_zip/sha256.cpp
+  list(APPEND AM_STORAGE_SOURCES archive/zip_input.cpp asset_zip/source.cpp asset_zip/sha256.cpp
     asset_zip/reader.cpp asset_zip/profile.cpp asset_zip/sink.cpp
     asset_zip/writer.cpp asset_zip/compression_policy.cpp db/state_journal.cpp db/sqlite.cpp db/index_store.cpp
     db/job_store.cpp db/operation_log.cpp commit/protocol.cpp repository/repository.cpp library/library.cpp)
