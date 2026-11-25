@@ -64,13 +64,24 @@ PlanEntry archive_entry_decision(const PlanView& p,const PlanCandidate& c,std::s
   if(at==c.archive_decisions.end()) throw error("am.import.plan_invalid");
   return c.entries.at(at->second);
 }
-ZipExecution zip_execution(const PlanView& p,const PlanCandidate& c,const RunHooks& hooks,std::stop_token stop) {
+ZipExecution zip_execution(const PlanView& p,const PlanCandidate& c,const RunHooks& hooks,std::stop_token stop,
+                           const std::filesystem::path& library) {
   ZipExecution out;
+  std::set<std::size_t> active;
+  bool temporary=false;
   for(std::size_t ai=0;ai<p.archives().size();++ai) {
-    const auto node=p.archives()[ai].node;
-    bool member=false;
-    for(const auto& in:c.inputs) for(const auto& ref:in.objects) if(ref.node==node) member=true;
-    if(!member) continue;
+    const auto& archive=p.archives()[ai];
+    if(archive.parent_entry) {
+      // Parents precede nested archives, so the parent's activity is already known.
+      const auto parent=p.archive_entries().at(*archive.parent_entry).archive;
+      if(!active.contains(parent) || archive_entry_decision(p,c,*archive.parent_entry).decision!=EntryDecision::expand) continue;
+      temporary=temporary || archive.temp;
+    } else {
+      bool member=false;
+      for(const auto& in:c.inputs) for(const auto& ref:in.objects) if(ref.node==archive.node) member=true;
+      if(!member) continue;
+    }
+    active.insert(ai);
     out.archives.push_back(ai);
     for(const auto ei:p.archives()[ai].entries) {
       out.ids[ei]={{"entry_id",uuid()},{"file_id",uuid()},{"object_id",uuid()}};
@@ -85,10 +96,12 @@ ZipExecution zip_execution(const PlanView& p,const PlanCandidate& c,const RunHoo
     io.clock=hooks.archive_clock; io.before_read=hooks.before_archive_read;
     out.job=std::make_shared<archive::ZipInputJob>(archive_limits(*p.limits()),std::move(io));
   }
+  if(temporary) out.temp=std::make_shared<TempArea>(library);
   return out;
 }
 Result<void> prepare_zip_execution(ZipExecution& out,const PlanView& p,const PlanCandidate& c,std::stop_token stop) {
   try {
+    std::map<std::size_t,archive::ZipInput> opened;  // verified readers, parents for nested archives
     for(const auto ai:out.archives) {
       const auto& a=p.archives().at(ai); const auto& n=p.nodes().at(a.node);
       if(archive_node_decision(c,a.node).decision!=EntryDecision::include) continue;
@@ -98,11 +111,15 @@ Result<void> prepare_zip_execution(ZipExecution& out,const PlanView& p,const Pla
             .caused_by(error(a.problem?a.problem->message_id:"am.import.archive.limit_exceeded",{},Errc::resource_exhausted));
         throw error("am.import.run.archive_unreadable",n.id,Errc::corrupt_data);
       }
-      auto opened=archive::ZipInput::open(take(source_path(p,n)),out.job);
-      if(!opened && (opened.error().code==Errc::corrupt_data || opened.error().code==Errc::not_found ||
-          (opened.error().code==Errc::unsupported && opened.error().message_id!="am.import.archive.limit_exceeded")))
-        throw error("am.import.source_changed",n.id,Errc::conflict).caused_by(opened.error());
-      auto zip=take(std::move(opened));
+      const auto* record=a.parent_entry?&p.archive_entries().at(*a.parent_entry):nullptr;
+      if(record && !opened.contains(record->archive)) continue;
+      auto attempt=record ? opened.at(record->archive).open_nested(record->index,out.temp?out.temp->path:std::filesystem::path{},stop)
+                          : archive::ZipInput::open(take(source_path(p,n)),out.job);
+      if(!attempt && attempt.error().code==Errc::cancelled) return attempt.error();
+      if(!attempt && (attempt.error().code==Errc::corrupt_data || attempt.error().code==Errc::not_found ||
+          (attempt.error().code==Errc::unsupported && attempt.error().message_id!="am.import.archive.limit_exceeded")))
+        throw error("am.import.source_changed",n.id,Errc::conflict).caused_by(attempt.error());
+      auto zip=take(std::move(attempt));
       const auto identities=zip.identity();
       if(identities.size()!=a.entries.size()) throw error("am.import.source_changed",n.id,Errc::conflict);
       for(std::size_t i=0;i<a.entries.size();++i) {
@@ -114,28 +131,52 @@ Result<void> prepare_zip_execution(ZipExecution& out,const PlanView& p,const Pla
           throw error("am.import.run.source_unavailable",e.id,Errc::io_error);
       }
       const auto digest=take(zip.sha256(stop));
-      if((n.sha256 && *n.sha256!=digest) || (out.snapshots.contains(ai) && out.snapshots.at(ai)->sha256!=digest))
+      const auto& planned=record?a.sha256:n.sha256;
+      if((planned && *planned!=digest) || (out.snapshots.contains(ai) && out.snapshots.at(ai)->sha256!=digest))
         throw error("am.import.source_changed",n.id,Errc::conflict);
       auto snapshot=std::make_shared<archive::ZipInputSnapshot>();
-      snapshot->path=take(source_path(p,n)); snapshot->entries=identities; snapshot->sha256=digest; snapshot->job=out.job;
+      snapshot->path=record?zip.label():take(source_path(p,n)); snapshot->entries=identities; snapshot->sha256=digest; snapshot->job=out.job;
+      if(record) {
+        snapshot->parent=out.snapshots.at(record->archive); snapshot->parent_index=record->index;
+        if(out.temp) snapshot->temp_dir=out.temp->path;
+      }
       out.snapshots[ai]=std::move(snapshot);
+      opened.insert_or_assign(ai,std::move(zip));
     }
     return {};
   } catch(const Error& e) { return e; }
 }
 void append_zip_execution(ZipExecution& out,const PlanView& p,const PlanCandidate& c,const J& params,
     J& input,repository::AddFiles& add,paths::ZipPathMapper& mapper,const std::map<std::size_t,std::string>& prefixes) {
+  std::map<std::size_t,std::string> archive_prefix;
+  auto object_of=[&](std::size_t ai) -> std::string {
+    const auto& a=p.archives().at(ai);
+    return a.parent_entry ? out.ids.at(*a.parent_entry).at("object_id").get<std::string>()
+                          : params.at("archives").at(p.nodes().at(a.node).id).get<std::string>();
+  };
   for(const auto ai:out.archives) {
     const auto& a=p.archives().at(ai); const auto& n=p.nodes().at(a.node);
     const auto outer=archive_node_decision(c,a.node);
-    const auto object_id=params.at("archives").at(n.id);
-    auto relative=n.path.empty()?n.name:n.path;
-    if(!c.base_path.empty() && relative.starts_with(c.base_path+"/")) relative.erase(0,c.base_path.size()+1);
-    J object{{"id",object_id},{"kind","archive"},{"container","zip"},{"name",n.name},{"relative_path",relative}};
-    if(n.name_raw) object["name_raw"]={{"base64",base64(n.name_raw->bytes)},{"encoding_guess",n.name_raw->encoding}};
-    if(n.size) object["size_bytes"]=std::to_string(*n.size);
-    if(out.snapshots.contains(ai)) object["sha256"]=*out.snapshots.at(ai)->sha256;
-    else if(n.sha256) object["sha256"]=*n.sha256;
+    const auto object_id=object_of(ai);
+    J object;
+    if(a.parent_entry) {
+      // Nested archive expanded from a record (T-032 p. 6): no relative_path, linked to its parent record.
+      const auto& record=p.archive_entries().at(*a.parent_entry);
+      const auto slash=record.path.find_last_of('/');
+      object={{"id",object_id},{"kind","archive"},{"container","zip"},{"name",slash==std::string::npos?record.path:record.path.substr(slash+1)},
+        {"size_bytes",std::to_string(record.size)},{"parent_object_id",object_of(record.archive)},
+        {"parent_entry_id",out.ids.at(*a.parent_entry).at("entry_id")},{"nested_action","extract"}};
+      if(out.snapshots.contains(ai)) object["sha256"]=*out.snapshots.at(ai)->sha256;
+      else if(a.sha256) object["sha256"]=*a.sha256;
+    } else {
+      auto relative=n.path.empty()?n.name:n.path;
+      if(!c.base_path.empty() && relative.starts_with(c.base_path+"/")) relative.erase(0,c.base_path.size()+1);
+      object={{"id",object_id},{"kind","archive"},{"container","zip"},{"name",n.name},{"relative_path",relative}};
+      if(n.name_raw) object["name_raw"]={{"base64",base64(n.name_raw->bytes)},{"encoding_guess",n.name_raw->encoding}};
+      if(n.size) object["size_bytes"]=std::to_string(*n.size);
+      if(out.snapshots.contains(ai)) object["sha256"]=*out.snapshots.at(ai)->sha256;
+      else if(n.sha256) object["sha256"]=*n.sha256;
+    }
     std::string encodings;
     std::set<std::string> seen;
     for(const auto ei:a.entries) {
@@ -146,9 +187,18 @@ void append_zip_execution(ZipExecution& out,const PlanView& p,const PlanCandidat
     input["objects"].push_back(std::move(object));
     std::string prefix;
     paths::RenameReason prefix_reason=paths::RenameReason::none;
-    if(outer.decision==EntryDecision::include && prefixes.contains(a.node)) {
+    if(a.parent_entry) {
+      // a/inner.zip expands under a/inner/ inside its parent's placement.
+      const auto& record=p.archive_entries().at(*a.parent_entry);
+      auto stem=record.path;
+      const auto dot=stem.find_last_of('.');
+      if(dot!=std::string::npos && (stem.find_last_of('/')==std::string::npos || dot>stem.find_last_of('/'))) stem.resize(dot);
+      const auto mapped=mapper.map(storage_name(archive_prefix[record.archive]+stem));
+      prefix=mapped.zip_path.substr(mapper.root().size())+"/"; prefix_reason=mapped.reason;
+    } else if(outer.decision==EntryDecision::include && prefixes.contains(a.node)) {
       const auto mapped=mapper.map(storage_name(prefixes.at(a.node))); prefix=mapped.zip_path.substr(mapper.root().size())+"/"; prefix_reason=mapped.reason;
     }
+    archive_prefix[ai]=prefix;
     for(const auto ei:a.entries) {
       const auto& e=p.archive_entries().at(ei); const auto d=archive_entry_decision(p,c,ei);
       auto display=e.path; if(e.kind==NodeKind::directory && display.ends_with('/')) display.pop_back();
@@ -158,6 +208,11 @@ void append_zip_execution(ZipExecution& out,const PlanView& p,const PlanCandidat
       if(e.raw_path!=display || !e.encoding_exact || d.explanation_id=="unsafe_entry_path" || d.explanation_id=="duplicate_entry_name" || d.explanation_id=="case_collision")
         entry["path_raw"]={{"base64",base64(e.raw_path)},{"encoding_guess",e.name_encoding}};
       if(d.decision==EntryDecision::exclude) { entry["result"]="excluded"; entry["exclusion"]=exclusion(d); }
+      else if(d.decision==EntryDecision::expand) {
+        // Container bytes are not stored; its records live under the nested extract object (T-032 p. 6).
+        entry["result"]="excluded";
+        entry["exclusion"]={{"rule","nested_extract"},{"by",d.explanation_id=="nested_archive_profile_expand"?"profile":"user"}};
+      }
       else if(d.decision==EntryDecision::skip || e.kind==NodeKind::symlink || e.kind==NodeKind::other) {
         entry["result"]="not_processed";
         const auto code=e.kind==NodeKind::other?"special_not_materialized":"link_not_followed";

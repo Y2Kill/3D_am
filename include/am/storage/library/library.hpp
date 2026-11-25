@@ -60,6 +60,7 @@ class Library {
   Library(const Library&) = delete;
   Library& operator=(const Library&) = delete;
   const Config& config() const noexcept;
+  const std::filesystem::path& root() const noexcept;
   const StorageCapabilities& capabilities() const noexcept;
   Mode mode() const noexcept;
   const OwnerInfo& owner() const noexcept;

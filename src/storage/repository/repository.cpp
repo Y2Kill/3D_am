@@ -899,7 +899,7 @@ archive::ZipInput& archive_pass(ArchivePassState& state,bool packing,std::stop_t
   auto& current=packing?state.packing:state.preflight;
   if(!current) {
     check_stop(stop);
-    auto attempt=archive::ZipInput::open(state.expected->path,state.job);
+    auto attempt=archive::open_snapshot(*state.expected,state.job,stop);
     if(!attempt) {
       if((state.sha256 || state.expected->sha256) && (attempt.error().code==Errc::corrupt_data || attempt.error().code==Errc::unsupported || attempt.error().code==Errc::not_found))
         changed_source(id,failure,"Archive became unreadable after its snapshot");

@@ -447,8 +447,11 @@ repository::CreateRequest build(Shared& s, const PlanView& p, const PlanCandidat
     input["entries"].push_back(std::move(entry));
   }
   std::map<std::size_t,std::string> prefixes;
-  const bool only_archive=roots.size()==1 && p.archive_for_node(roots.front()).has_value() && archives.archives.size()==1;
+  // Nested archives are placed by append_zip_execution under their parent's prefix.
+  const auto top_level=std::count_if(archives.archives.begin(),archives.archives.end(),[&](auto ai){return !p.archives().at(ai).parent_entry;});
+  const bool only_archive=roots.size()==1 && p.archive_for_node(roots.front()).has_value() && top_level==1;
   if(!only_archive) for(const auto ai:archives.archives) {
+    if(p.archives().at(ai).parent_entry) continue;
     const auto ni=p.archives().at(ai).node; const auto& n=p.nodes().at(ni);
     const auto root=std::find_if(roots.begin(),roots.end(),[&](auto ri){return p.nodes().at(ri).root==n.root;});
     if(root==roots.end()) throw error("am.import.plan_invalid");
@@ -496,7 +499,7 @@ class ImportAsset final : public jobs::JobHandler {
       const auto candidate_id = params.at("candidate_id").get<std::string>();
       const auto& c = candidate(plan, candidate_id);
       row = base_row(plan, c);
-      archives=zip_execution(plan,c,s_->hooks,ctx.stop());
+      archives=zip_execution(plan,c,s_->hooks,ctx.stop(),s_->catalog.library().root());
       limits=plan.limits();
       if(archives.job) {
         row["archives"]=archives.archives.size(); row["archive_entries"]=archives.ids.size();

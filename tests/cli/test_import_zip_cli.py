@@ -87,6 +87,37 @@ class ImportZipCli(unittest.TestCase):
         invalid = self.am('import', 'run', '--plan', self.plan, '--library', self.library, '--json', code=2)
         self.assertEqual(invalid['error']['message_id'], 'am.import.plan_invalid')
 
+    def test_nested_zip_is_expanded_and_recorded_as_extract(self):
+        """T-032: a stored nested ZIP is listed by scan and expanded by run under its stem."""
+        inner = self.work / 'inner.zip'
+        with zipfile.ZipFile(inner, 'w') as archive:
+            archive.writestr('part.stl', b'nested bytes')
+        with zipfile.ZipFile(self.source / 'model.zip', 'w') as archive:
+            archive.write(inner, 'sub/inner.zip', compress_type=zipfile.ZIP_STORED)
+        summary = self.am('import', 'scan', self.source, '--plan', self.plan, '--json')
+        self.assertEqual(summary['archives'], 2)
+        plan = json.loads(self.plan.read_text(encoding='utf8'))
+        self.assertEqual(plan['version'], 3)
+        self.assertEqual(plan['archives'][1]['depth'], 2)
+        self.am('library', 'init', self.library, '--json')
+        if os.name != 'nt':
+            return
+        report = self.am('import', 'run', '--plan', self.plan, '--library', self.library, '--json')
+        self.assertEqual(report['candidates'][0]['status'], 'created')
+        assets = list((self.library / 'assets').rglob('*.zip'))
+        with zipfile.ZipFile(assets[0]) as archive:
+            names = [name for name in archive.namelist() if name.startswith('content/')]
+            self.assertEqual(len(names), 1)
+            self.assertTrue(names[0].endswith('/sub/inner/part.stl'), names)
+            manifest = json.loads(archive.read('manifest.json'))
+        nested = [o for o in manifest['inputs'][0]['objects'] if o.get('nested_action') == 'extract']
+        self.assertEqual(len(nested), 1)
+        self.assertNotIn('relative_path', nested[0])
+        parent = [e for e in manifest['inputs'][0]['entries'] if e['id'] == nested[0]['parent_entry_id']][0]
+        self.assertEqual(parent['result'], 'excluded')
+        self.assertEqual(parent['exclusion']['rule'], 'nested_extract')
+        self.assertNotIn('file_id', parent)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

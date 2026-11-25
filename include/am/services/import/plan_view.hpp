@@ -18,7 +18,7 @@ enum class NodeKind { file, directory, symlink, other };
 enum class InputKind { file, directory, archive, multivolume_archive };
 enum class CandidateKind { new_asset, ready_asset };
 enum class CandidateAction { import, skip, ask };
-enum class EntryDecision { include, exclude, ask, skip };
+enum class EntryDecision { include, exclude, ask, skip, expand };
 enum class ImportMode { strict, partial };
 struct RawBytes {
   std::string bytes, encoding;
@@ -51,10 +51,16 @@ struct PlanEntry {
 struct PlanLimits {
   std::uint64_t max_entries=0, max_unpacked_bytes=0, max_seconds_per_container=0, max_temp_bytes=0;
   double max_ratio=0;
+  std::uint64_t max_depth=0; // 0: absent before plan v3, the unconditional ceiling applies.
 };
 enum class PlanArchiveStatus { listed, unreadable, limit_exceeded };
 struct PlanArchive {
+  // For a nested archive (plan v3) `node` is its top-level filesystem archive.
   std::size_t node=0;
+  std::optional<std::size_t> parent_entry;  // archive_entries index of the containing record
+  std::uint64_t depth=1;
+  std::optional<std::string> sha256;
+  bool temp=false;  // access = temp: materialized in the library's managed temporary area
   PlanArchiveStatus status=PlanArchiveStatus::listed;
   std::uint64_t entry_count=0, comment_length=0, encrypted_entries=0, unsupported_entries=0;
   bool zip64=false;
@@ -133,6 +139,11 @@ class PlanView {
     const auto at=archive_by_node_.find(node);
     return at==archive_by_node_.end()?std::nullopt:std::optional<std::size_t>{at->second};
   }
+  // Nested archive listed from the given archive_entries index (plan v3).
+  std::optional<std::size_t> archive_for_entry(std::size_t entry) const noexcept {
+    const auto at=archive_by_entry_.find(entry);
+    return at==archive_by_entry_.end()?std::nullopt:std::optional<std::size_t>{at->second};
+  }
 
  private:
   PlanView() = default;
@@ -145,7 +156,7 @@ class PlanView {
   std::optional<PlanLimits> limits_;
   std::vector<PlanArchive> archives_;
   std::vector<PlanArchiveEntry> archive_entries_;
-  std::map<std::size_t,std::size_t> archive_by_node_;
+  std::map<std::size_t,std::size_t> archive_by_node_, archive_by_entry_;
   friend Result<PlanView> parse_plan_view(std::string_view);
 };
 // The only builder validates exact input bytes through parse_plan first.

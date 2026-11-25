@@ -871,13 +871,12 @@ Result<ImportPlan> scan(const ScanRequest& request) {
     }
     for (auto& c : candidates) output.push_back(std::move(c.value));
     std::vector<std::string> not_applied;
-    for (const auto* key : {"nested", "previews", "groups"})
+    for (const auto* key : {"previews", "groups"})
       if (request.profile.settings.contains(key)) not_applied.push_back(key);
-    not_applied.push_back("limits.max_temp_bytes");
     const auto limits=snapshot_import_limits(request.profile);
     J value = {
         {"format", "am-import-plan"},
-        {"version", 2},
+        {"version", 3},
         {"created_at", time_text(request.hooks.clock ? request.hooks.clock() : std::chrono::system_clock::now())},
         {"generator", {{"name", "am"}, {"version", kAppVersion}}},
         {"profile",
@@ -894,7 +893,8 @@ Result<ImportPlan> scan(const ScanRequest& request) {
         {"nodes", std::move(nodes)},
         {"candidates", std::move(output)}};
     value["profile"]["limits"]={{"max_entries",std::to_string(limits.max_entries)},{"max_unpacked_bytes",std::to_string(limits.max_unpacked_bytes)},
-      {"max_ratio",limits.max_ratio},{"max_seconds_per_container",std::to_string(limits.max_seconds_per_container)},{"max_temp_bytes",std::to_string(limits.max_temp_bytes)}};
+      {"max_ratio",limits.max_ratio},{"max_seconds_per_container",std::to_string(limits.max_seconds_per_container)},{"max_temp_bytes",std::to_string(limits.max_temp_bytes)},
+      {"max_depth",std::to_string(limits.max_depth)}};
     value["archives"]=J::array(); value["archive_entries"]=J::array();
     ImportPlan plan{std::move(value)};
     take(inventory_zip_entries(plan,request,scanner.zip_job));

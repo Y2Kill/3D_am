@@ -48,7 +48,7 @@ am::import::ImportPlan scan_zip(const fs::path& path,am::import::ImportProfile p
   const auto valid=am::import::parse_plan_view(am::import::serialize_plan(plan));
   if(!valid) throw std::runtime_error(am::to_log_string(valid.error()));
   fs::create_directories(AM_IMPORT_PLAN_CASES);
-  std::ofstream(fs::path(AM_IMPORT_PLAN_CASES)/"zip-input-v2.json",std::ios::binary)<<am::import::serialize_plan(plan);
+  std::ofstream(fs::path(AM_IMPORT_PLAN_CASES)/"zip-input.json",std::ios::binary)<<am::import::serialize_plan(plan);
   return plan;
 }
 } // namespace
@@ -149,8 +149,10 @@ TEST_F(ImportZipRun, NestedPreserveAndSpecializedDeflateFollowPlanWithoutOpening
   r.name="inner.rar"; r.data=std::string("Rar!\x1a\x07\0",7);
   scan(fixture({a,b,r}));
   auto q=enqueue(); EXPECT_EQ(execute(q)["status"],"deferred");
-  EXPECT_EQ(plan.value["candidates"][0]["entries"][3]["decision"],"ask");
-  include(); plan.value["candidates"][0]["entries"][3]["decision"]="exclude";
+  // T-032: the default profile expands a listed nested ZIP; choosing include preserves it as a file.
+  EXPECT_EQ(plan.value["candidates"][0]["entries"][2]["decision"],"expand");
+  EXPECT_EQ(plan.value["candidates"][0]["entries"][4]["decision"],"ask");
+  include(); plan.value["candidates"][0]["entries"][2]["decision"]="include"; plan.value["candidates"][0]["entries"][4]["decision"]="exclude";
   q=enqueue(); const auto row=execute(q); ASSERT_EQ(row["status"],"created")<<row.dump();
   const auto m=manifest(row); const auto& objects=m["inputs"][0]["objects"];
   ASSERT_EQ(objects.size(),3u); EXPECT_EQ(objects[1]["name"],"inner.zip"); EXPECT_EQ(objects[1]["nested_action"],"preserve");
@@ -375,7 +377,7 @@ TEST(ImportZipPlan, LimitsRawFieldsAndMetadataAreValidatedBeforeEnqueue) {
   value=plan; value["profile"]["limits"]["extra"]="1"; invalid(value,"/profile/limits");
   for(const auto& raw:{"AA","0","xz"}) {value=plan;value["archive_entries"][0]["path_raw"]=raw;invalid(value,"/archive_entries/0/path_raw");}
   value=plan; value["archive_entries"][0]["path_raw"]=std::string(40000,'a'); EXPECT_TRUE(am::import::parse_plan_view(value.dump()));
-  const auto schema_file=fs::path(AM_MANIFEST_SCHEMA).parent_path()/"import-plan.v2.schema.json";
+  const auto schema_file=fs::path(AM_MANIFEST_SCHEMA).parent_path()/"import-plan.v3.schema.json";
   std::ifstream source(schema_file,std::ios::binary);
   const auto schema=am::import::PlanJson::parse(std::string{std::istreambuf_iterator<char>(source),{}});
   std::set<std::string> actual,handled;
@@ -584,7 +586,7 @@ TEST(ImportZipScan, VersionTwoListsAllRecordsAndRetainsOuterArchiveDecision) {
   a.name="folder/part.bin"; a.data="payload"; b.name="other.bin"; b.data="other"; b.method=8;
   const auto path=install(zip_test::build({directory,a,b},true,"comment"));
   const auto plan=scan_zip(path).value;
-  EXPECT_EQ(plan["version"],2); ASSERT_EQ(plan["archives"].size(),1u); ASSERT_EQ(plan["archive_entries"].size(),3u);
+  EXPECT_EQ(plan["version"],3); ASSERT_EQ(plan["archives"].size(),1u); ASSERT_EQ(plan["archive_entries"].size(),3u);
   EXPECT_EQ(plan["archives"][0]["entry_count"],3); EXPECT_TRUE(plan["archives"][0]["zip64"]);
   EXPECT_EQ(plan["archives"][0]["comment_length"],7);
   EXPECT_EQ(plan["archive_entries"][0]["kind"],"directory");
@@ -619,8 +621,9 @@ TEST(ImportZipScan, NestedArchivesAskButSpecializedExtensionAndAppleDoubleFollow
   const auto& entries=plan["candidates"][0]["entries"];
   EXPECT_EQ(entries[1]["decision"],"include");
   EXPECT_EQ(entries[1]["confidence"],"probable"); EXPECT_EQ(entries[1]["explanation_id"],"specialized_container_unverified");
-  EXPECT_EQ(entries[2]["decision"],"ask"); EXPECT_EQ(entries[2]["explanation_id"],"nested_archive_expand_unsupported");
-  EXPECT_EQ(entries[3]["decision"],"exclude"); EXPECT_EQ(entries[3]["rule_id"],"macos.appledouble");
+  // T-032: a nested ZIP is listed and expanded by the default profile; its record follows the parent's.
+  EXPECT_EQ(entries[2]["decision"],"expand"); EXPECT_EQ(entries[2]["explanation_id"],"nested_archive_profile_expand");
+  EXPECT_EQ(entries[4]["decision"],"exclude"); EXPECT_EQ(entries[4]["rule_id"],"macos.appledouble");
   EXPECT_EQ(plan["archive_entries"][0]["detected"],"archive.zip");
 }
 TEST(ImportZipScan, EntryLimitIsExplicitAndCannotBecomeAnOrdinaryUnreadableArchive) {
@@ -685,5 +688,189 @@ TEST(ImportZipRepository, ArchivePassesDistinguishCorruptionReplacementDestinati
       const auto tmp=root/".am/.am-tmp"; EXPECT_TRUE(!fs::exists(tmp) || fs::is_empty(tmp));
       EXPECT_TRUE(take(take(am::db::StateJournal::open(root))->list()).empty());
     }
+  }
+}
+// T-032: nested ZIP expansion.
+namespace {
+std::string blob(const zip_test::Built& built) { return {reinterpret_cast<const char*>(built.bytes.data()),built.bytes.size()}; }
+zip_test::Entry member(std::string name,std::string data,std::uint16_t method=0) {
+  zip_test::Entry e; e.name=std::move(name); e.data=std::move(data); e.method=method; return e;
+}
+std::size_t files_in(const fs::path& dir) {
+  if(!fs::exists(dir)) return 0;
+  std::size_t n=0; for(const auto& e:fs::recursive_directory_iterator(dir)) n+=e.is_regular_file(); return n;
+}
+fs::path temp_root() { return fs::path(AM_IMPORT_SCAN_ROOT)/"nested-temp"/am::Uuid::v4().to_string(); }
+} // namespace
+TEST(ZipInputNested, StoredIsReadInPlaceAndCompressedUsesTemporaryFileThatOutlivesNoReader) {
+  RecordProperty("req","SC-1|K-6|NFR-14.4.3");
+  const auto inner=blob(zip_test::build({member("x","hello")}));
+  const auto path=install(zip_test::build({member("stored.zip",inner),member("deflated.zip",inner,8)}));
+  auto outer=take(input::ZipInput::open(path,job()));
+  auto stored=take(outer.open_nested(0,{}));
+  EXPECT_FALSE(stored.temporary()); EXPECT_EQ(stored.depth(),2u); EXPECT_EQ(read(stored,0),"hello");
+  const auto refused=outer.open_nested(1,{});
+  ASSERT_FALSE(refused); EXPECT_EQ(refused.error().message_id,"am.archive.temp_unavailable");
+  const auto temp=temp_root();
+  std::optional<input::ZipInputStream> stream;
+  {
+    auto deflated=take(outer.open_nested(1,temp));
+    EXPECT_TRUE(deflated.temporary()); EXPECT_EQ(files_in(temp),1u); EXPECT_EQ(read(deflated,0),"hello");
+    stream.emplace(take(deflated.open_entry(0)));
+  }
+  EXPECT_EQ(files_in(temp),1u);  // the open stream keeps the file alive
+  stream.reset();
+  EXPECT_EQ(files_in(temp),0u);
+}
+TEST(ZipInputNested, DepthAndTemporaryBytesAreChargedToTheSharedJob) {
+  RecordProperty("req","SC-1|K-6|NFR-14.4.3");
+  const auto level3=blob(zip_test::build({member("x","deep")}));
+  const auto level2=blob(zip_test::build({member("c.zip",level3)}));
+  const auto path=install(zip_test::build({member("b.zip",level2)}));
+  input::ZipInputLimits limits; limits.max_depth=2;
+  auto shared=job(limits);
+  auto outer=take(input::ZipInput::open(path,shared));
+  auto second=take(outer.open_nested(0,{}));
+  const auto third=second.open_nested(0,{});
+  ASSERT_FALSE(third); EXPECT_EQ(third.error().message_id,"am.import.archive.limit_exceeded");
+  EXPECT_EQ(shared->exceeded_limit(),"max_depth");
+  input::ZipInputLimits wide; wide.max_depth=20;
+  EXPECT_EQ(job(wide)->limits().max_depth,input::unconditional_max_depth);
+  // Peak temporary bytes: exactly the unpacked size fits, one byte less does not.
+  const auto compressed=install(zip_test::build({member("d.zip",level2,8)}));
+  for(const auto extra:{0,-1}) {
+    input::ZipInputLimits l; l.max_temp_bytes=level2.size()+extra;
+    auto j=job(l); auto zip=take(input::ZipInput::open(compressed,j));
+    const auto temp=temp_root();
+    const auto nested=zip.open_nested(0,temp);
+    EXPECT_EQ(static_cast<bool>(nested),extra==0);
+    if(extra) EXPECT_EQ(j->exceeded_limit(),"max_temp_bytes");
+    if(!nested) EXPECT_EQ(files_in(temp),0u);
+  }
+}
+TEST(ZipInputNested, SnapshotChainReopensNestedArchives) {
+  RecordProperty("req","SC-1|K-6");
+  const auto inner=blob(zip_test::build({member("x","hello")}));
+  const auto path=install(zip_test::build({member("i.zip",inner,8)}));
+  auto shared=job();
+  auto outer=take(input::ZipInput::open(path,shared));
+  const auto temp=temp_root();
+  auto nested=take(outer.open_nested(0,temp));
+  auto parent=std::make_shared<input::ZipInputSnapshot>(); parent->path=path; parent->entries=outer.identity();
+  input::ZipInputSnapshot child; child.path=nested.label(); child.entries=nested.identity();
+  child.parent=parent; child.parent_index=0; child.temp_dir=temp;
+  auto reopened=take(input::open_snapshot(child,shared));
+  EXPECT_EQ(reopened.identity(),nested.identity()); EXPECT_EQ(take(reopened.sha256()),take(nested.sha256()));
+}
+TEST(ImportZipScan, NestedZipIsListedWithDepthDigestAccessAndVersionThree) {
+  RecordProperty("req","SC-1|K-6");
+  const auto inner=blob(zip_test::build({member("x","hello")}));
+  const auto plan=scan_zip(install(zip_test::build({member("inner.zip",inner)}))).value;
+  EXPECT_EQ(plan["version"],3); EXPECT_EQ(plan["profile"]["limits"]["max_depth"],"3");
+  for(const auto& item:plan["profile"]["not_applied"]) { EXPECT_NE(item,"nested"); EXPECT_NE(item,"limits.max_temp_bytes"); }
+  ASSERT_EQ(plan["archives"].size(),2u);
+  const auto& nested=plan["archives"][1];
+  EXPECT_EQ(nested["entry"],plan["archive_entries"][0]["id"]); EXPECT_EQ(nested["depth"],2); EXPECT_EQ(nested["access"],"range");
+  EXPECT_EQ(nested["status"],"listed"); EXPECT_EQ(nested["sha256"].get<std::string>().size(),64u);
+  EXPECT_EQ(plan["archive_entries"][1]["archive"],plan["archive_entries"][0]["id"]);
+  const auto& entries=plan["candidates"][0]["entries"];
+  EXPECT_EQ(entries[1]["decision"],"expand"); EXPECT_EQ(entries[2]["archive_entry"],plan["archive_entries"][1]["id"]);
+  EXPECT_EQ(plan["scan"]["completeness"],"complete");
+}
+TEST(ImportZipScan, CompressedNestedWithoutLibraryAsksAndDepthLimitIsIncomplete) {
+  RecordProperty("req","SC-1|K-6|NFR-14.4.3");
+  const auto inner=blob(zip_test::build({member("x","hello")}));
+  auto plan=scan_zip(install(zip_test::build({member("inner.zip",inner,8)}))).value;
+  EXPECT_EQ(plan["archives"].size(),1u); EXPECT_EQ(plan["scan"]["completeness"],"incomplete");
+  EXPECT_EQ(plan["candidates"][0]["entries"][1]["explanation_id"],"nested_archive_temp_unavailable");
+  const auto deeper=blob(zip_test::build({member("deep.zip",inner)}));
+  auto profile=take(am::application::load_import_profile()); profile.settings["nested"]["max_depth"]=2;
+  plan=scan_zip(install(zip_test::build({member("mid.zip",deeper)})),profile).value;
+  ASSERT_EQ(plan["archives"].size(),2u); EXPECT_EQ(plan["scan"]["completeness"],"incomplete");
+  const auto& hit=plan["scan"]["limits_hit"]; EXPECT_NE(std::find(hit.begin(),hit.end(),"max_depth"),hit.end());
+  EXPECT_EQ(plan["candidates"][0]["entries"][2]["explanation_id"],"nested_archive_depth_limit");
+  const auto& reasons=plan["candidates"][0]["reasons"];
+  EXPECT_NE(std::find(reasons.begin(),reasons.end(),"nested_archive_depth_limit"),reasons.end());
+}
+TEST(ImportZipScan, ExclusionRulesRunBeforeExpansionAtEveryLevel) {
+  RecordProperty("req","SC-1|K-6|ADR-0011");
+  const auto inner=blob(zip_test::build({member("model.stl","solid"),member(".DS_Store","junk")}));
+  const auto plan=scan_zip(install(zip_test::build({member("inner.zip",inner),member("__MACOSX/._inner.zip",std::string("\0\5\x16\7",4)+inner)}))).value;
+  ASSERT_EQ(plan["archives"].size(),2u);  // the AppleDouble copy is never listed
+  const auto& entries=plan["candidates"][0]["entries"];
+  EXPECT_NE(entries[3]["decision"],"include"); EXPECT_EQ(entries[3]["rule_id"],"macos.ds_store");
+  EXPECT_EQ(entries[4]["decision"],"exclude"); EXPECT_EQ(entries[4]["rule_id"],"macos.appledouble");
+}
+TEST(ImportZipPlan, ExpandRequiresAListedNestedArchive) {
+  RecordProperty("req","SC-1|K-6");
+  const auto inner=blob(zip_test::build({member("x","hello")}));
+  auto plan=scan_zip(install(zip_test::build({member("inner.zip",inner),member("y","plain")})));
+  plan.value["candidates"][0]["entries"][3]["decision"]="expand";  // y is not an archive
+  const auto parsed=am::import::parse_plan_view(am::import::serialize_plan(plan));
+  ASSERT_FALSE(parsed); EXPECT_EQ(parsed.error().message_id,"am.import.plan_invalid");
+  EXPECT_TRUE(parsed.error().ctx.detail.ends_with("/entries/3/decision")) << am::to_log_string(parsed.error());
+}
+TEST_F(ImportZipRun, NestedArchivesExpandUnderTheirStemAndRecordExtractProvenance) {
+  RecordProperty("req","SC-1|K-6|X-01");
+  const auto deep=blob(zip_test::build({member("d.txt","deepest")}));
+  const auto inner=blob(zip_test::build({member("i.txt","inner"),member("deep.zip",deep,8)}));
+  // Compressed nested records need the library's managed temporary area during the scan.
+  am::import::ScanRequest r; r.roots={fixture({member("a/inner.zip",inner),member("top.txt","top")})};
+  r.profile=take(am::application::load_import_profile()); r.library=library;
+  plan=take(am::import::scan(r));
+  ASSERT_EQ(plan.value["archives"].size(),3u);
+  EXPECT_FALSE(fs::exists(library/".am/.am-tmp/import"));
+  EXPECT_EQ(plan.value["archives"][2]["access"],"temp");
+  include();
+  const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created") << row.dump();
+  EXPECT_EQ(payloads(row),(std::multiset<std::string>{"inner","deepest","top"}));
+  const auto m=manifest(row); const auto& in=m["inputs"][0];
+  ASSERT_EQ(in["objects"].size(),3u);
+  const auto& first=in["objects"][1]; const auto& second=in["objects"][2];
+  EXPECT_EQ(first["nested_action"],"extract"); EXPECT_EQ(first["name"],"inner.zip"); EXPECT_FALSE(first.contains("relative_path"));
+  EXPECT_EQ(first["parent_object_id"],in["objects"][0]["id"]); EXPECT_EQ(second["parent_object_id"],first["id"]);
+  EXPECT_EQ(first["sha256"].get<std::string>().size(),64u);
+  std::set<std::string> paths;
+  for(const auto& f:m["files"]) paths.insert(f["storage_path"].get<std::string>());
+  for(const auto& e:in["entries"]) {
+    if(e["id"]==first["parent_entry_id"] || e["id"]==second["parent_entry_id"]) {
+      EXPECT_EQ(e["result"],"excluded"); EXPECT_EQ(e["exclusion"]["rule"],"nested_extract"); EXPECT_EQ(e["exclusion"]["by"],"profile");
+      EXPECT_FALSE(e.contains("file_id"));
+    }
+  }
+  const auto prefix="content/"+in["id"].get<std::string>()+"/";
+  EXPECT_TRUE(paths.contains(prefix+"a/inner/i.txt")) << m["files"].dump();
+  EXPECT_TRUE(paths.contains(prefix+"a/inner/deep/d.txt")) << m["files"].dump();
+  clean();
+}
+TEST_F(ImportZipRun, NestedChangeIsSourceChangedAndCorruptRecordFailsStrictWithoutAsset) {
+  RecordProperty("req","SC-1|K-6|SC-13");
+  const auto inner=blob(zip_test::build({member("x",std::string(4096,'a'))}));
+  const auto target=fixture({member("inner.zip",inner)});
+  scan(target); include();
+  auto changed=inner; changed[changed.size()-30]^=1;  // inner central directory changes, outer CRC updates
+  const auto stamp=fs::last_write_time(target);
+  fixture({member("inner.zip",changed)}); fs::last_write_time(target,stamp);
+  auto row=execute(enqueue());
+  EXPECT_EQ(row["status"],"failed") << row.dump(); EXPECT_EQ(row["error"]["message_id"],"am.import.source_changed");
+  // A bad CRC two levels down fails a strict import without creating an asset.
+  zip_test::Entry bad=member("x",std::string(4096,'b')); bad.declared_crc=0x12345678;
+  const auto broken=blob(zip_test::build({bad}));
+  fixture({member("inner.zip",broken)},"other.zip");
+  scan(source/"other.zip"); include();
+  row=execute(enqueue());
+  EXPECT_EQ(row["status"],"failed") << row.dump(); EXPECT_FALSE(row.contains("asset_id"));
+  clean(true);
+}
+TEST_F(ImportZipRun, NestedEntryIdentifiersStayOutOfDurableParameters) {
+  RecordProperty("req","SC-1|K-6|NFR-14.4.3");
+  std::size_t small=0;
+  for(const auto count:{10,2000}) {
+    std::vector<zip_test::Entry> records;
+    for(int i=0;i<count;++i) records.push_back(member("f"+std::to_string(i),"x"));
+    scan(fixture({member("inner.zip",blob(zip_test::build(records)))})); include();
+    const auto q=enqueue(); am::contracts::JobFilter f; f.parent_id=q.job_id;
+    const auto children=take(catalog->job_store().list(f)); ASSERT_EQ(children.size(),1u);
+    if(count==10) small=children[0].params_json.size(); else EXPECT_EQ(children[0].params_json.size(),small);
   }
 }

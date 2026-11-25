@@ -15,6 +15,12 @@ if(AM_WITH_CONTAINER)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${AM_IMPORT_SCHEMA_V2}")
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/import_schema_v2.hpp"
     CONTENT "#pragma once\ninline constexpr char import_schema_v2[] = R\"AMPLAN(${AM_IMPORT_SCHEMA_V2_PARTS})AMPLAN\";\n")
+  set(AM_IMPORT_SCHEMA_V3 "${PROJECT_SOURCE_DIR}/schemas/import-plan.v3.schema.json")
+  file(READ "${AM_IMPORT_SCHEMA_V3}" AM_IMPORT_SCHEMA_V3_TEXT)
+  string(REPLACE "\n" "\n)AMPLAN\"\nR\"AMPLAN(" AM_IMPORT_SCHEMA_V3_PARTS "${AM_IMPORT_SCHEMA_V3_TEXT}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${AM_IMPORT_SCHEMA_V3}")
+  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/import_schema_v3.hpp"
+    CONTENT "#pragma once\ninline constexpr char import_schema_v3[] = R\"AMPLAN(${AM_IMPORT_SCHEMA_V3_PARTS})AMPLAN\";\n")
 endif()
 am_add_module(services
   SOURCES ${AM_SERVICES_SOURCES}
