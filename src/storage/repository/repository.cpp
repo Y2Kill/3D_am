@@ -901,7 +901,8 @@ archive::ZipInput& archive_pass(ArchivePassState& state,bool packing,std::stop_t
     check_stop(stop);
     auto attempt=archive::open_snapshot(*state.expected,state.job,stop);
     if(!attempt) {
-      if((state.sha256 || state.expected->sha256) && (attempt.error().code==Errc::corrupt_data || attempt.error().code==Errc::unsupported || attempt.error().code==Errc::not_found))
+      // Reopening a nested archive reads bytes, so a sticky input limit may fire here; it is not a source change.
+      if((!state.job || state.job->exceeded_limit().empty()) &&(state.sha256 || state.expected->sha256) && (attempt.error().code==Errc::corrupt_data || attempt.error().code==Errc::unsupported || attempt.error().code==Errc::not_found))
         changed_source(id,failure,"Archive became unreadable after its snapshot");
       throw attempt.error(); // Whole-container failures must not become per-record retries.
     }

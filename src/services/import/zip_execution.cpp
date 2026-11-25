@@ -116,6 +116,9 @@ Result<void> prepare_zip_execution(ZipExecution& out,const PlanView& p,const Pla
       auto attempt=record ? opened.at(record->archive).open_nested(record->index,out.temp?out.temp->path:std::filesystem::path{},stop)
                           : archive::ZipInput::open(take(source_path(p,n)),out.job);
       if(!attempt && attempt.error().code==Errc::cancelled) return attempt.error();
+      // A sticky input limit wins over the stream error it produced (e.g. a budget hit inside a nested CRC pass).
+      if(!attempt && !out.job->exceeded_limit().empty())
+        throw error("am.import.archive.limit_exceeded",n.id,Errc::unsupported).caused_by(attempt.error());
       if(!attempt && (attempt.error().code==Errc::corrupt_data || attempt.error().code==Errc::not_found ||
           (attempt.error().code==Errc::unsupported && attempt.error().message_id!="am.import.archive.limit_exceeded")))
         throw error("am.import.source_changed",n.id,Errc::conflict).caused_by(attempt.error());

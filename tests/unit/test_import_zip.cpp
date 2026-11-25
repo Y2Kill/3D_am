@@ -877,3 +877,68 @@ TEST_F(ImportZipRun, NestedEntryIdentifiersStayOutOfDurableParameters) {
     if(count==10) small=children[0].params_json.size(); else EXPECT_EQ(children[0].params_json.size(),small);
   }
 }
+TEST(ImportZipScan, RarAndSevenZipInsideZipStayAskAndAreNotExpanded) {
+  RecordProperty("req","SC-2|SC-6|K-6");
+  for(const auto& signature:{std::string("Rar!\x1a\x07\0",7),std::string("7z\xbc\xaf\x27\x1c",6)}) {
+    const auto plan=scan_zip(install(zip_test::build({member("inner.bin",signature+"payload")}))).value;
+    EXPECT_EQ(plan["archives"].size(),1u);
+    EXPECT_EQ(plan["candidates"][0]["entries"][1]["decision"],"ask");
+    EXPECT_EQ(plan["candidates"][0]["entries"][1]["explanation_id"],"nested_archive_expand_unsupported");
+  }
+}
+TEST(ImportZipScan, UnpackedBudgetIsSummedAcrossNestingLevels) {
+  RecordProperty("req","SC-1|K-6|ADR-0011");
+  // Each stored nested archive fits the budget alone; together they do not.
+  const auto inner=blob(zip_test::build({member("x",std::string(4096,'a'))}));
+  auto profile=take(am::application::load_import_profile());
+  profile.settings["limits"]["max_unpacked_bytes"]=inner.size()+inner.size()/2;
+  const auto plan=scan_zip(install(zip_test::build({member("one.zip",inner),member("two.zip",inner)})),profile).value;
+  // The sticky limit is reported on the nested archive whose read crossed it.
+  ASSERT_EQ(plan["archives"].size(),3u);
+  EXPECT_EQ(plan["archives"][1]["status"],"listed");
+  ASSERT_EQ(plan["archives"][2]["status"],"limit_exceeded") << plan["archives"].dump();
+  EXPECT_EQ(plan["archives"][2]["problem"]["limit"],"max_unpacked_bytes");
+  const auto& hit=plan["scan"]["limits_hit"]; EXPECT_NE(std::find(hit.begin(),hit.end(),"max_unpacked_bytes"),hit.end());
+  EXPECT_EQ(plan["candidates"][0]["action"],"ask");
+  EXPECT_EQ(plan["scan"]["completeness"],"incomplete");
+}
+TEST_F(ImportZipRun, NestedBudgetIsSummedAcrossLevelsAndFailsOnceWithoutAsset) {
+  RecordProperty("req","SC-1|K-6|ADR-0011");
+  const auto inner=blob(zip_test::build({member("x",std::string(4096,'a'))}));
+  scan(fixture({member("inner.zip",inner)})); include();
+  // The outer record and the inner payload each fit; their sum does not.
+  plan.value["profile"]["limits"]["max_unpacked_bytes"]=std::to_string(inner.size()+1000);
+  unsigned attempts=0; am::import::RunHooks hooks; hooks.before_attempt=[&](auto&){++attempts;};
+  const auto row=execute(enqueue(),hooks,2);
+  EXPECT_EQ(row["status"],"failed") << row.dump();
+  EXPECT_EQ(row["error"]["message_id"],"am.import.archive.limit_exceeded") << row.dump();
+  EXPECT_EQ(row["problem"]["limit"],"max_unpacked_bytes");
+  EXPECT_EQ(attempts,1u); EXPECT_FALSE(row.contains("asset_id"));
+  clean(true);
+}
+TEST_F(ImportZipRun, NestedCrcFailureIsAFailedRecordInPartialMode) {
+  RecordProperty("req","SC-1|K-5|K-6");
+  zip_test::Entry bad=member("bad",std::string(1000,'b'),8); bad.declared_crc=0;
+  const auto inner=blob(zip_test::build({bad,member("good","good")}));
+  scan(fixture({member("inner.zip",inner)})); include();
+  plan.value["mode"]="partial";
+  const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created") << row.dump();
+  const auto m=manifest(row); const auto& in=m["inputs"][0];
+  EXPECT_EQ(in["completeness"],"incomplete");
+  unsigned failed=0; for(const auto& e:in["entries"]) failed+=e["result"]=="failed";
+  EXPECT_EQ(failed,1u); EXPECT_EQ(payloads(row),(std::multiset<std::string>{"good"}));
+  clean();
+}
+TEST_F(ImportZipRun, NestedPrefixCollidingWithADirectoryIsRenamed) {
+  RecordProperty("req","SC-1|K-5|K-6");
+  const auto inner=blob(zip_test::build({member("x.txt","nested")}));
+  scan(fixture({member("a/inner.zip",inner),member("a/inner/x.txt","plain")})); include();
+  const auto row=execute(enqueue()); ASSERT_EQ(row["status"],"created") << row.dump();
+  const auto m=manifest(row); unsigned renamed=0;
+  for(const auto& e:m["inputs"][0]["entries"]) if(e.value("rename_reason",std::string{})=="collision") ++renamed;
+  EXPECT_GE(renamed,1u) << m["inputs"][0]["entries"].dump();
+  std::set<std::string> paths; for(const auto& f:m["files"]) paths.insert(f["storage_path"].get<std::string>());
+  EXPECT_EQ(paths.size(),2u);
+  EXPECT_EQ(payloads(row),(std::multiset<std::string>{"nested","plain"}));
+  clean();
+}
