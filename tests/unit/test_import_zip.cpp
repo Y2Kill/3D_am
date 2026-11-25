@@ -88,10 +88,10 @@ class ImportZipRun : public testing::Test {
     std::ofstream(plan_file,std::ios::binary)<<am::import::serialize_plan(plan);
     return take(am::import::enqueue_run(*catalog,plan_file));
   }
-  am::import::PlanJson execute(const am::import::QueuedRun& q,am::import::RunHooks hooks={}) {
+  am::import::PlanJson execute(const am::import::QueuedRun& q,am::import::RunHooks hooks={},int retries=0) {
     am::jobs::HandlerRegistry registry;
     if(auto r=am::import::register_import_jobs(registry,*catalog,"synthetic-test",std::move(hooks));!r) throw std::runtime_error(am::to_log_string(r.error()));
-    am::jobs::ExecutorOptions options; options.auto_retries=0;
+    am::jobs::ExecutorOptions options; options.auto_retries=retries;
     am::jobs::ResourceManager resources(options.limits);
     am::jobs::Executor executor(catalog->job_store(),resources,registry,options);
     take(executor.run_until_idle());
@@ -114,7 +114,10 @@ class ImportZipRun : public testing::Test {
   }
   void clean(bool empty=false) {
     const auto tmp=library/".am/.am-tmp"; EXPECT_TRUE(!fs::exists(tmp) || fs::is_empty(tmp));
-    if(empty) { EXPECT_TRUE(take(catalog->indexer().list()).empty()); }
+    if(empty) {
+      EXPECT_TRUE(take(catalog->indexer().list()).empty());
+      EXPECT_TRUE(take(take(am::db::StateJournal::open(library))->list()).empty());
+    }
     am::catalog::LibraryVerifyOptions options; options.level=am::catalog::LibraryVerifyLevel::full;
     const auto report=take(catalog->verify(options)); EXPECT_EQ(report.corrupt,0u); EXPECT_EQ(report.unreadable,0u); EXPECT_FALSE(report.database_failed);
   }
@@ -196,11 +199,11 @@ TEST_F(ImportZipRun, UnsupportedRecordsStrictFailPartialAccountAndExcludedAreNev
 TEST_F(ImportZipRun, ActualByteLimitFailsBothModesWithoutAnAssetOrPartialRetry) {
   RecordProperty("req","SC-1|K-6|ADR-0011");
   zip_test::Entry a; a.data="1234567890"; scan(fixture({a})); include();
-  plan.value["profile"]["limits"]["max_unpacked_bytes"]="15";
-  for(const auto& mode:{"strict","partial"}) {
+  for(const auto& budget:{"15","10"}) for(const auto& mode:{"strict","partial"}) {
+    plan.value["profile"]["limits"]["max_unpacked_bytes"]=budget;
     plan.value["mode"]=mode;
     unsigned attempts=0; am::import::RunHooks hooks; hooks.before_attempt=[&](auto&){++attempts;};
-    const auto row=execute(enqueue(),hooks); EXPECT_EQ(row["status"],"failed")<<row.dump();
+    const auto row=execute(enqueue(),hooks,2); EXPECT_EQ(row["status"],"failed")<<row.dump();
     ASSERT_EQ(row.at("error").at("message_id"),"am.import.archive.limit_exceeded")<<row.dump();
     EXPECT_EQ(row.at("error").at("code"),"am.unsupported");
     ASSERT_TRUE(row.contains("problem"))<<row.dump(); EXPECT_EQ(row["problem"]["limit"],"max_unpacked_bytes");
@@ -313,7 +316,7 @@ TEST_F(ImportZipRun, RatioTimeAndEntryLimitsCannotBeBypassedInPartialMode) {
       plan.value["mode"]=mode;
       am::import::RunHooks hooks; std::chrono::steady_clock::time_point time{};
       if(std::string_view(name)=="max_seconds_per_container") hooks.archive_clock=[&]{time+=std::chrono::seconds(2);return time;};
-      const auto row=execute(enqueue(),hooks); ASSERT_EQ(row["status"],"failed")<<row.dump();
+      const auto row=execute(enqueue(),hooks,2); ASSERT_EQ(row["status"],"failed")<<row.dump();
       ASSERT_TRUE(row.contains("problem"))<<row.dump(); EXPECT_EQ(row["problem"]["limit"],name);
       EXPECT_EQ(row["error"]["code"],"am.unsupported"); EXPECT_TRUE(row["problem"].contains("effective_value")); EXPECT_EQ(row["problem"]["source"],"plan");
       const auto stored=take(catalog->job_store().get(row.at("job_id").get<std::string>())); ASSERT_TRUE(stored); EXPECT_EQ(stored->state,am::contracts::JobState::failed); EXPECT_TRUE(stored->result_json);
@@ -452,6 +455,12 @@ TEST(ZipInput, StoredAndDeflateStreamsShareActualByteBudgetAcrossPasses) {
   EXPECT_EQ(take(stream.read(buffer)),2u);
   const auto limit=stream.read(buffer); ASSERT_FALSE(limit);
   EXPECT_EQ(limit.error().message_id,"am.import.archive.limit_exceeded"); EXPECT_EQ(context->exceeded_limit(),"max_unpacked_bytes");
+  limits.max_unpacked_bytes=10; context=job(limits);
+  auto exact=take(input::ZipInput::open(path,context));
+  EXPECT_EQ(read(exact,0),a.data); EXPECT_EQ(read(exact,1),b.data);
+  const auto empty=exact.open_entry(0); ASSERT_FALSE(empty);
+  EXPECT_EQ(empty.error().code,am::Errc::unsupported); EXPECT_EQ(empty.error().message_id,"am.import.archive.limit_exceeded");
+  EXPECT_EQ(context->exceeded_limit(),"max_unpacked_bytes");
 }
 TEST(ZipInput, FalseSizesCannotAvoidActualByteBudgetAndCrcIsVerified) {
   RecordProperty("req","K-2|K-6|ADR-0011");
@@ -530,6 +539,9 @@ TEST(ZipInput, ContextualOwnManifestProbeKeepsLegacyProbeAndChargesSharedBudgetO
   context=job();
   const auto ratio=take(input::ZipInput::probe(take(zip::file_source(compressed)),compressed,context));
   EXPECT_EQ(ratio.outcome,zip::ProbeOutcome::invalid_zip); EXPECT_EQ(context->exceeded_limit(),"max_ratio");
+  const auto normal=install(zip_test::build({manifest})); context=job();
+  const auto normal_ratio=take(input::ZipInput::probe(take(zip::file_source(normal)),normal,context));
+  EXPECT_EQ(normal_ratio.outcome,zip::ProbeOutcome::invalid_zip); EXPECT_EQ(context->exceeded_limit(),"max_ratio");
 }
 TEST(ImportZipManifest, FilesystemArchiveIsAnIndependentTopLevelObject) {
   RecordProperty("req","SC-1|K-5|K-6|ADR-0037");

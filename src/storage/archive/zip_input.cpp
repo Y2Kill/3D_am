@@ -136,8 +136,8 @@ struct ZipInputJob::Impl {
       timed_out=now-at->second>=limits.max_seconds_per_container;
       failed=limit;
     }
-    if(timed_out) exceeded("max_seconds_per_container");
     if(!failed.empty()) exceeded(std::move(failed));
+    if(timed_out) exceeded("max_seconds_per_container");
   }
   void output(std::uint64_t compressed,std::uint64_t produced) {
     // The warm-up output threshold is a hypothesis (O-17), not a format limit.
@@ -267,7 +267,10 @@ Result<ZipInputStream> ZipInput::open_entry(std::size_t index,bool sha) const {
     const auto& e=entries()[index].info;
     if(e.kind!=asset_zip::EntryKind::regular)
       throw failure(Errc::unsupported,e.kind==asset_zip::EntryKind::symlink ? "am.archive.link_not_followed" : "am.archive.special_not_materialized");
-    auto stream=take(impl_->zip.open_entry(index,impl_->job->impl_->bytes,sha));
+    auto opened=impl_->zip.open_entry(index,impl_->job->impl_->bytes,sha);
+    if(!opened && opened.error().message_id=="am.zip.limit_exceeded" && impl_->job->remaining()==0)
+      impl_->job->impl_->exceeded("max_unpacked_bytes",&opened.error());
+    auto stream=take(std::move(opened));
     return ZipInputStream(std::make_unique<ZipInputStream::Impl>(std::move(stream),impl_->path,impl_->job,e));
   });
 }

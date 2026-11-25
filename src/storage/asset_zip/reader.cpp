@@ -415,7 +415,7 @@ Result<ProbeResult> probe_impl(std::shared_ptr<const RandomAccessSource> source,
     auto read=read_probe_manifest(*archive,entry->index,codec_limits,context,context?&observed:nullptr);
     if(!read) failure=read.error();
     if (failure) {
-      const bool marker=context ? failure->code!=Errc::resource_exhausted && !archive->entries().empty() &&
+      const bool marker=context ? failure->code!=Errc::resource_exhausted && failure->code!=Errc::unsupported && !archive->entries().empty() &&
           archive->entries()[0].index==entry->index && observed.find(format_id)!=std::string::npos : first_has_marker(*archive,codec_limits.max_bytes);
       return ProbeResult{marker?ProbeOutcome::own_corrupt:ProbeOutcome::invalid_zip,{},probe_error(*failure)};
     }
