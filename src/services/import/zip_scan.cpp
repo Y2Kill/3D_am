@@ -208,7 +208,12 @@ void Inventory::list(archive::ZipInput& zip,std::size_t at,const std::string& ke
             });
             if(!verified) unverified=std::move(*opened);
           } else if(opened.error().code==Errc::cancelled) throw opened.error();
-          else if(!job->exceeded_limit().empty()) hit(job->exceeded_limit());
+          else if(!job->exceeded_limit().empty()) {
+            // The sticky limit ends this archive even when the 3MF is its last record.
+            hit(job->exceeded_limit());
+            auto& summary=plan.value["archives"][at];
+            summary["status"]="limit_exceeded"; summary["problem"]=archive_limit_problem(limits,*job);
+          }
         }
         if(verified) {
           decision["confidence"]="certain"; decision["explanation_id"]="specialized_container_verified";

@@ -764,7 +764,8 @@ Result<std::vector<RecoveryItem>> recover(const Path& root, const RecoveryOption
     // T-032: import scans and attempts keep nested-archive temporaries in .am-tmp/import/<uuid>/.
     const auto areas = directory / "import";
     if (file_exists(areas)) for (const auto& area : std::filesystem::directory_iterator(am::paths::native(areas))) {
-      if (!area.is_directory()) continue;
+      // Links and junctions are never followed: cleanup must stay inside the library.
+      if (area.symlink_status().type() != std::filesystem::file_type::directory) continue;
       RecoveryItem item; item.path = area.path();
       try {
         // Age is measured from the newest entry; the shift keeps options.now authoritative without clock_cast.
