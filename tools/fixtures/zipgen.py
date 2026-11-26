@@ -73,4 +73,3 @@ def patch_archive(data, patches):
         else:
             raise ValueError(f"Unknown patch kind: {kind}")
     return bytes(data)
-

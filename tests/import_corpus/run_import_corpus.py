@@ -278,14 +278,16 @@ def run_case(am, cases, work, name):
             code = step['exit_code']
             extra = [str(library) if value == '@library' else value for value in step.get('args', [])]
             if command in ('scan', 'rescan'):
-                if command == 'rescan' and readonly:
-                    print(f'NOT_APPLICABLE {label}: not applicable on this filesystem (no imported library)')
-                    continue
                 plan_path = destination / f'plan-{index}.json'
                 args = ['import', 'scan', *roots, '--plan', plan_path, *scan_args, *extra]
                 summary = cli(args, code)
                 plan = json.loads(plan_path.read_text('utf8'))
-                compare(expected['steps'][label], scan_view(summary, plan, source), '/' + label)
+                expectation = expected['steps'][label]
+                if readonly and command == 'rescan':
+                    expectation = expected.get('read_only_steps', {}).get(label, expectation)
+                compare(expectation, scan_view(summary, plan, source), '/' + label)
+                if readonly and command == 'rescan':
+                    print(f'PASS {label}: empty-library expectation; post-import matching NOT_APPLICABLE on this filesystem')
                 if command == 'scan':
                     edit_plan(plan, config.get('plan_edits', []), source)
                     plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), 'utf8')
@@ -325,7 +327,8 @@ def run_case(am, cases, work, name):
     finally:
         assert_source(source, before)
         assert_temporary(library)
-    print(f'PASS import_corpus.{name}: {calls} CLI calls; source/temp/payload/UUID invariants checked')
+    checks = 'source/temp invariants checked; asset checks NOT_APPLICABLE' if readonly else 'source/temp/payload/UUID invariants checked'
+    print(f'PASS import_corpus.{name}: {calls} CLI calls; {checks}')
     return 0
 
 

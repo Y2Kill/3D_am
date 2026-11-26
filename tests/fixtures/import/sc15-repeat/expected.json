@@ -115,5 +115,59 @@
         }
       ]
     }
+  },
+  "read_only_steps": {
+    "rescan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import",
+          "matches": [],
+          "entries": {
+            "model.stl": {
+              "decision": "include"
+            }
+          }
+        }
+      ],
+      "nodes": {
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        }
+      },
+      "summary": {
+        "nodes": 1,
+        "matches": 0
+      }
+    },
+    "skip_scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import",
+          "matches": [],
+          "entries": {
+            "model.stl": {
+              "decision": "include"
+            }
+          }
+        }
+      ],
+      "nodes": {
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        }
+      },
+      "summary": {
+        "nodes": 1,
+        "matches": 0
+      }
+    }
   }
 }

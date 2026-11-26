@@ -750,6 +750,9 @@ for path in corpus_cases:
     labels = {step.get("name", step["command"]) for step in case["steps"]}
     report("import-corpus:steps:" + path.parent.name, "SC-1", "every step has an expectation", True,
            labels == set(expected["steps"]))
+    rescan_labels = {step.get("name", step["command"]) for step in case["steps"] if step["command"] == "rescan"}
+    report("import-corpus:readonly-steps:" + path.parent.name, "SC-15", "read-only variants refer to rescans", True,
+           set(expected.get("read_only_steps", {})).issubset(rescan_labels))
 for number in range(1, 17):
     scenario = f"SC-{number}"
     report("import-corpus:coverage:" + scenario, scenario, "scenario has a declarative case", True,
