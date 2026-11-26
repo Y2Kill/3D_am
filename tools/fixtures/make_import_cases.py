@@ -84,7 +84,10 @@ def check_requirements(config, work):
             try:
                 probe.symlink_to('nonexistent')
             except OSError as error:
-                return f'requires symlink privilege: {error}'
+                code = getattr(error, 'winerror', None) or error.errno
+                if code == 1314 and os.name == 'nt':
+                    return 'requires symlink privilege (Windows error 1314)'
+                return f'requires symlink support (OS error {code})'
             finally:
                 probe.unlink(missing_ok=True)
         else:
@@ -177,6 +180,8 @@ def regen_check(cases, work):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding='utf8', errors='backslashreplace')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cases', type=Path, default=ROOT / 'tests/fixtures/import')
     parser.add_argument('--work', type=Path, required=True)
