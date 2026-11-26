@@ -13,7 +13,13 @@
       "candidates": [
         {
           "kind": "new_asset",
-          "action": "import"
+          "action": "import",
+          "entries": {
+            "link.stl": {
+              "decision": "skip",
+              "explanation_id": "am.import.link_not_followed"
+            }
+          }
         }
       ],
       "nodes": {

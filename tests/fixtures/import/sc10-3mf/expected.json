@@ -4,7 +4,8 @@
   "case": "sc10-3mf",
   "basis": [
     "TZ 13.2 / SC-10",
-    "container_manifest_v1.md 5-6"
+    "container_manifest_v1.md 5-6",
+    "T-034 V-4: root detected=project.3mf; nested explanation_id verified separately"
   ],
   "steps": {
     "scan": {
