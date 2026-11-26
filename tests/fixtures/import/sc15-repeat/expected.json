@@ -1,0 +1,173 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc15-repeat",
+  "basis": [
+    "TZ 13.2 / SC-15",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "25",
+              "sha256": "62184020bf75b8b17afc4d87ea2edefbe9bf23a7229405633a54a584017aba27",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    },
+    "rescan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "action": "ask",
+          "match_flags": {
+            "sha256_input": true,
+            "sha256_file": true
+          }
+        }
+      ],
+      "nodes": {
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      }
+    },
+    "skip_scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "action": "skip"
+        }
+      ],
+      "nodes": {
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      }
+    },
+    "skip_run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "skipped"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "25",
+              "sha256": "62184020bf75b8b17afc4d87ea2edefbe9bf23a7229405633a54a584017aba27",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false
+        }
+      ]
+    }
+  },
+  "read_only_steps": {
+    "rescan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import",
+          "matches": [],
+          "entries": {
+            "model.stl": {
+              "decision": "include"
+            }
+          }
+        }
+      ],
+      "nodes": {
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        }
+      },
+      "summary": {
+        "nodes": 1,
+        "matches": 0
+      }
+    },
+    "skip_scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import",
+          "matches": [],
+          "entries": {
+            "model.stl": {
+              "decision": "include"
+            }
+          }
+        }
+      ],
+      "nodes": {
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        }
+      },
+      "summary": {
+        "nodes": 1,
+        "matches": 0
+      }
+    }
+  }
+}

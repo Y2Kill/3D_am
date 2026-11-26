@@ -1,0 +1,88 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "ch-unicode-names",
+  "scenarios": [
+    "SC-1",
+    "SC-4"
+  ],
+  "req": [
+    "SC-1",
+    "SC-4",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "ch-unicode-names",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "names.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "café.stl",
+            "content": "unicode 0"
+          },
+          {
+            "name": "café.stl",
+            "content": "unicode 1"
+          },
+          {
+            "name": "модель.stl",
+            "content": "unicode 2"
+          },
+          {
+            "name": "😀.stl",
+            "content": "unicode 3"
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "names.zip"
+    ]
+  },
+  "plan_edits": [
+    {
+      "op": "action",
+      "path": "names.zip",
+      "value": "import"
+    },
+    {
+      "op": "decision",
+      "path": "names.zip!café.stl",
+      "value": "include"
+    },
+    {
+      "op": "decision",
+      "path": "names.zip!café.stl",
+      "value": "include"
+    },
+    {
+      "op": "decision",
+      "path": "names.zip!модель.stl",
+      "value": "include"
+    },
+    {
+      "op": "decision",
+      "path": "names.zip!😀.stl",
+      "value": "include"
+    }
+  ],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "ch-unsafe-zip-paths",
+  "basis": [
+    "TZ 13.2 / SC-4",
+    "TZ 13.2 / SC-13",
+    "container_manifest_v1.md 5-6",
+    "T-031: raw names, safe paths and explicit decisions"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "ask"
+        }
+      ],
+      "nodes": {
+        "unsafe.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "564"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      },
+      "archive_indices": {
+        "unsafe.zip": {
+          "0": {
+            "index": 0,
+            "size": "8",
+            "method": 0,
+            "crc32": "90f3e3ad"
+          },
+          "1": {
+            "index": 1,
+            "size": "8",
+            "method": 0,
+            "crc32": "e7f4d33b"
+          },
+          "2": {
+            "index": 2,
+            "size": "8",
+            "method": 0,
+            "crc32": "7efd8281"
+          },
+          "3": {
+            "index": 3,
+            "size": "8",
+            "method": 0,
+            "crc32": "09fab217"
+          },
+          "4": {
+            "index": 4,
+            "size": "10",
+            "method": 0,
+            "crc32": "0af1b891"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "10",
+              "sha256": "a4b18d49756f30511502218d997b05e7e883fa40bb5837bcc1a8324d3fcf0693",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "entries": {
+            "../escape.stl": {
+              "result": "excluded"
+            },
+            "/absolute.stl": {
+              "result": "excluded"
+            },
+            "C:/drive.stl": {
+              "result": "excluded"
+            },
+            "back\\slash.stl": {
+              "result": "excluded"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

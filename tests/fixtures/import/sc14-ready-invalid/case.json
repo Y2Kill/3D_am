@@ -1,0 +1,41 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc14-ready-invalid",
+  "scenarios": [
+    "SC-14"
+  ],
+  "req": [
+    "SC-14",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc14-ready-invalid",
+  "source": [
+    {
+      "kind": "golden",
+      "path": "bad.zip",
+      "golden": "neg-v2-dimension"
+    }
+  ],
+  "scan": {
+    "roots": [
+      "bad.zip"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 3
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

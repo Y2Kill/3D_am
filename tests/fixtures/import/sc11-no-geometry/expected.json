@@ -1,0 +1,108 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc11-no-geometry",
+  "basis": [
+    "TZ 13.2 / SC-11",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        ".": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "document.pdf": {
+          "kind": "file",
+          "status": "available",
+          "size": "325"
+        },
+        "drawing.dxf": {
+          "kind": "file",
+          "status": "available",
+          "size": "36"
+        },
+        "drawing.svg": {
+          "kind": "file",
+          "status": "available",
+          "size": "62"
+        },
+        "image.png": {
+          "kind": "file",
+          "status": "available",
+          "size": "73"
+        }
+      },
+      "summary": {
+        "nodes": 5
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "73",
+              "sha256": "220f68fdef1f9be4767f98e4f4f765074b9d105ae9ce39b7afa00f5dbaab93ea",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "62",
+              "sha256": "ffc9f5e4fdeea83920c171e2bd17577127c5d1a2c3c76f07440e10d387132280",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "36",
+              "sha256": "dc919c8f27c3229e9c4a240278f07819b2ed960642d983ceefc6604750b621f2",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "325",
+              "sha256": "275838dd6753455f8853e4d06bfdd25392033b0139e72918c4a610917ed2ee41",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "entries": {
+            "image.png": {
+              "result": "included",
+              "file_sha256": "220f68fdef1f9be4767f98e4f4f765074b9d105ae9ce39b7afa00f5dbaab93ea"
+            },
+            "drawing.svg": {
+              "result": "included",
+              "file_sha256": "ffc9f5e4fdeea83920c171e2bd17577127c5d1a2c3c76f07440e10d387132280"
+            },
+            "drawing.dxf": {
+              "result": "included",
+              "file_sha256": "dc919c8f27c3229e9c4a240278f07819b2ed960642d983ceefc6604750b621f2"
+            },
+            "document.pdf": {
+              "result": "included",
+              "file_sha256": "275838dd6753455f8853e4d06bfdd25392033b0139e72918c4a610917ed2ee41"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

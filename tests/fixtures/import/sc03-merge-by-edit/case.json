@@ -1,0 +1,55 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc03-merge-by-edit",
+  "scenarios": [
+    "SC-3",
+    "SC-8"
+  ],
+  "req": [
+    "SC-3",
+    "SC-8",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc03-merge-by-edit",
+  "source": [
+    {
+      "kind": "file",
+      "path": "a/a.stl",
+      "content": "merge a"
+    },
+    {
+      "kind": "file",
+      "path": "b/b.stl",
+      "content": "merge b"
+    }
+  ],
+  "scan": {
+    "roots": [
+      "a",
+      "b"
+    ]
+  },
+  "plan_edits": [
+    {
+      "op": "merge",
+      "path": "b/b.stl",
+      "into": "a/a.stl"
+    }
+  ],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "ch-long-paths",
+  "basis": [
+    "TZ 13.2 / SC-1",
+    "TZ 13.2 / SC-4",
+    "container_manifest_v1.md 5-6",
+    "T-031: raw names, safe paths and explicit decisions"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        ".": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "11"
+        },
+        "long.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "716"
+        }
+      },
+      "summary": {
+        "nodes": 9
+      },
+      "archive_indices": {
+        "long.zip": {
+          "0": {
+            "index": 0,
+            "size": "12",
+            "method": 0,
+            "crc32": "d36bbd02"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "11",
+              "sha256": "7b731b6a40db0e03b0df676046a9f5acf259ae13f6d160560227a5aa59661fa0",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "12",
+              "sha256": "48ee5a930e05aed83eb2da7f8d0d356651de9a0e898b27e1c14682113d52239b",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "entries": {
+            "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/model.stl": {
+              "result": "included_renamed",
+              "rename_reason": "path_too_long"
+            }
+          },
+          "object_entries": {
+            "source!component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/model.stl": {
+              "result": "included_renamed",
+              "rename_reason": "path_too_long",
+              "file_sha256": "7b731b6a40db0e03b0df676046a9f5acf259ae13f6d160560227a5aa59661fa0"
+            },
+            "long.zip!component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/model.stl": {
+              "result": "included_renamed",
+              "rename_reason": "path_too_long",
+              "file_sha256": "48ee5a930e05aed83eb2da7f8d0d356651de9a0e898b27e1c14682113d52239b"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

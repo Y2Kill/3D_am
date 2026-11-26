@@ -1,0 +1,45 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "ch-links",
+  "scenarios": [
+    "SC-1"
+  ],
+  "req": [
+    "SC-1",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "ch-links",
+  "source": [
+    {
+      "kind": "file",
+      "path": "model.stl",
+      "content": "solid test\nendsolid test\n"
+    },
+    {
+      "kind": "symlink",
+      "path": "link.stl",
+      "target": "model.stl"
+    }
+  ],
+  "scan": {},
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ],
+  "requires": [
+    "symlink"
+  ]
+}

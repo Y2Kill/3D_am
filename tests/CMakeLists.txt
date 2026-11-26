@@ -175,6 +175,33 @@ if(AM_PYTHON_TESTS)
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/tools/message_catalog_check.py --root ${PROJECT_SOURCE_DIR})
       set_tests_properties(message_catalog_check PROPERTIES LABELS "req:ADR-0032;req:ADR-0034")
       if(TARGET am_cli)
+      file(GLOB _am_import_cases LIST_DIRECTORIES true CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/tests/fixtures/import/*")
+      foreach(_am_case_dir IN LISTS _am_import_cases)
+        if(EXISTS "${_am_case_dir}/case.json")
+          set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_am_case_dir}/case.json")
+          get_filename_component(_am_case_name "${_am_case_dir}" NAME)
+          file(READ "${_am_case_dir}/case.json" _am_case_json)
+          string(JSON _am_req_count LENGTH "${_am_case_json}" req)
+          set(_am_case_labels import_corpus)
+          math(EXPR _am_req_last "${_am_req_count} - 1")
+          foreach(_am_req_i RANGE 0 ${_am_req_last})
+            string(JSON _am_req GET "${_am_case_json}" req ${_am_req_i})
+            list(APPEND _am_case_labels "req:${_am_req}")
+          endforeach()
+          add_test(NAME import_corpus.${_am_case_name}
+            COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/import_corpus/run_import_corpus.py
+              --am $<TARGET_FILE:am_cli> --cases ${PROJECT_SOURCE_DIR}/tests/fixtures/import
+              --work ${CMAKE_BINARY_DIR}/import_corpus --case ${_am_case_name})
+          set_tests_properties(import_corpus.${_am_case_name} PROPERTIES LABELS "${_am_case_labels}" SKIP_RETURN_CODE 77 TIMEOUT 180)
+        endif()
+      endforeach()
+      add_test(NAME import_corpus_regen_check
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/fixtures/make_import_cases.py
+          --cases ${PROJECT_SOURCE_DIR}/tests/fixtures/import --work ${CMAKE_BINARY_DIR}/import_corpus_regen --check)
+      set_tests_properties(import_corpus_regen_check PROPERTIES LABELS "import_corpus;req:ADR-0029;req:SC-1")
+      add_test(NAME import_corpus_selftest
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/import_corpus/test_runner_self.py)
+      set_tests_properties(import_corpus_selftest PROPERTIES LABELS "import_corpus;req:ADR-0029;req:SC-13")
       add_test(NAME cli_export
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_export_cli.py
           --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/export-cli-tests --project ${PROJECT_SOURCE_DIR})

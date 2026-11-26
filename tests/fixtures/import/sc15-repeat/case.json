@@ -1,0 +1,70 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc15-repeat",
+  "scenarios": [
+    "SC-15"
+  ],
+  "req": [
+    "SC-15",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc15-repeat",
+  "source": [
+    {
+      "kind": "file",
+      "path": "model.stl",
+      "content": "solid test\nendsolid test\n"
+    }
+  ],
+  "scan": {
+    "roots": [
+      "model.stl"
+    ],
+    "args": [
+      "--hash"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    },
+    {
+      "command": "rescan",
+      "name": "rescan",
+      "args": [
+        "--library",
+        "@library",
+        "--hash"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": "rescan",
+      "name": "skip_scan",
+      "args": [
+        "--library",
+        "@library",
+        "--hash",
+        "--skip-identical"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "name": "skip_run",
+      "exit_code": 0
+    }
+  ]
+}

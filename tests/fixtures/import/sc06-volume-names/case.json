@@ -1,0 +1,52 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc06-volume-names",
+  "scenarios": [
+    "SC-6"
+  ],
+  "req": [
+    "SC-6",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc06-volume-names",
+  "source": [
+    {
+      "kind": "file",
+      "path": "set.part1.rar",
+      "content": "synthetic volume set.part1.rar"
+    },
+    {
+      "kind": "file",
+      "path": "set.part2.rar",
+      "content": "synthetic volume set.part2.rar"
+    },
+    {
+      "kind": "file",
+      "path": "other.7z.001",
+      "content": "synthetic volume other.7z.001"
+    },
+    {
+      "kind": "file",
+      "path": "other.7z.002",
+      "content": "synthetic volume other.7z.002"
+    }
+  ],
+  "scan": {},
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 3
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

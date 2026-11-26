@@ -1,0 +1,52 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc09-multi-resource-zip",
+  "scenarios": [
+    "SC-9"
+  ],
+  "req": [
+    "SC-9",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "No automatic asset per directory; split suggestion remains M3b gap (TZ 13.2 SC-9).",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "set.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "chair/part.stl",
+            "content": "chair"
+          },
+          {
+            "name": "table/part.stl",
+            "content": "table"
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "set.zip"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

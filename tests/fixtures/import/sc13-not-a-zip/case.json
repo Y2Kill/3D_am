@@ -1,0 +1,43 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc13-not-a-zip",
+  "scenarios": [
+    "SC-13",
+    "SC-12"
+  ],
+  "req": [
+    "SC-13",
+    "SC-12",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc13-not-a-zip",
+  "source": [
+    {
+      "kind": "file",
+      "path": "fake.zip",
+      "content": "this is not a zip"
+    }
+  ],
+  "scan": {
+    "roots": [
+      "fake.zip"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

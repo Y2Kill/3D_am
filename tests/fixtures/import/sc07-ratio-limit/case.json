@@ -1,0 +1,75 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc07-ratio-limit",
+  "scenarios": [
+    "SC-7",
+    "SC-13"
+  ],
+  "req": [
+    "SC-7",
+    "SC-13",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc07-ratio-limit",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "large.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "large.bin",
+            "method": "deflate",
+            "pattern": "Z",
+            "size": 1024
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "large.zip"
+    ],
+    "profile_toml": "# Hypothesis: synthetic test policy, not a product threshold.\nid=\"case\"\nversion=1\n[limits]\nmax_unpacked_bytes=32\n"
+  },
+  "plan_edits": [
+    {
+      "op": "action",
+      "path": "large.zip",
+      "value": "import"
+    },
+    {
+      "op": "decision",
+      "path": "large.zip!large.bin",
+      "value": "include"
+    }
+  ],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 4
+    },
+    {
+      "command": "run",
+      "name": "run_partial",
+      "exit_code": 4,
+      "plan_edits": [
+        {
+          "op": "mode",
+          "value": "partial"
+        }
+      ]
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc04-zip-cp437-names",
+  "basis": [
+    "TZ 13.2 / SC-4",
+    "container_manifest_v1.md 5-6",
+    "T-031: raw names, safe paths and explicit decisions"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "archive_indices": {
+        "encoded.zip": {
+          "0": {
+            "path_raw": "e92e73746c",
+            "index": 0,
+            "size": "15",
+            "method": 0,
+            "crc32": "f8a94ad4",
+            "encoding_exact": false
+          }
+        }
+      },
+      "nodes": {
+        "encoded.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "123"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "15",
+              "sha256": "e30814c8093093ae35ea8e5734000242958524a4ed04c83ebad736421b39250e",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "raw_entries": {
+            "6S5zdGw=": {
+              "result": "included_renamed",
+              "rename_reason": "encoding"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

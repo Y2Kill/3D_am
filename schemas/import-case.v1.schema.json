@@ -1,0 +1,514 @@
+{
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "am-import-case"
+    },
+    "version": {
+      "const": 1
+    },
+    "case": {
+      "type": "string",
+      "pattern": "^(sc[0-9]{2}|ch)-[a-z0-9-]+$"
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "SC-1",
+          "SC-2",
+          "SC-3",
+          "SC-4",
+          "SC-5",
+          "SC-6",
+          "SC-7",
+          "SC-8",
+          "SC-9",
+          "SC-10",
+          "SC-11",
+          "SC-12",
+          "SC-13",
+          "SC-14",
+          "SC-15",
+          "SC-16"
+        ]
+      }
+    },
+    "req": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "description": {
+      "type": "string"
+    },
+    "source": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "scan": {
+      "type": "object",
+      "properties": {
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "profile_toml": {
+          "type": "string"
+        },
+        "library": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "plan_edits": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edit"
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "enum": [
+              "scan",
+              "run",
+              "verify",
+              "rescan",
+              "add-ready"
+            ]
+          },
+          "exit_code": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "name": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "path": {
+            "type": "string"
+          },
+          "plan_edits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/edit"
+            }
+          }
+        },
+        "required": [
+          "command",
+          "exit_code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "requires": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "windows",
+          "linux",
+          "symlink"
+        ]
+      }
+    },
+    "known_defect": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "format",
+    "version",
+    "case",
+    "scenarios",
+    "req",
+    "description",
+    "source",
+    "scan",
+    "plan_edits",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:am:import-case:v1",
+  "$defs": {
+    "zip": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "method": {
+                "enum": [
+                  "stored",
+                  "deflate"
+                ]
+              },
+              "flags": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "raw_name_hex": {
+                "type": "string",
+                "pattern": "^([0-9a-f]{2})+$"
+              },
+              "content": {
+                "type": "string"
+              },
+              "hex": {
+                "type": "string",
+                "pattern": "^([0-9a-f]{2})*$"
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "zip": {
+                "$ref": "#/$defs/zip"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false,
+            "oneOf": [
+              {
+                "required": [
+                  "content"
+                ]
+              },
+              {
+                "required": [
+                  "hex"
+                ]
+              },
+              {
+                "required": [
+                  "pattern",
+                  "size"
+                ]
+              },
+              {
+                "required": [
+                  "zip"
+                ]
+              }
+            ]
+          }
+        },
+        "patches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "name",
+                  "method",
+                  "flags",
+                  "crc",
+                  "external_attr",
+                  "truncate"
+                ]
+              },
+              "entry": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "file"
+            },
+            "content": {
+              "type": "string"
+            },
+            "hex": {
+              "type": "string",
+              "pattern": "^([0-9a-f]{2})*$"
+            },
+            "pattern": {
+              "type": "string",
+              "minLength": 1
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "path",
+            "kind"
+          ],
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "content"
+              ]
+            },
+            {
+              "required": [
+                "hex"
+              ]
+            },
+            {
+              "required": [
+                "pattern",
+                "size"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "zip"
+            },
+            "zip": {
+              "$ref": "#/$defs/zip"
+            },
+            "preserve_container": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "kind",
+            "zip"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "directory"
+            }
+          },
+          "required": [
+            "path",
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "symlink"
+            },
+            "target": {
+              "type": "string"
+            },
+            "directory": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "kind",
+            "target"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "golden"
+            },
+            "golden": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "kind",
+            "golden"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "edit": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "mode"
+            },
+            "value": {
+              "enum": [
+                "strict",
+                "partial"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "decision"
+            },
+            "path": {
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "include",
+                "exclude",
+                "ask",
+                "skip",
+                "expand"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "path",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "action"
+            },
+            "path": {
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "import",
+                "skip",
+                "ask"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "path",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "merge"
+            },
+            "path": {
+              "type": "string"
+            },
+            "into": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "path",
+            "into"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

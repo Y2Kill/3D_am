@@ -1,0 +1,65 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc07-nested-exclude",
+  "basis": [
+    "TZ 13.2 / SC-7",
+    "container_manifest_v1.md 5-6",
+    "T-032: nested_action, max_depth and specialized_container_verified"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        "outer.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "241"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      },
+      "archive_indices": {
+        "outer.zip": {
+          "0": {
+            "index": 0,
+            "size": "125",
+            "method": 0,
+            "crc32": "0b2ad906"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "nested_actions": [
+            "exclude"
+          ],
+          "entries": {}
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "am-expected-import"
+    },
+    "version": {
+      "const": 1
+    },
+    "case": {
+      "type": "string",
+      "pattern": "^(sc[0-9]{2}|ch)-[a-z0-9-]+$"
+    },
+    "basis": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "steps": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "read_only_steps": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/step"
+      }
+    }
+  },
+  "required": [
+    "format",
+    "version",
+    "case",
+    "basis",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:am:expected-import:v1",
+  "$defs": {
+    "step": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "object"
+        },
+        "completeness": {
+          "enum": [
+            "complete",
+            "incomplete"
+          ]
+        },
+        "limits_hit": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "nodes": {
+          "type": "object"
+        },
+        "archives": {
+          "type": "object"
+        },
+        "archive_entries": {
+          "type": "object"
+        },
+        "archive_indices": {
+          "type": "object"
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "corrupt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "minProperties": 1
+    }
+  }
+}

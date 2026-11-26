@@ -1,0 +1,65 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc08-mixed",
+  "scenarios": [
+    "SC-8"
+  ],
+  "req": [
+    "SC-8",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc08-mixed",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "a/model.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "part.stl",
+            "content": "mixed archive"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "file",
+      "path": "a/image.png",
+      "hex": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c48900000010494441547801010500faff00014080ff02c801c1890c0de20000000049454e44ae426082"
+    },
+    {
+      "kind": "file",
+      "path": "b/loose.stl",
+      "content": "mixed loose"
+    },
+    {
+      "kind": "file",
+      "path": "b/sub/info.txt",
+      "content": "mixed info"
+    }
+  ],
+  "scan": {
+    "roots": [
+      "a",
+      "b"
+    ],
+    "args": []
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

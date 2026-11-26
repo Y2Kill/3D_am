@@ -1,0 +1,90 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc03-merge-by-edit",
+  "basis": [
+    "TZ 13.2 / SC-3",
+    "TZ 13.2 / SC-8",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "action": "import",
+          "entries": {
+            "a/a.stl": {
+              "decision": "include"
+            }
+          }
+        },
+        {
+          "action": "import",
+          "entries": {
+            "b/b.stl": {
+              "decision": "include"
+            }
+          }
+        }
+      ],
+      "nodes": {
+        "a": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "a/a.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "7"
+        },
+        "b": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "b/b.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "7"
+        }
+      },
+      "summary": {
+        "nodes": 4
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "7",
+              "sha256": "1086c5f6ea365fbd2d6043f1cb0854acdbbc5cfacb907ca9457cf56195bd9f12",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "7",
+              "sha256": "9fb3f7431ceeef9d315966d3ec56f27bf39063be46ee7519bcd783074fb5aa31",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "object_counts": {
+            "directory": 2
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

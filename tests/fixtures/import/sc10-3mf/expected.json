@@ -1,0 +1,58 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc10-3mf",
+  "basis": [
+    "TZ 13.2 / SC-10",
+    "container_manifest_v1.md 5-6",
+    "T-034 V-4: root detected=project.3mf; nested explanation_id verified separately"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        "model.3mf": {
+          "detected": "project.3mf",
+          "kind": "file",
+          "status": "available",
+          "size": "260"
+        }
+      },
+      "archives": {},
+      "summary": {
+        "nodes": 1
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "source_paths": [
+                "model.3mf"
+              ]
+            }
+          ],
+          "input_count": 1,
+          "nested_actions": []
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

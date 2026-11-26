@@ -1,0 +1,41 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc14-ready-asset",
+  "scenarios": [
+    "SC-14"
+  ],
+  "req": [
+    "SC-14",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc14-ready-asset",
+  "source": [
+    {
+      "kind": "golden",
+      "path": "ready.zip",
+      "golden": "pos-minimal"
+    }
+  ],
+  "scan": {
+    "roots": [
+      "ready.zip"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc02-related-files",
+  "scenarios": [
+    "SC-2"
+  ],
+  "req": [
+    "SC-2",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc02-related-files",
+  "source": [
+    {
+      "kind": "file",
+      "path": "model.stl",
+      "content": "solid test\nendsolid test\n"
+    },
+    {
+      "kind": "file",
+      "path": "model.step",
+      "content": "ISO-10303-21;\nEND-ISO-10303-21;"
+    },
+    {
+      "kind": "file",
+      "path": "preview.png",
+      "hex": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c48900000010494441547801010500faff00024080ff02cc01c29983f3670000000049454e44ae426082"
+    }
+  ],
+  "scan": {},
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

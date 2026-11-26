@@ -1,0 +1,78 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc10-3mf-in-zip",
+  "basis": [
+    "TZ 13.2 / SC-10",
+    "TZ 13.2 / SC-4",
+    "container_manifest_v1.md 5-6",
+    "T-032: nested_action, max_depth and specialized_container_verified"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import",
+          "entries": {
+            "outer.zip!model.3mf": {
+              "decision": "include",
+              "explanation_id": "specialized_container_verified"
+            }
+          }
+        }
+      ],
+      "archives": {
+        "outer.zip": {
+          "status": "listed"
+        }
+      },
+      "nodes": {
+        "outer.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "376"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      },
+      "archive_indices": {
+        "outer.zip": {
+          "0": {
+            "index": 0,
+            "size": "260",
+            "method": 0,
+            "crc32": "4f16787e"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "source_paths": [
+                "outer.zip!model.3mf"
+              ]
+            }
+          ],
+          "input_count": 1,
+          "nested_actions": []
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

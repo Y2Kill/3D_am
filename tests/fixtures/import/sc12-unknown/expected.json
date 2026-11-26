@@ -1,0 +1,94 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc12-unknown",
+  "basis": [
+    "TZ 13.2 / SC-12",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        ".": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "empty": {
+          "kind": "file",
+          "status": "available",
+          "size": "0"
+        },
+        "no-extension": {
+          "kind": "file",
+          "status": "available",
+          "size": "6"
+        },
+        "project.lys": {
+          "kind": "file",
+          "status": "available",
+          "size": "14"
+        }
+      },
+      "summary": {
+        "nodes": 4
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "6",
+              "sha256": "895e012ee51170d1a525ac23893bd542f1c1e99d394defbbbb79f088480c2878",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "14",
+              "sha256": "7d5d1c62f4390e4da5fa3c3c6ce0bccf77e6d5ace5b8aa00e01f2b42a07e752b",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "0",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "entries": {
+            "no-extension": {
+              "result": "included",
+              "file_sha256": "895e012ee51170d1a525ac23893bd542f1c1e99d394defbbbb79f088480c2878"
+            },
+            "project.lys": {
+              "result": "included",
+              "file_sha256": "7d5d1c62f4390e4da5fa3c3c6ce0bccf77e6d5ace5b8aa00e01f2b42a07e752b"
+            },
+            "empty": {
+              "result": "included",
+              "file_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

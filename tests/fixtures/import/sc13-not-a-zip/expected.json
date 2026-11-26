@@ -1,0 +1,60 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc13-not-a-zip",
+  "basis": [
+    "TZ 13.2 / SC-13",
+    "TZ 13.2 / SC-12",
+    "container_manifest_v1.md 5-6",
+    "T-031: first source error in strict mode; explicit partial mode records failed entry"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        "fake.zip": {
+          "detected": "unknown",
+          "kind": "file",
+          "status": "available",
+          "size": "17"
+        }
+      },
+      "archives": {},
+      "summary": {
+        "nodes": 1
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "17",
+              "sha256": "6cc4c9e4b30aabdd3d97c660e0008c6171768ea667ee7f2e3ceccc5ede802a08",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc09-multi-resource-zip",
+  "basis": [
+    "TZ 13.2 / SC-9",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import",
+          "objects": [
+            "set.zip"
+          ]
+        }
+      ],
+      "nodes": {
+        "set.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "240"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      },
+      "archive_indices": {
+        "set.zip": {
+          "0": {
+            "index": 0,
+            "size": "5",
+            "method": 0,
+            "crc32": "a5034485"
+          },
+          "1": {
+            "index": 1,
+            "size": "5",
+            "method": 0,
+            "crc32": "f6298f46"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "5",
+              "sha256": "3d7eb3d3dab17ee509a6911e0feb928eb46e956adcada792493614bfb97a7a9c",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "5",
+              "sha256": "0d4fc4a78d3706edccafb665a8b2fdd9309e82c78625bb0f2b8e7bb9e1c4d21c",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

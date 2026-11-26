@@ -1,0 +1,64 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc13-partial-allowed",
+  "scenarios": [
+    "SC-13"
+  ],
+  "req": [
+    "SC-13",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc13-partial-allowed",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "damaged.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "bad.bin",
+            "content": "bad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytesbad bytes"
+          },
+          {
+            "name": "good.bin",
+            "content": "good bytes"
+          }
+        ],
+        "patches": [
+          {
+            "kind": "crc",
+            "entry": 0,
+            "value": 0
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "damaged.zip"
+    ]
+  },
+  "plan_edits": [
+    {
+      "op": "mode",
+      "value": "partial"
+    }
+  ],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}
