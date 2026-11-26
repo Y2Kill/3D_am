@@ -899,6 +899,7 @@ class SelectionStore final:public c::IJobStore {
   am::Result<std::vector<c::JobRecord>> list(const c::JobFilter& f={})override{++queries;unfiltered=unfiltered||(f.states.empty()&&!f.parent_id);auto r=base.list(f);if(r)rows+=r->size();return r;}
   am::Result<c::JobRecord> transition(std::string_view id,S a,S b,const c::JobPatch& p={})override{return base.transition(id,a,b,p);}
   am::Result<void> report(std::string_view id,const c::JobProgress& p)override{return base.report(id,p);}
+  am::Result<void> checkpoint(std::string_view id,std::string_view json)override{return base.checkpoint(id,json);}
   am::Result<void> move_before(std::string_view id,std::optional<std::string_view> b)override{return base.move_before(id,b);}
   am::Result<std::size_t> remove_finished(std::string_view t)override{return base.remove_finished(t);}
 };
@@ -911,4 +912,62 @@ TEST_P(JobsExecutor, IdleSchedulingSelectsSameRowsWithTenThousandCompletedJobs) 
   for(unsigned i=0;i<10000;++i){const auto job=enqueue();value(store->transition(job.job_id,S::queued,S::running));value(store->transition(job.job_id,S::running,S::succeeded));}
   selected.queries=selected.rows=0;selected.unfiltered=false;value(executor.run_until_idle());
   EXPECT_EQ(selected.queries,queries);EXPECT_EQ(selected.rows,rows);EXPECT_FALSE(selected.unfiltered);
+}
+TEST_P(JobsExecutor, CheckpointSurvivesRecoveryReleaseAndRetryThroughEveryStoreWrapper) {
+  RecordProperty("req","K-121|NFR-14.4.3");
+  SelectionStore delegated(*store);
+  const auto job = enqueue("test.checkpoint");
+  const std::string checkpoint = R"({"checkpoint":{"kind":"export.publish","size":42}})";
+  auto invalid_state = delegated.checkpoint(job.job_id,checkpoint);
+  ASSERT_FALSE(invalid_state); EXPECT_EQ(invalid_state.error().code,am::Errc::conflict);
+  value(delegated.transition(job.job_id,S::queued,S::running));
+  for (std::string invalid : {"{}","null",R"({"checkpoint":[]})",R"({"checkpoint":{},"extra":0})","[{}]"}) {
+    auto rejected = delegated.checkpoint(job.job_id,invalid);
+    ASSERT_FALSE(rejected); EXPECT_EQ(rejected.error().code,am::Errc::invalid_argument);
+  }
+  value(delegated.checkpoint(job.job_id,checkpoint));
+  value(delegated.report(job.job_id,{1,2,"files","copying"}));
+#ifdef AM_JOBS_STORAGE_TESTS
+  if (auto* disk = dynamic_cast<am::db::StateJobStore*>(backing.get())) value(disk->recover_running());
+  else
+#endif
+    value(delegated.transition(job.job_id,S::running,S::queued));
+  EXPECT_EQ(get(job.job_id).result_json,checkpoint);
+  c::JobPatch start; start.result_json = R"({"ignored_start_patch":true})";
+  value(delegated.transition(job.job_id,S::queued,S::running,start));
+  EXPECT_EQ(get(job.job_id).result_json,checkpoint);
+  c::JobPatch release; release.release_attempt = true;
+  value(delegated.transition(job.job_id,S::running,S::queued,release));
+  value(delegated.transition(job.job_id,S::queued,S::running));
+  value(delegated.transition(job.job_id,S::running,S::failed));
+  value(delegated.transition(job.job_id,S::failed,S::queued));
+  value(delegated.transition(job.job_id,S::queued,S::running));
+  EXPECT_EQ(get(job.job_id).result_json,checkpoint);
+  c::JobPatch done; done.result_json = R"({"exported":true})";
+  value(delegated.transition(job.job_id,S::running,S::succeeded,done));
+  EXPECT_EQ(get(job.job_id).result_json,done.result_json);
+}
+TEST_P(JobsExecutor, DelayedProgressCannotReplaceCheckpointAndDoneReplacesIt) {
+  RecordProperty("req","K-121|NFR-14.4.3");
+  j::HandlerRegistry registry;
+  bool retry = false;
+  const std::string checkpoint = R"({"checkpoint":{"kind":"export.publish"}})";
+  add(registry,"test.checkpoint",[&](auto& context) {
+    if (retry) {
+      EXPECT_EQ(context.record().result_json,checkpoint);
+      return j::JobOutcome::success(R"({"exported":true})");
+    }
+    context.report({1,2,"files","copying"});
+    context.report({2,2,"files","copying"});
+    value(context.checkpoint(checkpoint));
+    return j::JobOutcome::failure(job_tests::error("test.failure_after_publish"));
+  });
+  auto config = options(); config.report_interval = std::chrono::hours(1);
+  j::ResourceManager resources(config.limits); j::Executor executor(*store,resources,registry,config);
+  const auto job = enqueue("test.checkpoint"); value(executor.run_until_idle());
+  EXPECT_EQ(get(job.job_id).result_json,checkpoint);
+  EXPECT_EQ(get(job.job_id).progress.done,2u);
+  retry = true; value(executor.retry(job.job_id)); value(executor.run_until_idle());
+  EXPECT_EQ(get(job.job_id).state,S::succeeded);
+  EXPECT_EQ(get(job.job_id).result_json,R"({"exported":true})");
 }

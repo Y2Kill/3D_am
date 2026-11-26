@@ -94,6 +94,9 @@ class AssetSnapshot {
   explicit AssetSnapshot(std::unique_ptr<Impl>);
   friend class AssetRepository;
 };
+// Verify the already retained generation, never its former filesystem name.
+Result<VerificationReport> verify_snapshot(const AssetSnapshot&, const ContainerVerifyOptions& = {},
+                                           std::stop_token = {}, asset_zip::ReadBudget* = nullptr);
 struct SourceFailure {
   std::string file_id;
   Error error;

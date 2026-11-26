@@ -72,6 +72,12 @@ class MemoryStore final : public c::IJobStore {
       return error("am.jobs.transition_invalid");
     for (const auto* value : {&patch.decision_json, &patch.result_json, &patch.error_json})
       if (*value && !am::json::parse_strict(**value)) return error("am.jobs.json_invalid");
+    bool preserve_checkpoint = false;
+    if (to == c::JobState::running && at->result_json) {
+      const auto checkpoint = c::is_job_checkpoint(*at->result_json);
+      if (!checkpoint) return checkpoint.error();
+      preserve_checkpoint = *checkpoint;
+    }
     at->state = to;
     if (to == c::JobState::running) {
       ++at->attempt;
@@ -84,7 +90,9 @@ class MemoryStore final : public c::IJobStore {
       at->decision_json = patch.decision_json;
     else if (patch.decision_json)
       at->decision_json = patch.decision_json;
-    if (to == c::JobState::running) at->result_json.reset();
+    if (to == c::JobState::running) {
+      if (!preserve_checkpoint) at->result_json.reset();
+    }
     else if (patch.result_json) at->result_json = patch.result_json;
     if (patch.error_json) at->error_json = patch.error_json;
     return *at;
@@ -118,6 +126,16 @@ class MemoryStore final : public c::IJobStore {
     for (auto* r : siblings) r->position = ++position;
     return {};
   }
+  am::Result<void> checkpoint(std::string_view id, std::string_view json) override {
+    const std::lock_guard lock(mutex_);
+    const auto valid = c::validate_job_checkpoint(json);
+    if (!valid) return valid.error();
+    const auto at = find(id);
+    if (at == records_.end() || at->state != c::JobState::running)
+      return am::Error::make(am::Errc::conflict, "Job is not running").id("am.jobs.state_conflict");
+    at->result_json = std::string(json);
+    return {};
+  }
   am::Result<std::size_t> remove_finished(std::string_view before) override {
     const std::lock_guard lock(mutex_);
     return std::erase_if(records_, [&](const auto& r) {
@@ -145,6 +163,9 @@ class CountingStore final : public c::IJobStore {
   am::Result<void> report(std::string_view id, const c::JobProgress& p) override {
     ++reports;
     return store_.report(id, p);
+  }
+  am::Result<void> checkpoint(std::string_view id, std::string_view json) override {
+    return store_.checkpoint(id, json);
   }
   am::Result<void> move_before(std::string_view id, std::optional<std::string_view> next) override {
     return store_.move_before(id, next);

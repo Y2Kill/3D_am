@@ -22,7 +22,7 @@ if(AM_WITH_CONTAINER)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/profile_${AM_PROFILE_ID}.hpp"
       CONTENT "#pragma once\ninline constexpr unsigned char profile_${AM_PROFILE_ID}[] = {${AM_PROFILE_BYTES}};\n")
   endforeach()
-  am_add_module(application SOURCES common/asset_service.cpp common/library_service.cpp common/development.cpp common/messages.cpp common/logging.cpp common/diagnostics.cpp common/import_service.cpp
+  am_add_module(application SOURCES common/asset_service.cpp common/library_service.cpp common/development.cpp common/messages.cpp common/logging.cpp common/diagnostics.cpp common/import_service.cpp common/export_service.cpp
     DEPENDS ${AM_APP_DEPS})
   set_property(SOURCE common/messages.cpp APPEND PROPERTY OBJECT_DEPENDS
     "${AM_MESSAGES};${CMAKE_CURRENT_BINARY_DIR}/generated/messages_resource.hpp")

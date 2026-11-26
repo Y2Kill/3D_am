@@ -89,12 +89,16 @@ struct ZipWriter::Impl {
   }
   void emit(Bytes bytes) { emit_at(position, bytes); position += bytes.size(); }
   void validate_name(std::string_view name, U64 size) {
-    if (name.empty() || name.size() > paths::ZipPathMapper::kMaxZipPathBytes)
+    if (options.path_profile == paths::ContainerPathProfile::plain && name == "manifest.json")
+      write_fail(Errc::invalid_argument, "am.zip.write.invalid_name", "Plain ZIP has no root asset manifest");
+    const auto max_name = options.path_profile == paths::ContainerPathProfile::asset
+        ? paths::ZipPathMapper::kMaxZipPathBytes : std::size_t{65535};
+    if (name.empty() || name.size() > max_name)
       write_fail(Errc::invalid_argument, "am.zip.write.invalid_name", "Path is empty or exceeds the container path byte limit");
     const auto key = unicode::path_collision_key(name);
     if (key.empty() && !name.empty()) throw write_oom();
     if (keys.contains(key)) write_fail(Errc::invalid_argument, "am.zip.write.name_collision", "Container path collides with an earlier entry");
-    auto valid = paths::check_container_path(name);
+    auto valid = paths::check_container_path(name, options.path_profile);
     if (!valid) {
       if (valid.error().code == Errc::resource_exhausted) throw write_oom();
       throw write_error(Errc::invalid_argument, "am.zip.write.invalid_name", valid.error().ctx.detail);
@@ -171,7 +175,9 @@ EntryWriter::~EntryWriter() {
 Result<ZipWriter> ZipWriter::create(std::shared_ptr<RandomAccessSink> sink, const WriterOptions& options) {
   try {
     if (!sink || sink->size() != 0 || options.deflate_level < 0 || options.deflate_level > 9) return invalid_state();
-    auto impl = std::make_shared<Impl>(); impl->sink = std::move(sink); impl->options = options; return ZipWriter(std::move(impl));
+    auto impl = std::make_shared<Impl>(); impl->sink = std::move(sink); impl->options = options;
+    if (options.path_profile == paths::ContainerPathProfile::plain) impl->options.zip_limits.max_name_bytes = 65535;
+    return ZipWriter(std::move(impl));
   } catch (const std::bad_alloc&) { return write_oom(); }
   catch (const std::exception& e) { return write_error(Errc::io_error, "am.zip.io_error", e.what()); }
 }

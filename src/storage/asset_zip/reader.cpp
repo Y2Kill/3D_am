@@ -231,6 +231,7 @@ Result<ZipArchive> ZipArchive::open(std::shared_ptr<const RandomAccessSource> so
 }
 std::span<const EntryInfo> ZipArchive::entries() const noexcept { return impl_->parsed.entries; }
 const ArchiveSummary& ZipArchive::summary() const noexcept { return impl_->parsed.summary; }
+std::shared_ptr<const RandomAccessSource> ZipArchive::source() const noexcept { return impl_->source; }
 Result<ByteRange> ZipArchive::raw_range(std::size_t index) const {
   try {
     if (index >= entries().size()) return error(Errc::io_error, "am.zip.io_error", "Invalid entry index");

@@ -412,3 +412,46 @@ am exclude <entry-path> [file]
 
 These retain their diagnostic output. `uuid` generates UUIDv7 by default and UUIDv4
 with `--v4`. They are not asset-editing commands.
+
+## Export assets and selected files
+
+```text
+am export <library> <asset-id>... --to <directory>
+  [--files 3d|3d_preview|slicer|all]... [--file <file-id>]...
+  [--name <name>] [--on-conflict fail|rename] [--verify quick|full]
+  [--enqueue-only] [--json] [--verbose]
+```
+
+With no file selection, export copies one retained asset revision byte for byte,
+preserving its AssetID. The output name uses the asset title, with portable filename
+sanitization and an AssetID fallback. Unicode spelling is preserved. `--name` is
+validated without repair and is available only for a single asset, as is `--file`.
+The destination must already exist, be outside the library, and have no link as its
+last component. Assets in the trash cannot be exported.
+
+File presets produce ordinary ZIPs without an asset manifest. `3d` selects models;
+`3d_preview` adds images and listed preview files; `slicer` selects slicer formats;
+`all` selects every current file. Repeat `--files` to combine presets and `--file`
+to add explicit current FileIDs. Historical files and user annotations are excluded.
+Selection uses TypeID when present, otherwise the filename extension. OBJ dependencies
+are not resolved automatically. See [category table v1](../specifications/export.md).
+
+Each ordinary ZIP has a root folder named after the output without `.zip`.
+The `content/<InputID>/` prefix is removed, `generated/` is retained, and colliding
+paths get numbered suffixes reported in `renamed`. Compressed streams are copied
+without recompression and checked against their manifest hashes.
+
+Existing destination files are never replaced. The default `fail` policy reports
+`am.export.target_exists`; `rename` tries numbered names through ` (99)` (a hypothesis).
+`--verify quick` is the default: full exports always validate the retained source
+through V1–V4 and reread the temporary copy to check its whole-file hash and V1–V3.
+`full` additionally rechecks the copied streams. Selective exports always check all
+selected streams, regardless of this option.
+
+Writable libraries enqueue `export.run` and one `export.asset` job per asset.
+`--enqueue-only` defers execution to `am jobs run`. Read-only libraries export directly
+and return `queued:false`; queuing is unavailable there. Checkpoints prevent a retry
+after publication from creating another file. Batch failures do not stop other assets.
+JSON results list each asset, revision, mode, target name, hash, size and outcome.
+Exit codes are 0 for success or successful queuing, 2 for invalid arguments, and 4
+when at least one asset was not exported.

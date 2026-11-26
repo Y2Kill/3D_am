@@ -139,7 +139,7 @@ Result<JobRecord> StateJobStore::transition(std::string_view id,JobState from,Jo
     const bool starting=to==JobState::running;
     const bool finished=job_terminal(to) || to==JobState::failed;
     const auto at=timestamp(clock_());
-    auto q=take(db_.prepare(std::string("UPDATE jobs SET state=?,attempt=max(0,attempt+?),started_at=CASE WHEN ? THEN ? ELSE started_at END,finished_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE finished_at END,decision_json=CASE WHEN ? THEN ? ELSE COALESCE(?,decision_json) END,result_json=CASE WHEN ?3 THEN NULL ELSE COALESCE(?,result_json) END,error_json=COALESCE(?,error_json) WHERE job_id=? AND state=? RETURNING ")+columns));
+    auto q=take(db_.prepare(std::string("UPDATE jobs SET state=?,attempt=max(0,attempt+?),started_at=CASE WHEN ? THEN ? ELSE started_at END,finished_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE finished_at END,decision_json=CASE WHEN ? THEN ? ELSE COALESCE(?,decision_json) END,result_json=CASE WHEN ?3 THEN CASE WHEN COALESCE(json_type(result_json),'')='object' AND (SELECT COUNT(*) FROM json_each(result_json))=1 AND COALESCE(json_type(result_json,'$.checkpoint'),'')='object' THEN result_json ELSE NULL END ELSE COALESCE(?,result_json) END,error_json=COALESCE(?,error_json) WHERE job_id=? AND state=? RETURNING ")+columns));
     take(q.bind(1,job_state_name(to))); take(q.bind(2,static_cast<std::int64_t>(starting ? 1 : patch.release_attempt ? -1 : 0)));
     take(q.bind(3,static_cast<std::int64_t>(starting))); take(q.bind(4,at));
     take(q.bind(5,static_cast<std::int64_t>(finished))); take(q.bind(6,at)); take(q.bind(7,static_cast<std::int64_t>(starting)));
@@ -161,6 +161,16 @@ Result<void> StateJobStore::report(std::string_view id,const JobProgress& progre
     if(progress.total) take(q.bind(2,static_cast<std::int64_t>(*progress.total))); else take(q.bind_null(2));
     take(q.bind(3,progress.unit)); take(q.bind(4,progress.stage)); take(q.bind(5,id));
     if(take(q.step())!=Step::row) throw error("am.jobs.transition_invalid");
+    take(q.step()); return {};
+  });
+}
+Result<void> StateJobStore::checkpoint(std::string_view id, std::string_view json) {
+  return guard<void>([&]() -> Result<void> {
+    const std::lock_guard lock(mutex_); const ConnectionLock connection_lock(raw_); writable(); validate_id(id);
+    take(contracts::validate_job_checkpoint(json));
+    auto q = take(db_.prepare("UPDATE jobs SET result_json=? WHERE job_id=? AND state='running' RETURNING job_id"));
+    take(q.bind(1,json)); take(q.bind(2,id));
+    if (take(q.step()) != Step::row) throw error("am.jobs.state_conflict",Errc::conflict);
     take(q.step()); return {};
   });
 }

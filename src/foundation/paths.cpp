@@ -236,16 +236,23 @@ std::string normalize_source_path(std::string_view original) {
 }
 
 Result<void> check_container_path(std::string_view path) {
+  return check_container_path(path, ContainerPathProfile::asset);
+}
+Result<void> check_container_path(std::string_view path, ContainerPathProfile profile) {
   try {
     auto invalid = [](std::string detail) -> Result<void> {
       return Error::make(Errc::invalid_argument, "Invalid container path", std::move(detail))
           .in("foundation.paths").id("am.paths.invalid_container_path");
     };
-    if (path.empty() || path.size() > ZipPathMapper::kMaxZipPathBytes) return invalid("Empty path or path exceeds 200 bytes");
+    if (profile == ContainerPathProfile::asset) {
+      if (path.empty() || path.size() > ZipPathMapper::kMaxZipPathBytes) return invalid("Empty path or path exceeds 200 bytes");
+    } else if (path.empty() || path.size() > 65535) return invalid("Empty path or path exceeds ZIP name field");
     if (!unicode::is_valid_utf8(path)) return invalid("Path is not valid UTF-8");
-    auto normalized = unicode::nfc(path);
-    if (!normalized) return normalized.error();
-    if (*normalized != path) return invalid("Path is not NFC");
+    if (profile == ContainerPathProfile::asset) {
+      auto normalized = unicode::nfc(path);
+      if (!normalized) return normalized.error();
+      if (*normalized != path) return invalid("Path is not NFC");
+    }
     for (std::size_t start = 0; start <= path.size();) {
       const auto slash = path.find('/', start);
       const auto stop = slash == std::string_view::npos ? path.size() : slash;

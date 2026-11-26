@@ -51,6 +51,7 @@ class JobContext {
   std::stop_token stop() const noexcept;
   StopReason stop_reason() const noexcept;
   void report(const contracts::JobProgress&);
+  Result<void> checkpoint(std::string_view json);
   Result<Lease> acquire(std::span<const ResourceRequest>);
   std::optional<std::string> answer() const;
   Profile profile() const noexcept;

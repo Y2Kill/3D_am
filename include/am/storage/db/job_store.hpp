@@ -18,6 +18,7 @@ class StateJobStore final : public contracts::IJobStore {
   Result<contracts::JobRecord> transition(std::string_view, contracts::JobState, contracts::JobState,
                                          const contracts::JobPatch& = {}) override;
   Result<void> report(std::string_view, const contracts::JobProgress&) override;
+  Result<void> checkpoint(std::string_view, std::string_view) override;
   Result<void> move_before(std::string_view, std::optional<std::string_view>) override;
   Result<std::size_t> remove_finished(std::string_view) override;
   // Startup recovery preserves attempt; cooperative requeue may release it.

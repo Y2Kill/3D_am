@@ -2,6 +2,7 @@
 #include "am/application/library_service.hpp"
 #include "am/application/job_service.hpp"
 #include "am/services/import/run.hpp"
+#include "am/services/export/run.hpp"
 #include "am/services/catalog/verify_job.hpp"
 #include "am/foundation/json_text.hpp"
 #include <array>
@@ -673,6 +674,7 @@ Result<JobService> JobService::open(const std::filesystem::path& root, const Job
                                               [target](Error warning) { target->warn(std::move(warning)); }));
     job_take(p->registry.add("dev.probe", [](const auto&) { return std::make_unique<ProbeJob>(); }));
     job_take(am::import::register_import_jobs(p->registry,*p->catalog,media.device_id));
+    job_take(am::exporting::register_export_jobs(p->registry,*p->catalog,*p->resources));
     jobs::ExecutorOptions executor;
     executor.limits = limits;
     executor.profile = options.profile;

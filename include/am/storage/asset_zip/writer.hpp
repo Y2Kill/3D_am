@@ -6,6 +6,7 @@
 #include "am/storage/asset_zip/reader.hpp"
 #include "am/storage/asset_zip/sink.hpp"
 #include "am/storage/asset_zip/compression_policy.hpp"
+#include "am/foundation/paths.hpp"
 
 namespace am::asset_zip {
 struct DosTime { std::uint16_t date = 0x0021, time = 0; };
@@ -15,6 +16,7 @@ struct WriterOptions {
   WriterLimits limits;
   int deflate_level = 6; // ADR-0005
   DosTime dos_time;
+  paths::ContainerPathProfile path_profile = paths::ContainerPathProfile::asset;
 };
 struct EntryOptions {
   CompressionMethod method = CompressionMethod::deflate;
