@@ -28,7 +28,7 @@ add_executable(am_unit_tests
   unit/test_stl_probe.cpp
   unit/test_command_registry.cpp
   unit/test_plugin_abi.cpp)
-target_sources(am_unit_tests PRIVATE unit/test_jobs.cpp unit/test_log.cpp)
+target_sources(am_unit_tests PRIVATE unit/test_jobs.cpp unit/test_log.cpp unit/test_export_policy.cpp)
 target_compile_definitions(am_unit_tests PRIVATE AM_LOG_RECORD_ROOT="${PROJECT_SOURCE_DIR}/.cache/log-record-tests")
 target_link_libraries(am_unit_tests PRIVATE am::application GTest::gtest_main)
 target_sources(am_unit_tests PRIVATE unit/test_node_info.cpp)
@@ -36,6 +36,9 @@ target_compile_definitions(am_unit_tests PRIVATE AM_NODE_INFO_ROOT="${PROJECT_SO
 target_compile_definitions(am_unit_tests PRIVATE
   AM_UNICODE_DATA_DIR="${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0")
 if(AM_WITH_CONTAINER)
+  target_sources(am_unit_tests PRIVATE unit/test_export_selection.cpp)
+  target_sources(am_unit_tests PRIVATE unit/test_export.cpp)
+  target_compile_definitions(am_unit_tests PRIVATE AM_EXPORT_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/export-tests")
   if(TARGET am_cli)
     find_package(CLI11 CONFIG REQUIRED)
     add_executable(am_diag_export_test_driver ${PROJECT_SOURCE_DIR}/src/application/cli/main.cpp cli/diagnostic_node_data_hook.cpp)
@@ -117,7 +120,14 @@ if(AM_WITH_CONTAINER)
 endif()
 am_apply_defaults(am_unit_tests)
 gtest_discover_tests(am_unit_tests DISCOVERY_MODE PRE_TEST
+  TEST_FILTER "*-ExportStreaming.*"
   XML_OUTPUT_DIR "${PROJECT_BINARY_DIR}/gtest-xml")
+
+if(AM_WITH_CONTAINER)
+  add_test(NAME export_streaming_measurement
+    COMMAND am_unit_tests --gtest_filter=ExportStreaming.IncompressibleSizesRecordPeakAndResidualMemory)
+  set_tests_properties(export_streaming_measurement PROPERTIES LABELS "periodic;req:K-116;req:NFR-14.2.3" TIMEOUT 900)
+endif()
 
 # Python-based checks: architecture (ADR-0024) and the manifest schema 1.0 (ADR-0036 item 8, ADR-0039).
 # - Default: a missing jsonschema module makes schema_check FAIL (not a silent SKIP).
@@ -165,6 +175,10 @@ if(AM_PYTHON_TESTS)
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/tools/message_catalog_check.py --root ${PROJECT_SOURCE_DIR})
       set_tests_properties(message_catalog_check PROPERTIES LABELS "req:ADR-0032;req:ADR-0034")
       if(TARGET am_cli)
+      add_test(NAME cli_export
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_export_cli.py
+          --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/export-cli-tests --project ${PROJECT_SOURCE_DIR})
+      set_tests_properties(cli_export PROPERTIES LABELS "req:K-10;req:K-46;req:K-127;req:NFR-14.5.6" TIMEOUT 180)
       add_test(NAME cli_import_run
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_import_run_cli.py
           --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/import-run-cli-tests)

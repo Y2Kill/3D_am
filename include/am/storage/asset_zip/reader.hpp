@@ -76,6 +76,9 @@ class ZipArchive {
                                  ZipReadProfile profile);
   std::span<const EntryInfo> entries() const noexcept;
   const ArchiveSummary& summary() const noexcept;
+  // The retained source keeps the same open file generation alive across an
+  // atomic replacement. Consumers must not reopen its original path.
+  std::shared_ptr<const RandomAccessSource> source() const noexcept;
   Result<ByteRange> raw_range(std::size_t index) const;
   // Relative compressed offset; bounded by raw_range, without budget charges.
   Result<std::size_t> read_raw(std::size_t index, std::uint64_t offset, std::span<std::byte> output) const;

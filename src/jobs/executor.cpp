@@ -693,6 +693,15 @@ const JobRecord& JobContext::record() const noexcept { return execution_->record
 std::stop_token JobContext::stop() const noexcept { return execution_->stop.get_token(); }
 StopReason JobContext::stop_reason() const noexcept { return execution_->reason.load(); }
 void JobContext::report(const JobProgress& progress) { state_->report(execution_, progress, false); }
+Result<void> JobContext::checkpoint(std::string_view json) {
+  return guard<void>([&]() -> Result<void> {
+    take(contracts::validate_job_checkpoint(json));
+    const std::lock_guard lock(state_->mutex);
+    take(state_->store.checkpoint(execution_->record.job_id, json));
+    execution_->record.result_json = std::string(json);
+    return {};
+  });
+}
 Result<Lease> JobContext::acquire(std::span<const ResourceRequest> requests) {
   return state_->resources.acquire(requests, record().priority >= interactive_priority, record().priority, stop());
 }

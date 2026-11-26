@@ -1,8 +1,8 @@
 # Application services (modules 8-13, 16-18): import/analyze, export, catalog and
 # index, search, duplicates, preview, external editing sessions.
-set(AM_SERVICES_SOURCES import/exclusion_rules.cpp)
+set(AM_SERVICES_SOURCES import/exclusion_rules.cpp export/categories.cpp export/names.cpp)
 if(AM_WITH_CONTAINER)
-  list(APPEND AM_SERVICES_SOURCES catalog/indexer.cpp import/scan.cpp import/plan.cpp import/run.cpp import/zip_scan.cpp import/zip_execution.cpp)
+  list(APPEND AM_SERVICES_SOURCES catalog/indexer.cpp import/scan.cpp import/plan.cpp import/run.cpp import/zip_scan.cpp import/zip_execution.cpp export/selection.cpp export/run.cpp)
   find_package(jsoncons CONFIG REQUIRED)
   set(AM_IMPORT_SCHEMA "${PROJECT_SOURCE_DIR}/schemas/import-plan.v1.schema.json")
   file(READ "${AM_IMPORT_SCHEMA}" AM_IMPORT_SCHEMA_TEXT)

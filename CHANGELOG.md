@@ -20,6 +20,10 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- `am export` copies a retained asset revision byte for byte or exports selected
+  current files as an ordinary ZIP. Portable names, publication without replacement,
+  resumable export jobs and direct export from read-only libraries are supported.
+
 - Import expands ZIP archives nested inside ZIP inputs (plan version 3). Stored
   nested archives are read in place; compressed ones are unpacked into the
   library's temporary area. Depth, temporary space and total unpacked bytes are

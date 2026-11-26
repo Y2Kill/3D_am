@@ -2,6 +2,7 @@
 #include <array>
 #include <optional>
 #include "am/foundation/result.hpp"
+#include "am/foundation/json_text.hpp"
 
 namespace am::contracts {
 enum class JobState { queued, running, paused, needs_decision, waiting_resources, resource_error,
@@ -53,12 +54,31 @@ struct JobRecord {
 // queued -> running consumes an attempt. A cooperative shutdown may release it
 // only on running -> queued; crash recovery keeps the previous attempt count.
 // A decision answer is the original question plus {"answer":{"option":"..."}}.
-// A result belongs to the last attempt and is cleared at queued -> running.
+// A final result belongs to the last attempt and is cleared at queued -> running.
+// The exact wrapper {"checkpoint": <object>} is a durable handler checkpoint:
+// it survives recovery and the beginning of another attempt until replaced by
+// a final result. A missing JobPatch.result_json leaves the stored value intact.
 struct JobPatch {
   std::optional<std::string> decision_json, result_json, error_json;
   bool clear_decision = false, release_attempt = false;
 };
 struct JobFilter { std::vector<JobState> states; std::optional<std::string> parent_id; bool top_level_only = false; };
+inline Result<bool> is_job_checkpoint(std::string_view text) {
+  auto parsed = json::parse_strict(text);
+  if (!parsed) return parsed.error();
+  const auto& root = parsed->nodes.front();
+  if (root.kind != json::Kind::object || root.children.size() != 1) return false;
+  const auto& child = parsed->nodes[root.children.front()];
+  return child.edge == "checkpoint" && child.kind == json::Kind::object;
+}
+inline Result<void> validate_job_checkpoint(std::string_view text) {
+  auto valid = is_job_checkpoint(text);
+  if (!valid && valid.error().code == Errc::resource_exhausted) return valid.error();
+  if (!valid || !*valid)
+    return Error::make(Errc::invalid_argument, "Invalid job checkpoint wrapper")
+        .in("contracts.jobs").id("am.jobs.checkpoint_invalid");
+  return {};
+}
 class IJobStore {
  public:
   virtual ~IJobStore() = default;
@@ -67,6 +87,9 @@ class IJobStore {
   virtual Result<std::vector<JobRecord>> list(const JobFilter& = {}) = 0;
   virtual Result<JobRecord> transition(std::string_view, JobState, JobState, const JobPatch& = {}) = 0;
   virtual Result<void> report(std::string_view, const JobProgress&) = 0;
+  // Synchronous, running-only durable replacement of result_json. Never
+  // throttled and independent of progress reports; other states give conflict.
+  virtual Result<void> checkpoint(std::string_view job_id, std::string_view json) = 0;
   virtual Result<void> move_before(std::string_view, std::optional<std::string_view>) = 0;
   virtual Result<std::size_t> remove_finished(std::string_view) = 0;
 };

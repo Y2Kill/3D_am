@@ -12,6 +12,7 @@
 #include "am/application/asset_service.hpp"
 #include "am/application/development.hpp"
 #include "am/application/import_service.hpp"
+#include "am/application/export_service.hpp"
 #include "am/application/job_service.hpp"
 #include "am/application/library_service.hpp"
 #include "am/application/logging.hpp"
@@ -229,7 +230,16 @@ void print_diagnostics(const app::AssetOutcome& result, bool verbose) {
 }
 void print_text(const std::string& command, const app::AssetOutcome& result, bool verbose) {
   const auto& j = result.value;
-  if (command == "import scan") {
+  if (command == "export") {
+    std::cout << app::message_text("am.export.summary") << '\n';
+    for (const auto& asset : j.at("assets")) {
+      std::cout << asset.at("asset_id").get<std::string>() << ' ' << asset.at("status").get<std::string>();
+      if (asset.contains("target_name")) std::cout << ' ' << asset.at("target_name").get<std::string>();
+      if (asset.contains("error") && asset.at("error").is_object())
+        std::cout << ' ' << app::message_text(asset.at("error").value("message_id",std::string{}));
+      std::cout << '\n';
+    }
+  } else if (command == "import scan") {
     std::cout << app::message_text("am.import.scan_summary") << ": " << j.dump() << '\n';
   } else if (command.starts_with("library ")) {
     for (const auto& [key, value] : j.items()) {
@@ -473,6 +483,39 @@ int main(int argc, char** argv) {
   media->add_option("path", media_path)->required();
   presentation(media);
   media->callback([&] { render_jobs("media", app::inspect_media(path(media_path))); });
+  auto* export_assets_command = cli.add_subcommand("export", "Export assets or selected current files without replacing existing files");
+  std::string export_library, export_target, export_name, export_conflict = "fail", export_verify = "quick";
+  std::vector<std::string> export_assets, export_presets, export_files;
+  bool export_enqueue = false;
+  export_assets_command->add_option("library",export_library)->required();
+  export_assets_command->add_option("asset-id",export_assets)->required()->expected(-1);
+  export_assets_command->add_option("--to",export_target)->required();
+  export_assets_command->add_option("--files",export_presets)->check(CLI::IsMember({"3d","3d_preview","slicer","all"}));
+  export_assets_command->add_option("--file",export_files);
+  auto* export_name_option = export_assets_command->add_option("--name",export_name);
+  export_assets_command->add_option("--on-conflict",export_conflict)->check(CLI::IsMember({"fail","rename"}));
+  export_assets_command->add_option("--verify",export_verify)->check(CLI::IsMember({"quick","full"}));
+  export_assets_command->add_flag("--enqueue-only",export_enqueue);
+  presentation(export_assets_command);
+  export_assets_command->callback([&] {
+    JobSignals signals;
+    app::ExportOptions options;
+    options.request.asset_ids = export_assets; options.request.target_dir = path(export_target);
+    options.request.file_ids = export_files; options.enqueue_only = export_enqueue;
+    for (const auto& value : export_presets) {
+      const auto preset = am::exporting::parse_preset(value);
+      if (!preset) { render("export",preset.error()); return; }
+      options.request.presets.push_back(*preset);
+    }
+    if (export_name_option->count()) options.request.name = export_name;
+    options.request.on_conflict = export_conflict == "fail" ? am::exporting::ConflictPolicy::fail : am::exporting::ConflictPolicy::rename;
+    options.request.verify_full = export_verify == "full";
+    options.jobs.on_event = print_job_event;
+    auto result = app::export_assets(path(export_library),options,signals.token());
+    const bool usage_error = !result && result.error().code == am::Errc::invalid_argument;
+    render("export",std::move(result));
+    if (usage_error) code = 2;
+  });
   auto* import_command = cli.add_subcommand("import", "Scan sources and propose an editable import plan");
   import_command->require_subcommand(1);
   auto* import_scan = import_command->add_subcommand("scan", "Read sources without modifying them or creating assets");

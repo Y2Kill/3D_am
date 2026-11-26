@@ -527,6 +527,31 @@ Result<AssetSnapshot> AssetRepository::load(const AssetRef& ref, bool require_v2
   });
 }
 Result<AssetSnapshot> AssetRepository::snapshot(const AssetRef& ref, bool include_trash) const { return load(ref,true,include_trash); }
+Result<VerificationReport> verify_snapshot(const AssetSnapshot& snapshot, const ContainerVerifyOptions& supplied,
+                                           std::stop_token stop, asset_zip::ReadBudget* shared_budget) {
+  return guard<VerificationReport>([&] {
+    class StoppableSource final : public asset_zip::RandomAccessSource {
+     public:
+      std::shared_ptr<const asset_zip::RandomAccessSource> retained;
+      std::stop_token stop;
+      StoppableSource(std::shared_ptr<const asset_zip::RandomAccessSource> source, std::stop_token token)
+          : retained(std::move(source)), stop(token) {}
+      std::uint64_t size() const noexcept override { return retained->size(); }
+      Result<std::size_t> read_at(std::uint64_t offset, std::span<std::byte> bytes) const override {
+        if (stop.stop_requested()) return error(Errc::cancelled,"am.export.cancelled",{});
+        return retained->read_at(offset, bytes);
+      }
+    };
+    auto options = supplied;
+    if (!options.semantic_validator) options.semantic_validator = std::make_shared<Invariants>(true);
+    auto source = std::make_shared<StoppableSource>(snapshot.archive().source(), stop);
+    auto archive = take(asset_zip::ZipArchive::open(source, options.zip_limits));
+    asset_zip::ReadBudget budget(options.read_budget);
+    auto schema = container_schema();
+    return check_container(archive, snapshot.manifest(), options, {snapshot.ref(), {}}, shared_budget ? *shared_budget : budget,
+                           [&] { take(schema.validate(snapshot.manifest())); });
+  });
+}
 Result<VerificationReport> AssetRepository::verify(const AssetRef& ref, VerifyLevel level, const std::vector<std::string>& ids) const {
   return guard<VerificationReport>([&] {
     auto snap = take(load(ref,false)); asset_zip::ReadBudget budget(impl_->options.read_budget);
