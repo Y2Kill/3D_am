@@ -1,0 +1,43 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc01-single-stl",
+  "scenarios": [
+    "SC-1",
+    "SC-16"
+  ],
+  "req": [
+    "SC-1",
+    "SC-16",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc01-single-stl",
+  "source": [
+    {
+      "kind": "file",
+      "path": "model.stl",
+      "content": "solid test\nendsolid test\n"
+    }
+  ],
+  "scan": {
+    "roots": [
+      "model.stl"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

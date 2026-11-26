@@ -1,0 +1,108 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc08-mixed-single",
+  "basis": [
+    "TZ 13.2 / SC-8",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        "a": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "a/image.png": {
+          "kind": "file",
+          "status": "available",
+          "size": "73"
+        },
+        "a/model.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "127"
+        },
+        "b": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "b/loose.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "11"
+        },
+        "b/sub": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "b/sub/info.txt": {
+          "kind": "file",
+          "status": "available",
+          "size": "10"
+        }
+      },
+      "summary": {
+        "nodes": 7
+      },
+      "archive_indices": {
+        "a/model.zip": {
+          "0": {
+            "index": 0,
+            "size": "13",
+            "method": 0,
+            "crc32": "3016e6a5"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "13",
+              "sha256": "cd7a289501b3946afd2dbf8a712439a3478adc2f7856c54fabdf7c0a149da60b",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "73",
+              "sha256": "ff66ac1d882ca69f3099ec964ba585c524db70d2a6a100a679f7bf7db16a2f33",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "11",
+              "sha256": "abf0488c3388b7f5207f0b78bd1e416fe305f0bdfeab86db44375f3a540ad0e3",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "10",
+              "sha256": "aedaadb7e1e371fbccbadeffb3597939732b97c876e1497664c7334a154bea3c",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

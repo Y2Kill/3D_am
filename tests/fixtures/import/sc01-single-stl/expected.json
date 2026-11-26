@@ -1,0 +1,62 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc01-single-stl",
+  "basis": [
+    "TZ 13.2 / SC-1",
+    "TZ 13.2 / SC-16",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "25",
+              "sha256": "62184020bf75b8b17afc4d87ea2edefbe9bf23a7229405633a54a584017aba27",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "entries": {
+            "model.stl": {
+              "result": "included"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "ch-case-collision",
+  "scenarios": [
+    "SC-4"
+  ],
+  "req": [
+    "SC-4",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "ch-case-collision",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "collision.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "Model.stl",
+            "content": "upper model"
+          },
+          {
+            "name": "model.stl",
+            "content": "lower model"
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "collision.zip"
+    ]
+  },
+  "plan_edits": [
+    {
+      "op": "decision",
+      "path": "collision.zip!Model.stl",
+      "value": "include"
+    },
+    {
+      "op": "decision",
+      "path": "collision.zip!model.stl",
+      "value": "include"
+    },
+    {
+      "op": "action",
+      "path": "collision.zip",
+      "value": "import"
+    }
+  ],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

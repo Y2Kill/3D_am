@@ -1,0 +1,92 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc07-ratio-limit",
+  "basis": [
+    "TZ 13.2 / SC-7",
+    "TZ 13.2 / SC-13",
+    "container_manifest_v1.md 5-6",
+    "T-032: nested_action, max_depth and specialized_container_verified",
+    "TZ 13.3.5: reaching a limit means incomplete investigation"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "incomplete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "ask"
+        }
+      ],
+      "archives": {
+        "large.zip": {
+          "status": "limit_exceeded",
+          "problem": {
+            "limit": "max_unpacked_bytes"
+          }
+        }
+      },
+      "nodes": {
+        "large.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "1145"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      },
+      "archive_indices": {
+        "large.zip": {
+          "0": {
+            "index": 0,
+            "size": "1024",
+            "method": 8,
+            "crc32": "a9da8aa6"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "failed",
+            "error": {
+              "message_id": "am.import.archive.limit_exceeded",
+              "code": "am.unsupported"
+            },
+            "problem": {
+              "limit": "max_unpacked_bytes",
+              "effective_value": "32",
+              "source": "plan"
+            }
+          }
+        ]
+      },
+      "assets": []
+    },
+    "verify": {
+      "corrupt": 0
+    },
+    "run_partial": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "failed",
+            "error": {
+              "message_id": "am.import.archive.limit_exceeded",
+              "code": "am.unsupported"
+            },
+            "problem": {
+              "limit": "max_unpacked_bytes",
+              "effective_value": "32",
+              "source": "plan"
+            }
+          }
+        ]
+      },
+      "assets": []
+    }
+  }
+}

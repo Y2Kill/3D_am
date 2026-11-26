@@ -1,0 +1,92 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "ch-unsafe-zip-paths",
+  "scenarios": [
+    "SC-4",
+    "SC-13"
+  ],
+  "req": [
+    "SC-4",
+    "SC-13",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "ch-unsafe-zip-paths",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "unsafe.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "../escape.stl",
+            "content": "unsafe 0"
+          },
+          {
+            "name": "/absolute.stl",
+            "content": "unsafe 1"
+          },
+          {
+            "name": "C:/drive.stl",
+            "content": "unsafe 2"
+          },
+          {
+            "name": "back\\slash.stl",
+            "content": "unsafe 3"
+          },
+          {
+            "name": "safe.stl",
+            "content": "safe bytes"
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "unsafe.zip"
+    ]
+  },
+  "plan_edits": [
+    {
+      "op": "decision",
+      "path": "unsafe.zip!../escape.stl",
+      "value": "exclude"
+    },
+    {
+      "op": "decision",
+      "path": "unsafe.zip!/absolute.stl",
+      "value": "exclude"
+    },
+    {
+      "op": "decision",
+      "path": "unsafe.zip!C:/drive.stl",
+      "value": "exclude"
+    },
+    {
+      "op": "decision",
+      "path": "unsafe.zip!back\\slash.stl",
+      "value": "exclude"
+    },
+    {
+      "op": "action",
+      "path": "unsafe.zip",
+      "value": "import"
+    }
+  ],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

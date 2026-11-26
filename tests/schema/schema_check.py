@@ -725,4 +725,46 @@ for path in actual_plans:
         plan_actual_counts[value["version"]] += 1
 for version in (1, 2, 3):
     print(f"import plan schema v{version}: {plan_contract_counts[version]} static contract cases and {plan_actual_counts[version]} actual plans checked")
+# T-034: declarative input and independently authored import expectations.
+corpus_validators = {}
+for kind in ("import-case", "expected-import"):
+    schema = json.loads((Path(args.root) / f"schemas/{kind}.v1.schema.json").read_text("utf8"))
+    jsonschema.Draft202012Validator.check_schema(schema)
+    corpus_validators[kind] = jsonschema.Draft202012Validator(schema)
+corpus_cases = sorted((Path(args.root) / "tests/fixtures/import").glob("*/case.json"))
+seen_scenarios = set()
+report("import-corpus:nonempty", "SC-1", "declarative corpus exists", True, bool(corpus_cases))
+for path in corpus_cases:
+    case = json.loads(path.read_text("utf8"))
+    expected = json.loads((path.parent / "expected.json").read_text("utf8"))
+    report("import-corpus:case:" + path.parent.name, "SC-1", "case schema", True,
+           corpus_validators["import-case"].is_valid(case))
+    report("import-corpus:expected:" + path.parent.name, "SC-1", "expectation schema", True,
+           corpus_validators["expected-import"].is_valid(expected))
+    report("import-corpus:identity:" + path.parent.name, "SC-1", "case directory and expectation identity", True,
+           case.get("case") == path.parent.name == expected.get("case"))
+    scenarios = case.get("scenarios", [])
+    seen_scenarios.update(scenarios)
+    report("import-corpus:requirements:" + path.parent.name, "SC-1", "scenarios included in req labels", True,
+           bool(scenarios) and set(scenarios).issubset(case.get("req", [])))
+    labels = {step.get("name", step["command"]) for step in case["steps"]}
+    report("import-corpus:steps:" + path.parent.name, "SC-1", "every step has an expectation", True,
+           labels == set(expected["steps"]))
+for number in range(1, 17):
+    scenario = f"SC-{number}"
+    report("import-corpus:coverage:" + scenario, scenario, "scenario has a declarative case", True,
+           scenario in seen_scenarios)
+if corpus_cases:
+    sample = json.loads(corpus_cases[0].read_text("utf8"))
+    for label, change in (("extra", {"extra": True}), ("version", {"version": 2}),
+                          ("no-scenario", {"scenarios": []}), ("unknown-scenario", {"scenarios": ["SC-17"]})):
+        value = copy.deepcopy(sample)
+        value.update(change)
+        report("import-corpus:negative:" + label, "SC-1", "invalid case rejected", False,
+               corpus_validators["import-case"].is_valid(value))
+    value = json.loads((corpus_cases[0].parent / "expected.json").read_text("utf8"))
+    value["steps"]["scan"]["unexpected"] = True
+    report("import-corpus:negative:expected-extra", "SC-1", "unknown expectation projection rejected", False,
+           corpus_validators["expected-import"].is_valid(value))
+print(f"import corpus schemas: {len(corpus_cases)} cases, {len(seen_scenarios)} scenarios checked")
 sys.exit(1 if failures else 0)

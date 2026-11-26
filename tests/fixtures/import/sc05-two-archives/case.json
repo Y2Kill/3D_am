@@ -1,0 +1,56 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc05-two-archives",
+  "scenarios": [
+    "SC-5"
+  ],
+  "req": [
+    "SC-5",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc05-two-archives",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "small.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "part.stl",
+            "content": "small scale"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "zip",
+      "path": "large.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "part.stl",
+            "content": "large scale"
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {},
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

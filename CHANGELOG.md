@@ -20,6 +20,10 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- A generated import regression corpus covers all sixteen scenario IDs through
+  the real CLI, with declarative expectations, source preservation checks and
+  explicit filesystem restrictions on Linux.
+
 - `am export` copies a retained asset revision byte for byte or exports selected
   current files as an ordinary ZIP. Portable names, publication without replacement,
   resumable export jobs and direct export from read-only libraries are supported.

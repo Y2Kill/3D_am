@@ -1,0 +1,96 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "ch-appledouble",
+  "basis": [
+    "TZ 13.2 / SC-12",
+    "container_manifest_v1.md 5-6",
+    "T-031: raw names, safe paths and explicit decisions"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import",
+          "entries": {
+            "._model.stl": {
+              "decision": "exclude",
+              "rule_id": "macos.appledouble"
+            },
+            "._real.stl": {
+              "decision": "include"
+            }
+          }
+        }
+      ],
+      "nodes": {
+        ".": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "._model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "8"
+        },
+        "._real.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "19"
+        },
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        }
+      },
+      "summary": {
+        "nodes": 4
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "19",
+              "sha256": "16e37ae1a57b0a3308a39603a434453d59df3be4d5525df5b38df3baf57a0e54",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "25",
+              "sha256": "62184020bf75b8b17afc4d87ea2edefbe9bf23a7229405633a54a584017aba27",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "entries": {
+            "._model.stl": {
+              "result": "excluded",
+              "exclusion": {
+                "rule": "macos.appledouble"
+              }
+            },
+            "._real.stl": {
+              "result": "included"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

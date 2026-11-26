@@ -1,0 +1,91 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc02-related-files",
+  "basis": [
+    "TZ 13.2 / SC-2",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        ".": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "model.step": {
+          "kind": "file",
+          "status": "available",
+          "size": "31"
+        },
+        "model.stl": {
+          "kind": "file",
+          "status": "available",
+          "size": "25"
+        },
+        "preview.png": {
+          "kind": "file",
+          "status": "available",
+          "size": "73"
+        }
+      },
+      "summary": {
+        "nodes": 4
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "25",
+              "sha256": "62184020bf75b8b17afc4d87ea2edefbe9bf23a7229405633a54a584017aba27",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "31",
+              "sha256": "115a4cabbfdef7b4ee9871ee7d770cd36ae469f194273da0fc1c3b8e83490517",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "73",
+              "sha256": "604ef5af7564a3923d26e0fbb8d7db82ebe91e5578e65c1e340b19bcf141023b",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "entries": {
+            "model.stl": {
+              "result": "included"
+            },
+            "model.step": {
+              "result": "included"
+            },
+            "preview.png": {
+              "result": "included"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

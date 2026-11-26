@@ -1,0 +1,57 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc04-plain-zip",
+  "scenarios": [
+    "SC-4"
+  ],
+  "req": [
+    "SC-4",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc04-plain-zip",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "model.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "folder/",
+            "content": ""
+          },
+          {
+            "name": "folder/model.stl",
+            "content": "stored model"
+          },
+          {
+            "name": "data.bin",
+            "content": "deflated data",
+            "method": "deflate"
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "model.zip"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

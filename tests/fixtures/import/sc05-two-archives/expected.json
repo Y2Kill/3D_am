@@ -1,0 +1,112 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc05-two-archives",
+  "basis": [
+    "TZ 13.2 / SC-5",
+    "container_manifest_v1.md 5-6",
+    "T-034 V-1: one Input, two archive objects with distinct storage prefixes"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "archives": {
+        "small.zip": {
+          "status": "listed"
+        },
+        "large.zip": {
+          "status": "listed"
+        }
+      },
+      "nodes": {
+        ".": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "large.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "125"
+        },
+        "small.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "125"
+        }
+      },
+      "summary": {
+        "nodes": 3
+      },
+      "archive_indices": {
+        "small.zip": {
+          "0": {
+            "index": 0,
+            "size": "11",
+            "method": 0,
+            "crc32": "85dcdbf3"
+          }
+        },
+        "large.zip": {
+          "0": {
+            "index": 0,
+            "size": "11",
+            "method": 0,
+            "crc32": "ff512c41"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "11",
+              "sha256": "c01747a49857c9f7cbfb216779c62c48e1cc9846da0bcfaac2e573d1d085298b",
+              "origin_kind": "imported",
+              "storage_relative": "small/part.stl"
+            },
+            {
+              "size_bytes": "11",
+              "sha256": "3a7d62398f20c551e1d5f8b0799047b91786ac1cc22ffbbf62eee8a3ef7bdbe1",
+              "origin_kind": "imported",
+              "storage_relative": "large/part.stl"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "object_counts": {
+            "archive": 2
+          },
+          "object_entries": {
+            "small.zip!part.stl": {
+              "result": "included",
+              "file_sha256": "c01747a49857c9f7cbfb216779c62c48e1cc9846da0bcfaac2e573d1d085298b"
+            },
+            "large.zip!part.stl": {
+              "result": "included",
+              "file_sha256": "3a7d62398f20c551e1d5f8b0799047b91786ac1cc22ffbbf62eee8a3ef7bdbe1"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

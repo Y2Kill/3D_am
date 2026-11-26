@@ -1,0 +1,61 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc10-3mf-in-zip",
+  "scenarios": [
+    "SC-10",
+    "SC-4"
+  ],
+  "req": [
+    "SC-10",
+    "SC-4",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc10-3mf-in-zip",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "outer.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "model.3mf",
+            "zip": {
+              "entries": [
+                {
+                  "name": "[Content_Types].xml",
+                  "content": "<Types/>"
+                },
+                {
+                  "name": "3D/3dmodel.model",
+                  "content": "<model/>"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "outer.zip"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc13-partial-allowed",
+  "basis": [
+    "TZ 13.2 / SC-13",
+    "container_manifest_v1.md 5-6",
+    "T-031: first source error in strict mode; explicit partial mode records failed entry"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        "damaged.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "502"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      },
+      "archive_indices": {
+        "damaged.zip": {
+          "0": {
+            "index": 0,
+            "size": "288",
+            "method": 0,
+            "crc32": "00000000"
+          },
+          "1": {
+            "index": 1,
+            "size": "10",
+            "method": 0,
+            "crc32": "554e520e"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "10",
+              "sha256": "d6004ba597d097dfd95ac55076dbf03325b89d41b94fe8366c310a779ae57be5",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "input_completeness": [
+            "incomplete"
+          ],
+          "entries": {
+            "bad.bin": {
+              "result": "failed"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

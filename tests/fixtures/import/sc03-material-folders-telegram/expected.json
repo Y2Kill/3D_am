@@ -1,0 +1,179 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc03-material-folders-telegram",
+  "basis": [
+    "TZ 13.2 / SC-3",
+    "container_manifest_v1.md 5-6",
+    "T-034 V-2 / T-030 4: directory_inference claim without review"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "import",
+          "title_hint": "material-a",
+          "context": {
+            "sources": [
+              {
+                "confirmed": false,
+                "kind": "telegram_channel",
+                "name": "channel"
+              }
+            ]
+          }
+        },
+        {
+          "kind": "new_asset",
+          "action": "import",
+          "title_hint": "material-b",
+          "context": {
+            "sources": [
+              {
+                "confirmed": false,
+                "kind": "telegram_channel",
+                "name": "channel"
+              }
+            ]
+          }
+        }
+      ],
+      "nodes": {
+        ".": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "channel": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "channel/material-a": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "channel/material-a/a.png": {
+          "kind": "file",
+          "status": "available",
+          "size": "73"
+        },
+        "channel/material-a/a.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "114"
+        },
+        "channel/material-b": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "channel/material-b/b.png": {
+          "kind": "file",
+          "status": "available",
+          "size": "73"
+        },
+        "channel/material-b/b.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "114"
+        }
+      },
+      "summary": {
+        "nodes": 8
+      },
+      "archive_indices": {
+        "channel/material-a/a.zip": {
+          "0": {
+            "index": 0,
+            "size": "6",
+            "method": 0,
+            "crc32": "234d2f68"
+          }
+        },
+        "channel/material-b/b.zip": {
+          "0": {
+            "index": 0,
+            "size": "6",
+            "method": 0,
+            "crc32": "ba447ed2"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          },
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "6",
+              "sha256": "5644bfb3ea0e4410fba37180b21a0b860aeb13afa723c2deb433f69d8287e0d1",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "73",
+              "sha256": "ff66ac1d882ca69f3099ec964ba585c524db70d2a6a100a679f7bf7db16a2f33",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": true,
+          "source_contexts": [
+            {
+              "kind": "telegram_channel",
+              "name": "channel",
+              "claims": [
+                {
+                  "method": "directory_inference",
+                  "has_review": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "files": [
+            {
+              "size_bytes": "6",
+              "sha256": "6f08077842f54d58943c59247c5a929facc52cdc27203d1f2f1df6f46d481d7c",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "73",
+              "sha256": "88927f1f178e03c8456a206174ec0829d17d6fd663cc14e4ca7fb3946014589f",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": true,
+          "source_contexts": [
+            {
+              "kind": "telegram_channel",
+              "name": "channel",
+              "claims": [
+                {
+                  "method": "directory_inference",
+                  "has_review": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

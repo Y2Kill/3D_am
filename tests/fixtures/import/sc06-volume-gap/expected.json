@@ -1,0 +1,64 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc06-volume-gap",
+  "basis": [
+    "TZ 13.2 / SC-6",
+    "TZ 13.2 / SC-13",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "action": "ask",
+          "reason_flags": {
+            "volume_set_unconfirmed": true
+          },
+          "volume_sets": [
+            {
+              "confirmed": false,
+              "missing_indices": [
+                2
+              ]
+            }
+          ]
+        }
+      ],
+      "nodes": {
+        ".": {
+          "kind": "directory",
+          "status": "available"
+        },
+        "set.part1.rar": {
+          "kind": "file",
+          "status": "available",
+          "size": "30"
+        },
+        "set.part3.rar": {
+          "kind": "file",
+          "status": "available",
+          "size": "30"
+        }
+      },
+      "summary": {
+        "nodes": 3
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "deferred",
+            "message_id": "am.import.run.unresolved"
+          }
+        ]
+      },
+      "assets": []
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

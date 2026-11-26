@@ -1,0 +1,56 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc07-nested-expand",
+  "scenarios": [
+    "SC-7"
+  ],
+  "req": [
+    "SC-7",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc07-nested-expand",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "outer.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "inner.zip",
+            "zip": {
+              "entries": [
+                {
+                  "name": "part.stl",
+                  "content": "nested part"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "outer.zip"
+    ],
+    "profile_toml": "# Hypothesis: synthetic test policy, not a product threshold.\nid=\"case\"\nversion=1\n[nested]\naction=\"expand\"\nmax_depth=3\n"
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

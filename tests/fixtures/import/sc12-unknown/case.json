@@ -1,0 +1,47 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc12-unknown",
+  "scenarios": [
+    "SC-12"
+  ],
+  "req": [
+    "SC-12",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc12-unknown",
+  "source": [
+    {
+      "kind": "file",
+      "path": "no-extension",
+      "hex": "bf307f005544"
+    },
+    {
+      "kind": "file",
+      "path": "project.lys",
+      "content": "opaque project"
+    },
+    {
+      "kind": "file",
+      "path": "empty",
+      "content": ""
+    }
+  ],
+  "scan": {},
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

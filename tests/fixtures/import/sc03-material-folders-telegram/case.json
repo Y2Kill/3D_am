@@ -1,0 +1,71 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc03-material-folders-telegram",
+  "scenarios": [
+    "SC-3"
+  ],
+  "req": [
+    "SC-3",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc03-material-folders-telegram",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "channel/material-a/a.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "a.stl",
+            "content": "part a"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "file",
+      "path": "channel/material-a/a.png",
+      "hex": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c48900000010494441547801010500faff00014080ff02c801c1890c0de20000000049454e44ae426082"
+    },
+    {
+      "kind": "zip",
+      "path": "channel/material-b/b.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "b.stl",
+            "content": "part b"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "file",
+      "path": "channel/material-b/b.png",
+      "hex": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c48900000010494441547801010500faff00034080ff02d001c33712997b0000000049454e44ae426082"
+    }
+  ],
+  "scan": {
+    "args": [
+      "--profile",
+      "telegram"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

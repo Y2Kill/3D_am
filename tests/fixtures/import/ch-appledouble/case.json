@@ -1,0 +1,47 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "ch-appledouble",
+  "scenarios": [
+    "SC-12"
+  ],
+  "req": [
+    "SC-12",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "ch-appledouble",
+  "source": [
+    {
+      "kind": "file",
+      "path": "._model.stl",
+      "hex": "0005160700020000"
+    },
+    {
+      "kind": "file",
+      "path": "._real.stl",
+      "content": "real dot underscore"
+    },
+    {
+      "kind": "file",
+      "path": "model.stl",
+      "content": "solid test\nendsolid test\n"
+    }
+  ],
+  "scan": {},
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

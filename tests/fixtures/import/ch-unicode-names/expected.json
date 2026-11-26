@@ -1,0 +1,115 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "ch-unicode-names",
+  "basis": [
+    "TZ 13.2 / SC-1",
+    "TZ 13.2 / SC-4",
+    "container_manifest_v1.md 5-6",
+    "T-031: raw names, safe paths and explicit decisions"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "new_asset",
+          "action": "ask"
+        }
+      ],
+      "nodes": {
+        "names.zip": {
+          "kind": "file",
+          "status": "available",
+          "size": "448"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      },
+      "archive_indices": {
+        "names.zip": {
+          "0": {
+            "index": 0,
+            "size": "9",
+            "method": 0,
+            "crc32": "5b75c972"
+          },
+          "1": {
+            "index": 1,
+            "size": "9",
+            "method": 0,
+            "crc32": "2c72f9e4"
+          },
+          "2": {
+            "index": 2,
+            "size": "9",
+            "method": 0,
+            "crc32": "b57ba85e"
+          },
+          "3": {
+            "index": 3,
+            "size": "9",
+            "method": 0,
+            "crc32": "c27c98c8"
+          }
+        }
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "created"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "files": [
+            {
+              "size_bytes": "9",
+              "sha256": "ec029f178b0cac65bc7dfbf4d9aa9457516a0ae4f1200fc918b84e7551aaf4d6",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "9",
+              "sha256": "2eb010b75b14bd2b3f586109da28652dd054715abb209e546c0017ef3f0e6ab8",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "9",
+              "sha256": "e2e4ba118b742aab8a16058cfc98698be0772e0044ab9930f4eadbf5f4b0b93b",
+              "origin_kind": "imported"
+            },
+            {
+              "size_bytes": "9",
+              "sha256": "d830e6aee782a39057c0bb13db1182b404d9678ee7195b252849868be1490e80",
+              "origin_kind": "imported"
+            }
+          ],
+          "input_count": 1,
+          "has_previews": false,
+          "has_sources": false,
+          "entries": {
+            "café.stl": {
+              "path": "café.stl"
+            },
+            "café.stl": {
+              "path": "café.stl"
+            },
+            "модель.stl": {
+              "path": "модель.stl"
+            },
+            "😀.stl": {
+              "path": "😀.stl"
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

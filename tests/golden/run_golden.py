@@ -7,38 +7,10 @@ import subprocess
 PROCESS_TIMEOUT_SECONDS = 60  # hypothesis; guard for a stalled CLI on slow CI/WSL
 
 
-def mismatch(pattern, actual, path="$"):
-    if isinstance(pattern, dict):
-        if not isinstance(actual, dict):
-            return f"{path}: expected object, got {type(actual).__name__}"
-        for key, value in pattern.items():
-            if key not in actual:
-                return f"{path}.{key}: missing key"
-            error = mismatch(value, actual[key], f"{path}.{key}")
-            if error:
-                return error
-    elif isinstance(pattern, list):
-        if not isinstance(actual, list) or len(pattern) != len(actual):
-            return f"{path}: expected array length {len(pattern)}, got {actual!r}"
-        edges = [[j for j, item in enumerate(actual) if mismatch(value, item) is None] for value in pattern]
-        matched = {}
-
-        def assign(i, seen):
-            for j in edges[i]:
-                if j in seen:
-                    continue
-                seen.add(j)
-                if j not in matched or assign(matched[j], seen):
-                    matched[j] = i
-                    return True
-            return False
-
-        for i in range(len(pattern)):
-            if not assign(i, set()):
-                return f"{path}[{i}]: no distinct subset match for {pattern[i]!r}; actual={actual!r}"
-    elif type(pattern) is not type(actual) or pattern != actual:
-        return f"{path}: expected {pattern!r}, got {actual!r}"
-    return None
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from expect_match import mismatch
 
 
 def main():

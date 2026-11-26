@@ -1,0 +1,51 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "ch-long-paths",
+  "scenarios": [
+    "SC-1",
+    "SC-4"
+  ],
+  "req": [
+    "SC-1",
+    "SC-4",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "ch-long-paths",
+  "source": [
+    {
+      "kind": "file",
+      "path": "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/model.stl",
+      "content": "long source"
+    },
+    {
+      "kind": "zip",
+      "path": "long.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "component-0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/component-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/model.stl",
+            "content": "long archive"
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {},
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

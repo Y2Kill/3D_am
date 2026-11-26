@@ -1,0 +1,50 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc04-zip-cp437-names",
+  "scenarios": [
+    "SC-4"
+  ],
+  "req": [
+    "SC-4",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc04-zip-cp437-names",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "encoded.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "X.stl",
+            "content": "encoded payload",
+            "raw_name_hex": "e92e73746c",
+            "flags": 0
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "encoded.zip"
+    ]
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "format": "am-expected-import",
+  "version": 1,
+  "case": "sc14-ready-asset",
+  "basis": [
+    "TZ 13.2 / SC-14",
+    "container_manifest_v1.md 5-6"
+  ],
+  "steps": {
+    "scan": {
+      "completeness": "complete",
+      "candidates": [
+        {
+          "kind": "ready_asset",
+          "action": "import"
+        }
+      ],
+      "nodes": {
+        "ready.zip": {
+          "kind": "file",
+          "status": "available"
+        }
+      },
+      "summary": {
+        "nodes": 1
+      }
+    },
+    "run": {
+      "summary": {
+        "candidates": [
+          {
+            "status": "imported"
+          }
+        ]
+      },
+      "assets": [
+        {
+          "manifest": {
+            "asset": {
+              "id": "550e8400-e29b-41d4-a716-446655440000",
+              "revision": 1
+            }
+          }
+        }
+      ]
+    },
+    "verify": {
+      "corrupt": 0
+    }
+  }
+}

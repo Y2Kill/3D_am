@@ -1,0 +1,65 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc07-depth-limit",
+  "scenarios": [
+    "SC-7",
+    "SC-13"
+  ],
+  "req": [
+    "SC-7",
+    "SC-13",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc07-depth-limit",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "outer.zip",
+      "zip": {
+        "entries": [
+          {
+            "name": "level2.zip",
+            "zip": {
+              "entries": [
+                {
+                  "name": "level3.zip",
+                  "zip": {
+                    "entries": [
+                      {
+                        "name": "part.stl",
+                        "content": "nested part"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "scan": {
+    "roots": [
+      "outer.zip"
+    ],
+    "profile_toml": "# Hypothesis: synthetic test policy, not a product threshold.\nid=\"case\"\nversion=1\n[nested]\naction=\"expand\"\nmax_depth=2\n"
+  },
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 3
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}

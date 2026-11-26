@@ -1,0 +1,51 @@
+{
+  "format": "am-import-case",
+  "version": 1,
+  "case": "sc10-fake-3mf",
+  "scenarios": [
+    "SC-10",
+    "SC-12"
+  ],
+  "req": [
+    "SC-10",
+    "SC-12",
+    "ADR-0029",
+    "ADR-0035"
+  ],
+  "description": "sc10-fake-3mf",
+  "source": [
+    {
+      "kind": "zip",
+      "path": "fake.3mf",
+      "zip": {
+        "entries": [
+          {
+            "name": "unrelated.txt",
+            "content": "not 3mf"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "file",
+      "path": "._model.3mf",
+      "hex": "0005160700020000"
+    }
+  ],
+  "scan": {},
+  "plan_edits": [],
+  "steps": [
+    {
+      "command": "scan",
+      "exit_code": 0
+    },
+    {
+      "command": "run",
+      "exit_code": 0
+    },
+    {
+      "command": "verify",
+      "exit_code": 0
+    }
+  ]
+}
