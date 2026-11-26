@@ -1,22 +1,26 @@
 """Recursive subset matching with bijective, unordered array matching."""
 
 
-def mismatch(pattern, actual, path="$", *, json_pointer=False):
+def mismatch(pattern, actual, path="$", *, json_pointer=False, exact=False):
     if isinstance(pattern, dict):
         if not isinstance(actual, dict):
             return f"{path}: expected object, got {type(actual).__name__}"
+        if exact:
+            for key in actual.keys() - pattern.keys():
+                child = path + '/' + str(key).replace('~', '~0').replace('/', '~1') if json_pointer else f"{path}.{key}"
+                return f"{child}: unexpected key"
         for key, value in pattern.items():
             if key not in actual:
                 child = path + '/' + str(key).replace('~', '~0').replace('/', '~1') if json_pointer else f"{path}.{key}"
                 return f"{child}: missing key"
             child = path + '/' + str(key).replace('~', '~0').replace('/', '~1') if json_pointer else f"{path}.{key}"
-            error = mismatch(value, actual[key], child, json_pointer=json_pointer)
+            error = mismatch(value, actual[key], child, json_pointer=json_pointer, exact=exact)
             if error:
                 return error
     elif isinstance(pattern, list):
         if not isinstance(actual, list) or len(pattern) != len(actual):
             return f"{path}: expected array length {len(pattern)}, got {actual!r}"
-        edges = [[j for j, item in enumerate(actual) if mismatch(value, item) is None] for value in pattern]
+        edges = [[j for j, item in enumerate(actual) if mismatch(value, item, exact=exact) is None] for value in pattern]
         matched = {}
 
         def assign(i, seen):

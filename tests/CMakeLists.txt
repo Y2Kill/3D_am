@@ -206,6 +206,22 @@ if(AM_PYTHON_TESTS)
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_export_cli.py
           --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/export-cli-tests --project ${PROJECT_SOURCE_DIR})
       set_tests_properties(cli_export PROPERTIES LABELS "req:K-10;req:K-46;req:K-127;req:NFR-14.5.6" TIMEOUT 180)
+      foreach(_am_e2e_case import-transfer ready-transfer copy-transfer index-rebuild trash-roundtrip selective-export)
+        add_test(NAME e2e-${_am_e2e_case}
+          COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/e2e/run_e2e.py
+            --am $<TARGET_FILE:am_cli> --work ${CMAKE_BINARY_DIR}/e2e --case e2e-${_am_e2e_case})
+        # Hypothesis: generous process guard, not a product performance target.
+        set_tests_properties(e2e-${_am_e2e_case} PROPERTIES LABELS "e2e;req:K-10;req:K-22;req:K-31" TIMEOUT 900)
+      endforeach()
+      set_property(TEST e2e-index-rebuild APPEND PROPERTY LABELS "req:K-122")
+      set_property(TEST e2e-copy-transfer APPEND PROPERTY LABELS "req:ADR-0036")
+      add_test(NAME e2e_selftest COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/e2e/test_e2e_self.py)
+      set_tests_properties(e2e_selftest PROPERTIES LABELS "e2e;req:K-22;req:ADR-0029")
+      add_test(NAME e2e_portability_bundle
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/e2e/run_e2e.py
+          --am $<TARGET_FILE:am_cli> --work ${CMAKE_BINARY_DIR}/e2e
+          --bundle ${PROJECT_SOURCE_DIR}/build/e2e/portability)
+      set_tests_properties(e2e_portability_bundle PROPERTIES LABELS "e2e;req:K-10;req:K-22;req:K-31" TIMEOUT 900)
       add_test(NAME cli_import_run
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_import_run_cli.py
           --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/import-run-cli-tests)

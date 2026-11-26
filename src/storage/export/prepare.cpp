@@ -65,13 +65,20 @@ std::string hash(const az::RandomAccessSource& source, az::ReadBudget& budget, s
   check_stop(stop);
   return hex(take(digest.finish()));
 }
-void valid(const repository::VerificationReport& report, std::string_view message = "am.export.source_invalid") {
+void valid(const repository::VerificationReport& report, std::string_view message = "am.export.source_invalid",
+           bool allow_newer_minor = false) {
   if (report.error) {
     if (report.error->code == Errc::cancelled || report.error->code == Errc::resource_exhausted) throw *report.error;
     throw error(Errc::corrupt_data, message).caused_by(*report.error);
   }
-  if (report.v1 != repository::CheckStatus::passed || report.v2 != repository::CheckStatus::passed ||
-      report.v3 == repository::CheckStatus::failed)
+  const bool compatible_minor = allow_newer_minor && report.format_support == repository::FormatSupport::newer_minor &&
+                                report.v2 == repository::CheckStatus::not_applicable_newer_minor;
+  if (report.v1 != repository::CheckStatus::passed ||
+      (report.v2 != repository::CheckStatus::passed && !compatible_minor) ||
+      report.v3 == repository::CheckStatus::failed ||
+      std::any_of(report.v4.begin(), report.v4.end(), [](const auto& stream) {
+        return stream.status == repository::StreamStatus::failed;
+      }))
     throw error(Errc::corrupt_data, message);
 }
 U64 integer(const repository::Json& value) {
@@ -183,7 +190,7 @@ Result<PreparedExport> prepare(const repository::AssetSnapshot& snapshot, const 
     az::ReadBudget budget(options.read_budget);
     {
       const auto source_report = take(repository::verify_snapshot(snapshot, verification, options.stop, &budget));
-      valid(source_report);
+      valid(source_report, "am.export.source_invalid", options.full);
       if (options.hooks.on_container_verification) options.hooks.on_container_verification(false,source_report);
     }
     check_stop(options.stop);
@@ -263,7 +270,7 @@ Result<PreparedExport> prepare(const repository::AssetSnapshot& snapshot, const 
       verification.read_budget = budget.remaining();
       repository::ContainerContents retained;
       const auto report = take(repository::verify_container(prepared.temporary, verification, &retained));
-      valid(report,"am.export.verification_failed");
+      valid(report,"am.export.verification_failed",options.full);
       if (options.hooks.on_container_verification) options.hooks.on_container_verification(true,report);
       if (retained.budget) take(budget.consume(verification.read_budget - retained.budget->remaining())
           ? Result<void>{} : Result<void>{error(Errc::resource_exhausted, "am.export.read_budget_exceeded")});

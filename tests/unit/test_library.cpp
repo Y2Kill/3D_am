@@ -98,7 +98,7 @@ TEST(Library, InitLayoutConfigAndDatabasePragmas) {
     EXPECT_EQ(scalar(library.database(kind), "PRAGMA foreign_keys"), "1");
     EXPECT_EQ(scalar(library.database(kind), "PRAGMA synchronous"), kind == DatabaseKind::index ? "1" : "2");
   }
-  EXPECT_EQ(library.database_info(DatabaseKind::index).rebuild_required, true);
+  EXPECT_EQ(library.database_info(DatabaseKind::index).rebuild_required, false);
   auto repeat = lib::Library::init(root); ASSERT_FALSE(repeat); EXPECT_EQ(repeat.error().message_id, "am.library.not_empty");
   auto nonempty = fresh(); fs::create_directory(nonempty); write(nonempty / "existing.txt", "data");
   repeat = lib::Library::init(nonempty); ASSERT_FALSE(repeat); EXPECT_EQ(repeat.error().code, am::Errc::conflict);

@@ -6,6 +6,10 @@ All notable user-visible changes are recorded here.
 
 ### Fixed
 
+- A newly initialized library has a complete empty index and can synchronize
+  without an initial rebuild. Recreated missing or damaged indexes still require one.
+- Full export preserves assets from newer format 1.x minor versions byte for byte;
+  selective export continues to require a supported manifest version.
 - Explicit asset IDs cannot be reused while the original asset is in the trash.
   Retrying an import in this state asks for a decision and preserves its IDs.
 - Format 1.0 validation accepts long original names and dotted file type IDs on
@@ -20,6 +24,9 @@ All notable user-visible changes are recorded here.
 
 ### Added
 
+- End-to-end CLI tests cover isolated library transfers, index reconstruction,
+  independent copies, trash round trips and selective exports. A Windows bundle
+  checks ZIP and library read portability on Linux.
 - A generated import regression corpus covers all sixteen scenario IDs through
   the real CLI, with declarative expectations, source preservation checks and
   explicit filesystem restrictions on Linux.
