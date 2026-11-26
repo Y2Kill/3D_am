@@ -72,13 +72,16 @@
           "has_sources": false,
           "entries": {
             "model.stl": {
-              "result": "included"
+              "result": "included",
+              "file_sha256": "62184020bf75b8b17afc4d87ea2edefbe9bf23a7229405633a54a584017aba27"
             },
             "model.step": {
-              "result": "included"
+              "result": "included",
+              "file_sha256": "115a4cabbfdef7b4ee9871ee7d770cd36ae469f194273da0fc1c3b8e83490517"
             },
             "preview.png": {
-              "result": "included"
+              "result": "included",
+              "file_sha256": "604ef5af7564a3923d26e0fbb8d7db82ebe91e5578e65c1e340b19bcf141023b"
             }
           }
         }

@@ -79,7 +79,25 @@
           ],
           "input_count": 1,
           "has_previews": false,
-          "has_sources": false
+          "has_sources": false,
+          "entries": {
+            "image.png": {
+              "result": "included",
+              "file_sha256": "220f68fdef1f9be4767f98e4f4f765074b9d105ae9ce39b7afa00f5dbaab93ea"
+            },
+            "drawing.svg": {
+              "result": "included",
+              "file_sha256": "ffc9f5e4fdeea83920c171e2bd17577127c5d1a2c3c76f07440e10d387132280"
+            },
+            "drawing.dxf": {
+              "result": "included",
+              "file_sha256": "dc919c8f27c3229e9c4a240278f07819b2ed960642d983ceefc6604750b621f2"
+            },
+            "document.pdf": {
+              "result": "included",
+              "file_sha256": "275838dd6753455f8853e4d06bfdd25392033b0139e72918c4a610917ed2ee41"
+            }
+          }
         }
       ]
     },

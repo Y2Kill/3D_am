@@ -69,7 +69,21 @@
           ],
           "input_count": 1,
           "has_previews": false,
-          "has_sources": false
+          "has_sources": false,
+          "entries": {
+            "no-extension": {
+              "result": "included",
+              "file_sha256": "895e012ee51170d1a525ac23893bd542f1c1e99d394defbbbb79f088480c2878"
+            },
+            "project.lys": {
+              "result": "included",
+              "file_sha256": "7d5d1c62f4390e4da5fa3c3c6ce0bccf77e6d5ace5b8aa00e01f2b42a07e752b"
+            },
+            "empty": {
+              "result": "included",
+              "file_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          }
         }
       ]
     },

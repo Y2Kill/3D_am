@@ -52,6 +52,7 @@ Run-представление содержит summary и assets. Для каж
 object_counts, entries, object_entries (имя объекта!путь → запись с file_sha256),
 raw_entries (Base64 → запись), nested_actions,
 input_completeness, has_previews/has_sources и source_contexts с has_review.
+entries также содержит file_sha256 для связи исходного пути с байтами файла.
 Словари entries — удобный вид по пути; при одинаковых путях разных объектов
 проверяйте полный manifest, object_counts и размещение каждого files[].
 UUID, ревизия, байты каждого файла, SHA-256, неизменность источника и

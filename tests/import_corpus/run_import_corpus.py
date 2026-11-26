@@ -212,7 +212,7 @@ def asset_views(library, config):
                           'has_sources': bool(manifest.get('origin', {}).get('sources')),
                           'input_count': len(manifest.get('inputs', [])),
                           'object_counts': {kind: sum(o['kind'] == kind for o in objects) for kind in ('file', 'directory', 'archive')},
-                          'entries': {e['path']: e for e in entries},
+                          'entries': {e['path']: object_entries[object_names[e['object_id']] + '!' + e['path']] for e in entries},
                           'object_entries': object_entries,
                           'raw_entries': {e['path_raw']['base64']: e for e in entries if 'path_raw' in e},
                           'nested_actions': [o['nested_action'] for o in objects if 'nested_action' in o],
