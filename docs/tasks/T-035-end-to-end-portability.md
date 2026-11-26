@@ -2,7 +2,7 @@
 
 **Исполнение:** по `AGENTS.md` в ветке `codex/T-035`. Если у Codex нулевой лимит, задачу выполняет управляющий (Claude Code) по процедуре T-032/T-033: самопроверка по критериям и `/code-review` по diff вместо независимой приёмки.
 
-**Статус:** ready · **Веха:** P0.8 (итоговые испытания ядра) · **Основание:** ТЗ v1.8 §13.4 п. 4 (самодостаточность), §13.4 п. 7, §19.1 (итог P0), §15 п. 10, 22, 31, 122 (в части индекса); ADR-0025, ADR-0029, ADR-0035, ADR-0036 п. 4; `roadmap.md` раздел P0.8
+**Статус:** review · **Веха:** P0.8 (итоговые испытания ядра) · **Основание:** ТЗ v1.8 §13.4 п. 4 (самодостаточность), §13.4 п. 7, §19.1 (итог P0), §15 п. 10, 22, 31, 122 (в части индекса); ADR-0025, ADR-0029, ADR-0035, ADR-0036 п. 4; `roadmap.md` раздел P0.8
 
 ## Место в P0.8
 
@@ -127,4 +127,173 @@ T-035 проверяет это сквозными сценариями на н�
 
 ## Отчёт исполнителя
 
-_(заполняет исполнитель: выполнение критериев, вопросы В-n, найденные дефекты и их судьба, список исключённых полей с обоснованием, команды прогонов и итоги, ссылки на CI)_
+Ветка: `codex/T-035`. Коммит реализации: `ab7648d29b7b04c73c2b7a7304d1bde44035a005`.
+Отчёт и статус review фиксируются отдельным коммитом
+`docs(tasks): submit T-035 for review`. Push и слияние не выполнялись.
+
+### Критерии приёмки
+
+1. Реализованы все шесть сценариев: import-transfer, ready-transfer,
+   copy-transfer, index-rebuild, trash-roundtrip, selective-export. На Windows
+   каждый сравнивает чистую B с A по list/inspect, всем логическим таблицам
+   индекса, FTS-токенам и SHA ZIP. ready-transfer проходит все 12 положительных
+   golden, включая новую minor, claims, группы, историю и opaque-данные.
+   В A добавлены локальные favorites; userdata B проверяется на пустоту.
+   Полное равенство — расширение expect_match(exact=True), прежний режим
+   подмножеств T-034 сохранён.
+2. A и сгенерированный источник переименованы до создания B; исходные пути
+   отсутствуют. Окружение B отдельное. Защита аргументов запрещает прежние и
+   переименованные пути, окружение A. Отрицательные самопроверки обнаруживают
+   такой доступ, изменённое поле, лишнюю строку, неизвестный столбец, изменения
+   FTS и пакета; ошибки имеют JSON Pointer.
+3. Четыре снимка индекса равны: инкрементальная запись, rebuild, удаление и
+   открытие индекса с последующим rebuild, sync --full. mtime ZIP сравнивается.
+   До пересборки удалённого индекса отдельно проверены rebuild_required=1 и
+   отказ sync. Новая библиотека имеет полный пустой индекс и допускает sync.
+4. Windows-пакет проверен в WSL: 15 standalone ZIP (синтетический импорт,
+   два ZIP маленькой библиотеки и все 12 положительных golden), четыре
+   выборочных ZIP, библиотека из трёх ассетов с одним в корзине. В пакете
+   20 файлов плюс bundle.json, всего **202323 байта**, меньше гипотезы 2 МиБ.
+   Сначала проверены все SHA/размеры, затем V1–V4/inspect с нормативными
+   partial/newer_minor-вердиктами, индекс/FTS/корзина, readonly export
+   queued:false, отказ add-ready и неизменность всех строк трёх БД и SHA ZIP.
+   Межзаданийная передача артефакта и пять зелёных заданий CI — приёмка
+   управляющего после публикации по В-1; локально они не заявляются.
+5. Ожидания написаны по спецификации. Исправлены два локальных дефекта:
+   полный экспорт новой minor (В-3) и флаг полного пустого индекса при init
+   (В-4). Согласующие изменения старых тестов — В-5/В-6. Никаких новых
+   исключений для rebuild_required или таблиц индекса не добавлено.
+6. Схема/формат 1.0, golden, expected.v1 и корпус T-034 не изменены.
+   golden_zip, golden_regen_check, import_corpus_regen_check и selftest
+   прошли на обеих ОС. В Windows import_corpus.ch-links имеет capability SKIP;
+   остальные случаи корпуса прошли. Корпус Linux выполняет scan и явные
+   отказы записи по политике ФС, не выдавая их за успешный импорт.
+7. Все четыре обязательных прогона завершились без провалов; фактические
+   строки и ограничения SKIP приведены ниже. arch_check, schema_check,
+   sql_check прошли, req_report везде сообщает 0 invalid IDs.
+8. acceptance_matrix.md дополнена срезом §13.4.4, K-22/K-31 и индексной части
+   K-122; полные требования не повышены по одному срезу. coverage_matrix.md
+   не менялась. README прогонщика содержит команды, границы и правила
+   расширения. Сценарии заданы в коде: шесть зависимых цепочек с динамическими
+   ID не требуют отдельного языка JSON.
+
+### Команды и фактические итоги
+
+Windows запускался с AM_PYTHON_EXTRA_PATH=<project>/.cache/pylib; WSL — с
+уже установленными модулями .cache/t005-pylib-linux. Новые зависимости не
+добавлялись. Логи находятся в .cache/t035/.
+
+| Команда | Фактический итог CTest | PASS / SKIP / FAIL | Время тестов | Лог |
+|---|---|---|---|---|
+| `tools\build_min.cmd --ci` | `100% tests passed, 0 tests failed out of 157` | 157 / 0 / 0 | 43.52 s | win-min.log |
+| `tools\build_cli.cmd --ci -LE periodic` | `100% tests passed, 0 tests failed out of 767` | 766 / 1 / 0 | 2313.07 s | win-cli.log |
+| `tools\build_cli.cmd --offline --ci -LE periodic` | `100% tests passed, 0 tests failed out of 767` | 766 / 1 / 0 | 2207.66 s | win-cli-offline.log |
+| WSL `tools/build_linux.sh cli --offline --ci -LE periodic` | `100% tests passed, 0 tests failed out of 764` | 707 / 57 / 0 | 2370.10 s | linux-cli.log |
+
+Итоговые строки req_report:
+
+```text
+min:     req_report: 26 IDs, 157 tests, 49 without req, 0 invalid IDs
+win-cli: req_report: 84 IDs, 769 tests, 49 without req, 0 invalid IDs
+offline: req_report: 84 IDs, 769 tests, 49 without req, 0 invalid IDs
+WSL:     req_report: 84 IDs, 766 tests, 71 without req, 0 invalid IDs
+```
+
+req_report считает весь зарегистрированный набор; CTest выше исключает два
+periodic-теста. Старые without req и платформенные SKIP не скрываются:
+списки SKIP есть в полных логах/JUnit. Единственный Windows SKIP — ch-links
+(недоступна возможность ссылок); Linux SKIP относятся к уже существующим
+Windows/FS/write-сценариям и MSVC-измерениям. Все восемь новых e2e-тестов на
+обеих ОС прошли без SKIP. На Linux положительная цепочка записи помечается
+NOT_APPLICABLE после проверенного storage_read_only, чтение проверяется.
+
+Отдельные проверки:
+
+```text
+python -I tests/e2e/test_e2e_self.py
+Ran 7 tests ... OK
+
+wsl -- python3 -I tests/e2e/test_e2e_self.py --workflow .github/workflows/ci.yml
+PASS workflow YAML: five jobs, needs, artifact names/paths, shared checker command
+
+actionlint 1.7.7 .github/workflows/ci.yml
+exit_code = 0, no output
+
+wsl -- python3 -I tests/e2e/check_portability.py --am build/linux-cli/bin/am --bundle build/e2e/portability --work build/e2e/portability-linux
+PASS portability-linux: 15 standalone ZIPs, selective files, index/FTS, trash, read-only export/refusal
+```
+
+Логи: selftest.log, workflow-yaml.log, actionlint.log, portability-linux.log.
+Последняя команда имеет те же аргументы, что шаг portability-linux в CI.
+YAML разобран существующим WSL PyYAML, без установки новых модулей.
+
+Первый полный Windows-прогон выявил два старых предположения фикстур о
+rebuild_required=1 после init: cli_export и cli_library_trash. Его итог:
+`99% tests passed, 2 tests failed out of 767`, 2307.58 s,
+лог win-cli-initial.log. После решения В-6 точечные проверки дали
+`100% tests passed, 0 tests failed out of 1` каждая (v6-export.log,
+v6-trash.log); затем оба полных Windows-прогона повторены успешно.
+
+### Нормализация и уточнения
+
+- **В-1.** Публикация только управляющим через tools/publish_public.sh.
+  Четыре прежних задания CI сохранены; win-cli дополнен выгрузкой пакета,
+  portability-linux с needs: win-cli скачивает его и вызывает общий скрипт.
+  Локально не проверены пересылка артефакта между заданиями, планировщик needs
+  и публичные пять зелёных заданий.
+- **В-2.** В одном месте прогонщика заданы адресные исключения. A↔B:
+  assets.rel_path/in_trash/zip_mtime_ns; внутри A: rel_path/in_trash, а mtime
+  сохраняется. В обоих случаях исключены только meta.rebuilt_at/writer_session
+  и локальный INTEGER PRIMARY KEY suggestions.id. rebuild_required, zip_size
+  и SHA ZIP сравниваются всегда. Все логические таблицы, включая пустые, и
+  остальные столбцы сохранены; неизвестный столбец вызывает расхождение.
+  FTS5 shadow-таблицы представлены видимыми строками и fts5vocab(instance),
+  doc/fts_rowid заменены полным содержимым связанной строки с сохранением
+  связей и повторений. Физическое FTS-хранилище не объявляется данными ZIP.
+- **В-3.** Исправлен дефект T-033: full допускает новую minor при V1=passed,
+  V2=not_applicable_newer_minor и без failed V3/V4. SHA/размер временной копии
+  по-прежнему проверяются. Проверены quick по умолчанию, full и отказ
+  selective; B сохраняет health=warn/am.catalog.newer_minor. Неизвестная major
+  и повреждения по-прежнему отклоняются. export.md уточнён; задача T-033 прежняя.
+- **В-4.** Init создаёт rebuild_required=0: пустой индекс полон. rebuilt_at
+  оставлен отсутствующим — создание не является пересборкой, новая схема
+  или фиктивная отметка времени не нужны. Все остальные пути выставления 1
+  сохранены. Старое ожидание T-016 обновлено в тесте, сам файл T-016 не менялся.
+  cli.md уточнён. Флаг не исключён из сравнения снимков.
+- **В-5.** Старые CLI-ожидания init/list/sync согласованы с В-4; отказ sync
+  проверяется после удаления индекса. Unit-тест отказа явно ставит 1 через
+  mark_rebuild_required(), остальные проверки сохранены.
+- **В-6.** У свежей библиотеки info.trash содержит нулевую статистику.
+  Windows-фикстура экспорта завершает подготовку индекса library rebuild до
+  снимка неизменности. Все таблицы, кроме точной строки writer_session,
+  ZIP, userdata и конфигурация по-прежнему проверяются; Linux-фикстура прежняя.
+
+В copy-transfer нормативная связь копии с источником проверяется через
+history independent_copy/source_asset (§11, ADR-0036). Слово derived_from
+в таблице задачи неточно для связи между ассетами: это ссылки файлов (§5).
+Их сохранение отдельно покрыто pos-full/pos-exact-numbers в ready-transfer.
+Представление формата и копирование по этому поводу не менялись.
+
+### Отклонения от раздела «Файлы»
+
+- docs/specifications/export.md — разрешение В-3, исправление формулировки T-033.
+- docs/user/cli.md и tests/unit/test_library.cpp — В-4, новая библиотека
+  не требует начальной пересборки; исправление старого ожидания T-016.
+- tests/cli/test_library_cli.py и tests/unit/test_sync.cpp — В-5;
+  дополнительное ожидание trash в первом файле — В-6.
+- tests/cli/test_export_cli.py — В-6, только завершение подготовки Windows-фикстуры.
+
+Локальные исправления src/storage/export/prepare.cpp и
+src/storage/library/library.cpp входят в разрешение п. 6 задачи и решения
+В-3/В-4; регрессии покрыты сквозными и прежними тестами.
+
+SHA checkout/setup-python/cache/upload-artifact сохранены. Новое
+download-artifact закреплено на v7.0.0 (основная версия 7, как у upload v7.0.2;
+тега download v7.0.2 нет): 37930b1c2abaa49bbe596cd826c3c89aef350131.
+Источник: [официальный релиз](https://github.com/actions/download-artifact/releases/tag/v7.0.0),
+[коммит](https://github.com/actions/download-artifact/commit/37930b1c2abaa49bbe596cd826c3c89aef350131).
+
+### Вопросы
+
+Открытых вопросов по реализации нет. Публичная публикация и подтверждение
+пяти заданий CI остаются за управляющим при приёмке по В-1.
