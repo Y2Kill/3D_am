@@ -449,7 +449,7 @@ Result<Config> Library::init(const Path& path, const InitOptions& options) {
     for (const auto kind : {DatabaseKind::index, DatabaseKind::userdata, DatabaseKind::state}) {
       auto db = connect(root / ".am" / (std::string(name(kind)) + ".sqlite"), SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
       exec(db.get(), schema(kind));
-      if (kind == DatabaseKind::index) exec(db.get(), "INSERT INTO meta(key,value) VALUES('rebuild_required','1'); PRAGMA synchronous=NORMAL");
+      if (kind == DatabaseKind::index) exec(db.get(), "INSERT INTO meta(key,value) VALUES('rebuild_required','0'); PRAGMA synchronous=NORMAL");
     }
     Config c; c.library_id = Uuid::v7().to_string(); c.name = options.name; c.created_at = utc();
     if (options.before_config) take(options.before_config());

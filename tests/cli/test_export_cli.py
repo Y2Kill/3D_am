@@ -45,6 +45,8 @@ class ExportCli(unittest.TestCase):
         location.parent.mkdir(parents=True, exist_ok=True)
         location.write_bytes(self.asset.read_bytes())
         self.source = location
+        if os.name == 'nt':
+            self.am('library', 'rebuild', self.library, '--json')
 
     def am(self, *args, code=0, json_output=True):
         result = subprocess.run([str(CONFIG.am), *map(str, args)], cwd=self.work, env=self.env,

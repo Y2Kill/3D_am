@@ -57,7 +57,7 @@ class LibraryCli(unittest.TestCase):
             self.assertEqual(info["databases"][name]["state"], "ok")
             self.assertEqual(info["databases"][name]["user_version"], 2 if name == "index" else 1)
             self.assertIn(info["databases"][name]["read_mode"], ("wal", "immutable"))
-        self.assertTrue(info["databases"]["index"]["rebuild_required"])
+        self.assertFalse(info["databases"]["index"]["rebuild_required"])
         self.assertIn("writable", info["capabilities"])
         self.assertIn("write_unavailable_reason", info)
         self.assertEqual(self.snapshot(), before)
@@ -422,7 +422,7 @@ class LibraryCli(unittest.TestCase):
 
     def test_trash(self):
         self.run_am("init")
-        self.assertIsNone(self.run_am("info")["trash"])
+        self.assertEqual(self.run_am("info")["trash"], {"assets": 0, "bytes": "0"})
         refused = self.run_am("purge", 2, "--all")
         self.assertEqual(refused["error"]["message_id"], "am.cli.purge_confirmation_required")
         if os.name != "nt":
@@ -489,6 +489,9 @@ class LibraryCli(unittest.TestCase):
             reason = "Production writes require a verified fixed NTFS volume; service sync is tested with injected capabilities"
             print(reason)
             self.skipTest(reason)
+        self.run_am("sync")
+        for suffix in ("", "-wal", "-shm"):
+            (self.root / (".am/index.sqlite" + suffix)).unlink(missing_ok=True)
         refused = self.run_am("sync", 4)
         self.assertEqual(refused["error"]["message_id"], "am.catalog.rebuild_required")
         source = self.work / "source.bin"
@@ -542,7 +545,7 @@ class LibraryCli(unittest.TestCase):
         self.run_am("init")
         initial = self.run_am("list")
         self.assertEqual(initial["assets"], [])
-        self.assertTrue(initial["rebuild_required"])
+        self.assertFalse(initial["rebuild_required"])
         self.assertEqual(self.run_am("info")["indexed_assets"], 0)
         if os.name != "nt":
             refused = self.run_am("rebuild", 4)

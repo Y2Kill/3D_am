@@ -375,6 +375,7 @@ TEST(Sync, FaultRollsBackEveryChangeAndReadersSeeOldStateUntilCommit) {
 TEST(Sync, RefusesRebuildFlagReadOnlyAndUnavailableRootsButEmptyIsMissing) {
   RecordProperty("req", "K-7|ADR-0031");
   World w;
+  value(w.index->mark_rebuild_required());
   auto before = snapshot(w.library, {}, true);
   auto refused = w.index->sync();
   ASSERT_FALSE(refused);

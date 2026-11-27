@@ -49,6 +49,8 @@ am library add-ready <dir> <zip> --replace <current-manifest-sha256> [--json] [-
 ### Library initialization and status
 
 `am library init "My library" --name "Models"` initializes a new or empty directory.
+Its empty index is complete (`rebuild_required: false`); no initial rebuild is
+needed. An index recreated after deletion or damage still requires a rebuild.
 Its parent must exist. It creates `assets/`, `trash/`, the `.am/` working directories,
 and three SQLite databases, then publishes `am-library.toml` last. Initialization
 does not retain a write-owner lock. Reinitializing an existing library or any
