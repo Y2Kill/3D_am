@@ -2,7 +2,7 @@
 
 **Исполнение:** по `AGENTS.md` в ветке `codex/T-036`. Если у Codex нулевой лимит, задачу выполняет управляющий (Claude Code) по процедуре T-032/T-033: самопроверка по критериям и `/code-review` по diff вместо независимой приёмки.
 
-**Статус:** review · **Веха:** P0.8 (итоговые испытания ядра) · **Основание:** ТЗ v1.8 §15 п. 117, 122; ADR-0006, ADR-0007, ADR-0025, ADR-0031, ADR-0033; `fs_support.md`; `roadmap.md` раздел P0.8; приёмка T-035 (замечание 1)
+**Статус:** done · **Веха:** P0.8 (итоговые испытания ядра) · **Основание:** ТЗ v1.8 §15 п. 117, 122; ADR-0006, ADR-0007, ADR-0025, ADR-0031, ADR-0033; `fs_support.md`; `roadmap.md` раздел P0.8; приёмка T-035 (замечание 1)
 
 ## Место в P0.8
 
@@ -540,3 +540,29 @@ WSL **1/1 CTest PASS**, 27.22 с,
 `\??\Volume{GUID}\` предложено на будущее, без реализации в T-036. Настоящий
 ENOSPC диагностики остаётся покрыт tmpfs и S2. Статусы K-117 обновлены по этим
 фактам; отключение питания и долговечность контроллера не проверялись.
+
+## Приёмка
+
+Принята управляющим 2026-11-27. Слияние `codex/T-036` → `main`: 1149087 (последний коммит исполнителя 415b74c).
+
+**Прогоны управляющего** (последовательно, на 415b74c):
+
+| Прогон | Результат |
+|---|---|
+| `tools\build_min.cmd --ci` | 159/159, 48.2 s; req_report 28 IDs, 0 invalid |
+| `tools\build_cli.cmd --ci -LE periodic` | 812/812, 1 SKIP (`import_corpus.ch-links`, прежний), 3446 s; req_report 84 IDs, 815 tests, 0 invalid |
+| `tools\build_cli.cmd --offline --ci -LE periodic` | 812/812, тот же SKIP, 3325 s |
+| WSL `tools/build_linux.sh cli --offline --ci -LE periodic` | 808/808, 57 SKIP (политика `read_only_default` и Windows-only, как в T-035), 3157 s; req_report 84 IDs, 811 tests, 0 invalid |
+| WSL `check_portability.py` и `test_e2e_self.py --workflow` | PASS; пять заданий CI |
+| Малый том NTFS (VHDX 64 МиБ, подключён в папку `.cache/small-volume/mnt`, `ctest -L small_volume`) | `total=8; passed=7; not_applicable=1; failed=0` |
+| Малый том tmpfs (WSL, `ctest --preset linux-cli -L small_volume`) | `total=8; passed=8; not_applicable=0; failed=0` |
+
+Образ VHDX создавал владелец скриптом `tools/test_volume/small_volume.ps1 -Create` от администратора (разрешение 2026-11-27, только для T-036). Первый образ после ошибки разбора вывода DiskPart удалён управляющим с согласия владельца после проверки «Attached False».
+
+**Проверено в diff.** `SQLITE_FULL` и `SQLITE_IOERR` с родной `ENOSPC`/`EDQUOT` (Windows 112/39) классифицируются как `insufficient_space` с действиями `free_space`/`abort`; прочие I/O-ошибки остаются `io_error`. Отсутствующий `state.sqlite` пересоздаётся только при открытии на запись, с `reason=recreated`, событием в `op_log` и `warnings[]` в JSON; повреждённый не пересоздаётся. Сохранение orphan ограничено одним открытием (`journal_recreated`, `journal_may_be_lost`). `init` на заполненном томе возвращает `am.library.insufficient_space` и удаляет временный файл. Тестовые хуки `create_sink` — request-local. Схема 1.0, golden, корпус T-034 и сценарии T-035 не менялись. Замечание 1 приёмки T-035 закрыто тестом `Sync.NewLibraryHasCompleteEmptyIndexAndSyncNeedsNoRebuild`.
+
+**Замечания.**
+1. Каждое открытие на запись теперь предварительно открывает библиотеку только для чтения (проверка сессии и `check_database`). Стоимость на 100k–250k ассетов не замерена — повторить замер К-112 (`open`) в T-037.
+2. На NTFS диагностика R неприменима: точка подключения тома в папку имеет reparse-тег 0xA0000003, как junction, и диагностика отклоняет путь как `local_only`. Настоящий ENOSPC диагностики покрыт tmpfs и S2. Различение по цели `\??\Volume{GUID}\` записано в `fault_matrix.md` как открытый пробел — кандидат на доработку.
+3. На NTFS маленькие файлы резидентны в MFT, поэтому `init` на «полном» томе может завершиться успешно; тест фиксирует исход свойством `init_configuration_outcome`, а `insufficient_space` подтверждён на tmpfs.
+4. Удаление тестового тома (`small_volume.ps1 -Remove`, от администратора) — за владельцем; до удаления образ лежит в `.cache/small-volume/`.
