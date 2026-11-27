@@ -167,6 +167,13 @@ if(AM_PYTHON_TESTS)
     endif()
     message(WARNING "Python 3 not found: arch_check and schema_check are not registered")
   else()
+    if(WIN32)
+      add_test(NAME small_volume_script
+        COMMAND powershell.exe -NoProfile -NonInteractive -Command
+          "& ([scriptblock]::Create([IO.File]::ReadAllText('tests/unit/test_small_volume_script.ps1')))")
+      set_tests_properties(small_volume_script PROPERTIES
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" LABELS "fault;req:K-117;req:K-122" TIMEOUT 60)
+    endif()
     add_test(NAME req_report_selftest
       COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/coverage/req_report.py --selftest)
     set_tests_properties(req_report_selftest PROPERTIES LABELS "req:ADR-0029")

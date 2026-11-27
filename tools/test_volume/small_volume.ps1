@@ -94,11 +94,10 @@ if (-not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
     $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/diskpart.exe') -ArgumentList @('/s', ('"' + $commandPath + '"')) -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $logPath
     $exitCode = $process.ExitCode
     $logText = if (Test-Path -LiteralPath $logPath -PathType Leaf) { [IO.File]::ReadAllText($logPath) } else { '' }
-    # Numeric progress and command keywords survive localized/OEM log encodings.
-    $completed = $logText -match '(?:^|[\r\n])\s*100(?:\s|%)'
+    # Command keywords remain ASCII in localized/OEM logs; progress text is not a success condition.
     $helpOutput = $logText -match '(?:^|[\r\n])\s*CREATE\s+-'
-    if ($null -eq $exitCode -or $exitCode -ne 0 -or -not $completed -or $helpOutput -or -not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
-        throw "DiskPart did not create the test image (exit code: $exitCode; completion marker: $completed; help output: $helpOutput); see diskpart.log."
+    if ($null -eq $exitCode -or $exitCode -ne 0 -or $helpOutput -or -not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
+        throw "DiskPart did not create the test image (exit code: $exitCode; help output: $helpOutput); see diskpart.log."
     }
     $record = [ordered]@{ task = 'T-036'; image = $imagePath; mount = $mountPath } | ConvertTo-Json -Compress
     [IO.File]::WriteAllText($ownershipPath, $record, (New-Object Text.UTF8Encoding($false)))
