@@ -222,7 +222,8 @@ class AssetRepository {
   // Like create/change, optional failure details retain the verification report.
   Result<ImportReadyResult> import_ready(const ImportReadyRequest&, ImportReadyResult* failure_details = nullptr);
   Result<VerificationReport> verify(const AssetRef&, VerifyLevel = VerifyLevel::full, const std::vector<std::string>& file_ids = {}) const;
-  Result<std::vector<commit::RecoveryItem>> recover();
+  Result<std::vector<commit::RecoveryItem>> recover(bool preserve_orphans = false,
+                                                  std::string orphan_reason = "journal_recreated");
  private:
   struct Impl;
   std::shared_ptr<Impl> impl_;

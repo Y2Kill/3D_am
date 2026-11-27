@@ -589,7 +589,7 @@ Result<DiagnosticReport> export_diagnostics(const DiagnosticOptions& options) {
     if (options.dry_run) return report;
     const auto output = fs::absolute(options.output);
     temporary = output.parent_path() / (".am-diag-" + Uuid::v4().to_string() + ".tmp");
-    auto sink = take(asset_zip::file_sink(temporary));
+    auto sink = take(options.create_sink ? options.create_sink(temporary) : asset_zip::file_sink(temporary));
     auto writer = take(asset_zip::ZipWriter::create(sink));
     for (const auto& [name, content] : entries) {
       asset_zip::EntryOptions config;

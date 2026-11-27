@@ -182,12 +182,15 @@ jobs:
         run: python -m pip install --require-hashes --no-deps --target .cache/pylib -r tools/ci/requirements-test.txt
       - name: Build and test
         run: tools/build_linux.sh cli --ci -LE periodic
+      - name: Real disk-full tests in an isolated tmpfs
+        run: TMPDIR="$GITHUB_WORKSPACE/.cache/tmp-linux" ctest --preset linux-cli -L small_volume --output-on-failure --output-junit "$GITHUB_WORKSPACE/build/linux-cli/small_volume.xml"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: linux-cli
           path: |
             build/linux-cli/junit.xml
+            build/linux-cli/small_volume.xml
             build/linux-cli/req_report.*
           retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

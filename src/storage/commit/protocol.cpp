@@ -26,7 +26,9 @@ namespace {
 using U64 = std::uint64_t;
 using Path = std::filesystem::path;
 Error error(Errc c, std::string_view id, std::string detail) {
-  return Error::make(c, "ZIP commit operation failed", std::move(detail)).in("storage.commit").op("zip.commit").id(std::string(id));
+  auto result = Error::make(c, "ZIP commit operation failed", std::move(detail)).in("storage.commit").op("zip.commit").id(std::string(id));
+  if (c == Errc::insufficient_space) result.actions = {ErrorAction::free_space,ErrorAction::abort};
+  return result;
 }
 [[noreturn]] void fail(Errc c, std::string_view id, std::string detail) { throw error(c, id, std::move(detail)); }
 Error oom() { return error(Errc::resource_exhausted, "am.commit.out_of_memory", "Allocation failed"); }
@@ -748,7 +750,8 @@ Result<std::vector<RecoveryItem>> recover(const Path& root, const RecoveryOption
       try {
         auto file = NativeFile::open(entry.path(), true, true);
         const auto modified = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::nanoseconds(file->mtime_ns)));
-        if (options.now - modified < options.orphan_age) { item.outcome = RecoveryOutcome::skipped; item.detail = "Orphan is younger than retention age"; }
+        if (options.preserve_orphans) { item.outcome = RecoveryOutcome::skipped; item.detail = options.orphan_reason; }
+        else if (options.now - modified < options.orphan_age) { item.outcome = RecoveryOutcome::skipped; item.detail = "Orphan is younger than retention age"; }
         else {
 #ifdef _WIN32
           FILE_DISPOSITION_INFO disposition{TRUE}; if (!SetFileInformationByHandle(file->handle, FileDispositionInfo, &disposition, sizeof(disposition))) throw io("Delete orphan failed"); file->close();
@@ -777,7 +780,8 @@ Result<std::vector<RecoveryItem>> recover(const Path& root, const RecoveryOption
         }
         const auto age = std::chrono::duration_cast<std::chrono::seconds>(std::filesystem::file_time_type::clock::now() - newest) +
                          std::chrono::duration_cast<std::chrono::seconds>(options.now - std::chrono::system_clock::now());
-        if (age < options.orphan_age) { item.outcome = RecoveryOutcome::skipped; item.detail = "Orphan is younger than retention age"; }
+        if (options.preserve_orphans) { item.outcome = RecoveryOutcome::skipped; item.detail = options.orphan_reason; }
+        else if (age < options.orphan_age) { item.outcome = RecoveryOutcome::skipped; item.detail = "Orphan is younger than retention age"; }
         else {
           for (const auto& file : files) NativeFile::open(file, true, true)->close();  // a reader still holding it -> locked
           std::error_code failed; std::filesystem::remove_all(area.path(), failed);

@@ -144,6 +144,29 @@ rows and runs stat-based sync where appropriate. Individual blocked or unresolve
 operations produce warnings with their operation IDs and paths. Read-only opening
 reports pending recovery without running database checks or recovery writes.
 
+A missing `state.sqlite` is recreated only when opening for writing. The command's
+JSON includes an `am.library.state_recreated` warning, and `library log` records
+the event. Later `library info --json` reports `databases.state.state = "ok"`,
+`reason = "recreated"`, and `recreated_at` from the latest event. This is a
+historical notice: the database is usable, but its previous queue and commit
+journal were lost. Existing corrupt or schema-incomplete state databases are
+never silently recreated.
+
+That first opening retains orphan commit files regardless of age. An unclosed
+session with an empty or missing state WAL also retains them for one opening,
+with recovery detail `journal_may_be_lost`; this indicates suspicion, not proof
+of WAL loss. After a successful close the usual orphan age policy applies.
+Operations with journal rows retain their normal recovery behavior.
+
+Database writes report `am.db.insufficient_space` for `SQLITE_FULL` or an I/O
+error whose native cause is disk full. Free space and retry, or abort. Write
+failures before ZIP replacement do not publish an asset or export. Once a ZIP
+has been replaced, it remains confirmed even if the index update runs out of
+space: the existing index warning carries the space error and `free_space`
+action. Its exit status follows the usual index-warning rule; use `sync` or
+`rebuild` after freeing space. A normal clean opening still avoids scanning all
+database pages; both verification levels check state explicitly.
+
 `am library verify <dir>` checks the ZIP candidates on disk, including trash,
 independently of index contents. The default quick check runs V1–V3 without
 reading payload streams. `--full` also checks stream size, CRC, and SHA-256;

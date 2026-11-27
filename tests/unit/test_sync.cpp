@@ -142,6 +142,21 @@ std::string install_fixture(const fs::path& root, const std::string& name) {
 }
 }  // namespace
 
+TEST(Sync, NewLibraryHasCompleteEmptyIndexAndSyncNeedsNoRebuild) {
+  RecordProperty("req", "K-7|K-122");
+  World w;
+  EXPECT_FALSE(value(w.index->rebuild_required()));
+  EXPECT_EQ(w.library.database_info(lib::DatabaseKind::index).rebuild_required, false);
+  const auto report = value(w.index->sync());
+  EXPECT_EQ(report.added, 0u);
+  EXPECT_EQ(report.updated, 0u);
+  EXPECT_EQ(report.unchanged, 0u);
+  EXPECT_TRUE(report.missing.empty());
+  EXPECT_TRUE(report.skipped.empty());
+  EXPECT_EQ(w.opens, 0u);
+  EXPECT_FALSE(value(w.index->rebuild_required()));
+}
+
 TEST(Sync, UnchangedDoesNotOpenZipAndFullRereads) {
   RecordProperty("req", "K-7|ADR-0007");
   World w;

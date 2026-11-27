@@ -6,6 +6,7 @@
 #include "am/foundation/log.hpp"
 #include "am/foundation/paths.hpp"
 
+namespace am::asset_zip { class RandomAccessSink; }
 namespace am::application {
 struct LoggingOptions {
   std::filesystem::path directory;
@@ -29,6 +30,8 @@ struct DiagnosticOptions {
   // Redaction values/roots supplied by tests in addition to identities from the OS/environment.
   std::vector<std::string> users, hosts, roots;
   std::function<void(const std::filesystem::path&)> on_read;
+  // Internal request-local tests/fault injection, not CLI/configuration/plugin API.
+  std::function<Result<std::shared_ptr<asset_zip::RandomAccessSink>>(const std::filesystem::path&)> create_sink;
 };
 struct UnavailableDiagnosticSource {
   std::string source_kind, name, reason;

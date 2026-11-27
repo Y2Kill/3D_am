@@ -18,6 +18,8 @@ struct ExportHooks {
   // Observes actual repository verification reports for tests. The bool marks
   // the temporary asset container; plain ZIPs have no manifest verification.
   std::function<void(bool, const repository::VerificationReport&)> on_container_verification;
+  // Internal request-local tests/fault injection; never a CLI or plugin option.
+  std::function<Result<std::shared_ptr<asset_zip::RandomAccessSink>>(const std::filesystem::path&)> create_sink;
 };
 struct PrepareOptions {
   std::filesystem::path target_dir;

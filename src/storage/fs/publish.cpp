@@ -17,8 +17,10 @@
 namespace am::storage::fs {
 namespace {
 Error error(Errc code, std::string_view id, std::string detail = {}) {
-  return Error::make(code, "Export filesystem operation failed", std::move(detail))
+  auto result = Error::make(code, "Export filesystem operation failed", std::move(detail))
       .in("storage.fs").id(std::string(id));
+  if (code == Errc::insufficient_space) result.actions = {ErrorAction::free_space,ErrorAction::abort};
+  return result;
 }
 Error io(unsigned long code) {
 #ifdef _WIN32

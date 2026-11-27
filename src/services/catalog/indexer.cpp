@@ -30,6 +30,13 @@ using Json = repository::Json;
 Error error(Errc c, std::string id, std::string detail = {}) {
   return Error::make(c, "Catalog operation failed", std::move(detail)).in("services.catalog").id(std::move(id));
 }
+Error warning_with_cause(std::string id, const Error& cause, std::string detail = {}, Errc code = Errc::io_error) {
+  auto warning = error(code, std::move(id), std::move(detail))
+                     .with_severity(Severity::warning).caused_by(cause);
+  if (cause.root_cause().code == Errc::insufficient_space)
+    warning.actions = {ErrorAction::free_space, ErrorAction::abort};
+  return warning;
+}
 template <class T>
 T take(Result<T> r) {
   if (!r) throw r.error();
@@ -683,7 +690,7 @@ Result<LibraryVerifyReport> Indexer::verify(const LibraryVerifyOptions& options)
       out.index_updated = applied.ok();
       if (!applied) {
         auto marked = store_.mark_rebuild_required();
-        out.warnings.push_back(error(Errc::io_error,"am.catalog.index_update_failed").with_severity(Severity::warning).caused_by(applied.error()));
+        out.warnings.push_back(warning_with_cause("am.catalog.index_update_failed",applied.error()));
         if (!marked) { auto warning = marked.error(); warning.severity = Severity::warning; out.warnings.push_back(std::move(warning)); }
       }
     }
@@ -722,7 +729,7 @@ struct Catalog::Impl {
     });
     if (!written) {
       AM_LOG(warning,"catalog","library.warning","Library operation log failed",{},&written.error());
-      output.push_back(error(Errc::io_error,"am.catalog.log_failed").with_severity(Severity::warning).caused_by(written.error()));
+      output.push_back(warning_with_cause("am.catalog.log_failed",written.error()));
     }
   }
   bool opening = true, session_marked = false;
@@ -741,7 +748,7 @@ struct Catalog::Impl {
   void index_warning(const std::string& id, const Error& cause, std::vector<Error>& output) {
     AM_LOG(warning,"catalog","library.warning","Library index update failed",{},&cause);
     auto marked = indexer->mark_rebuild_required();
-    output.push_back(error(Errc::io_error,"am.catalog.index_update_failed",id).with_severity(Severity::warning).caused_by(cause));
+    output.push_back(warning_with_cause("am.catalog.index_update_failed",cause,id));
     if (!marked) { auto warning = marked.error(); warning.severity = Severity::warning; output.push_back(std::move(warning)); }
   }
   void observe(const repository::IndexedEvent& event) {
@@ -754,9 +761,7 @@ struct Catalog::Impl {
     if (!indexed) {
       AM_LOG(warning,"catalog","library.warning","Library index update failed",{},&indexed.error());
       auto marked = indexer->mark_rebuild_required();
-      auto warning = error(Errc::io_error, "am.catalog.index_update_failed", event.ref.asset_id)
-                         .with_severity(Severity::warning)
-                         .caused_by(indexed.error());
+      auto warning = warning_with_cause("am.catalog.index_update_failed",indexed.error(),event.ref.asset_id);
       warnings.push_back(std::move(warning));
       if (!marked) {
         auto e = marked.error();
@@ -773,6 +778,39 @@ Catalog::~Catalog() = default;
 Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options, IndexerHooks hooks) {
   auto opened=guard<Catalog>([&]() -> Result<Catalog> {
     auto p = std::make_unique<Impl>();
+    bool checked_session = false, previous_unclosed = true, damaged_index = false, journal_may_be_lost = false;
+    if (options.mode == library::Mode::read_write) {
+      const auto wal = root / ".am/state.sqlite-wal";
+      const bool has_wal = fs::exists(paths::native(wal)) && fs::file_size(paths::native(wal)) != 0;
+      auto read_options = options;
+      read_options.mode = library::Mode::read_only;
+      auto before = take(library::Library::open(root,read_options));
+      if (before.capabilities().mode == repository::StorageMode::read_only_default)
+        return error(Errc::read_only,"am.library.storage_read_only",before.capabilities().filesystem).allow(ErrorAction::open_read_only);
+      if (!before.capabilities().writable)
+        return error(Errc::read_only,"am.library.not_writable").allow(ErrorAction::open_read_only);
+      if (before.owner().locked)
+        return error(Errc::locked,"am.library.locked",before.owner().detail).allow(ErrorAction::open_read_only);
+      if (before.database_info(library::DatabaseKind::index).state == library::DatabaseState::ok) {
+        db::IndexStore store(before.database(library::DatabaseKind::index));
+        auto session = store.get_meta("writer_session");
+        if (session) previous_unclosed = !*session || **session != "closed";
+      }
+      checked_session = true;
+      journal_may_be_lost = previous_unclosed && !has_wal;
+      if (previous_unclosed) {
+        // Authoritative checks run on read-only connections before any writer
+        // diagnostics, WAL setup, or disposable-index repair can change files.
+        for (const auto kind : {library::DatabaseKind::state,library::DatabaseKind::userdata,library::DatabaseKind::index}) {
+          if (!before.database(kind)) continue;
+          auto check = take(before.check_database(kind,library::DatabaseCheckLevel::full));
+          if (check.status != "ok") {
+            if (kind != library::DatabaseKind::index) return error(Errc::corrupt_data,"am.library.db_error",check.detail);
+            damaged_index = true;
+          }
+        }
+      }
+    }
     auto* observer = p.get();
     auto downstream = std::move(options.on_indexed);
     options.on_indexed = [observer, downstream](const repository::IndexedEvent& e) {
@@ -780,6 +818,7 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
       if (downstream) downstream(e);
     };
     p->library.emplace(take(library::Library::open(root, options)));
+    if (damaged_index) take(p->library->reset_index());
     log::Scope scope({{},{},p->library->config().library_id,{}});
     const bool read_only=options.mode==library::Mode::read_only;
     p->jobs=std::make_unique<db::StateJobStore>(p->library->database(library::DatabaseKind::state),read_only,db::StateJobStore::Clock{},options.max_attempts);
@@ -787,23 +826,11 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
     p->before_log=hooks.before_log;
     const auto index_kind = library::DatabaseKind::index;
     const bool index_available = p->library->database_info(index_kind).state == library::DatabaseState::ok && p->library->database(index_kind);
-    p->opened.previous_session_unclosed = true;
+    p->opened.previous_session_unclosed = checked_session ? previous_unclosed : true;
     if (index_available) {
       db::IndexStore store(p->library->database(index_kind));
       auto session = store.get_meta("writer_session");
       if (session) p->opened.previous_session_unclosed = !*session || **session != "closed";
-    }
-    if (options.mode == library::Mode::read_write && p->opened.previous_session_unclosed) {
-      bool damaged_index = false;
-      // Authoritative databases must be intact before any journal/job recovery writes.
-      for (const auto kind : {library::DatabaseKind::state, library::DatabaseKind::userdata, index_kind}) {
-        auto check = take(p->library->check_database(kind, library::DatabaseCheckLevel::full));
-        if (check.status != "ok") {
-          if (kind != index_kind) return error(Errc::corrupt_data, "am.library.db_error", check.detail);
-          damaged_index = true;
-        }
-      }
-      if (damaged_index) take(p->library->reset_index());
     }
     p->indexer = std::make_unique<Indexer>(fs::absolute(root).lexically_normal(), *p->library, std::move(hooks));
     if (options.mode == library::Mode::read_only) {
@@ -829,11 +856,17 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
           p->opened.warnings.push_back(error(Errc::incomplete,"am.jobs.recovery_pending",std::to_string(running->integer(0))).with_severity(Severity::warning));
       }
     } else {
+      const bool state_recreated = p->library->database_info(library::DatabaseKind::state).reason == "recreated";
+      if (state_recreated) {
+        auto warning = error(Errc::incomplete,"am.library.state_recreated").with_severity(Severity::warning);
+        p->opened.warnings.push_back(warning);
+      }
       auto journal = db::StateJournal::open(root);
       if (!journal) return error(journal.error().code,"am.library.recovery_failed").caused_by(journal.error());
       auto before = (*journal)->list();
       if (!before) return error(before.error().code,"am.library.recovery_failed").caused_by(before.error());
-      auto recovered = p->library->assets().recover();
+      auto recovered = p->library->assets().recover(state_recreated || journal_may_be_lost,
+                                                   state_recreated ? "journal_recreated" : "journal_may_be_lost");
       if (!recovered) return error(recovered.error().code,"am.library.recovery_failed").caused_by(recovered.error());
       p->opened.recovered = std::move(*recovered);
       for (const auto& item : p->opened.recovered)
@@ -841,6 +874,8 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
             item.outcome == commit::RecoveryOutcome::skipped_locked) {
           auto warning = error(Errc::incomplete,"am.library.recovery_incomplete",item.op_id+" "+utf8(item.path)+" "+item.detail).with_severity(Severity::warning);
           if (item.error) warning = std::move(warning).caused_by(*item.error);
+          if (item.error && item.error->root_cause().code == Errc::insufficient_space)
+            warning.actions = {ErrorAction::free_space,ErrorAction::abort};
           p->opened.warnings.push_back(std::move(warning));
         }
       if (p->library->database_info(index_kind).reason == "recreated") take(p->indexer->rebuild());
@@ -863,7 +898,7 @@ Result<Catalog> Catalog::open(const fs::path& root, library::OpenOptions options
                repository::Json{{"op_id",item.op_id},{"outcome",commit::outcome_name(item.outcome)}},p->opened.warnings);
       }
       auto recovered_jobs=p->jobs->recover_running();
-      if (!recovered_jobs) p->opened.warnings.push_back(error(Errc::incomplete,"am.jobs.recovery_failed").with_severity(Severity::warning).caused_by(recovered_jobs.error()));
+      if (!recovered_jobs) p->opened.warnings.push_back(warning_with_cause("am.jobs.recovery_failed",recovered_jobs.error(),{},Errc::incomplete));
       else {
         p->opened.jobs_requeued=std::move(recovered_jobs->requeued); p->opened.jobs_failed=std::move(recovered_jobs->failed);
         for (const auto& id:p->opened.jobs_requeued) p->log("library.recovery","info",{},repository::Json{{"job_id",id},{"outcome","queued"}},p->opened.warnings,id);

@@ -32,7 +32,9 @@ using Path = std::filesystem::path;
 bool is_independent_copy(const AssetSnapshot&, const manifest::CodecLimits&);
 constexpr std::string_view format_id = "urn:uuid:0d40b3a5-39ae-48e6-a8e8-da18b1b8c128";
 Error error(Errc code, std::string id, std::string detail) {
-  return Error::make(code, "Asset repository operation failed", std::move(detail)).in("storage.repository").op("asset.repository").id(std::move(id));
+  auto result = Error::make(code, "Asset repository operation failed", std::move(detail)).in("storage.repository").op("asset.repository").id(std::move(id));
+  if (code == Errc::insufficient_space) result.actions = {ErrorAction::free_space,ErrorAction::abort};
+  return result;
 }
 std::string diagnostic_name(std::string_view name) {
   if(unicode::is_valid_utf8(name))return std::string(name);
@@ -53,6 +55,7 @@ template<class T, class F> Result<T> guard(F&& f) {
     std::string mapped;
     if (id == "am.commit.locked") mapped = "am.repo.locked";
     else if (id == "am.commit.insufficient_space") mapped = "am.repo.insufficient_space";
+    else if (id.starts_with("am.zip.") && e.code == Errc::insufficient_space) mapped = "am.repo.insufficient_space";
     else if (id == "am.commit.replace_failed") mapped = "am.repo.target_in_use";
     else if (id == "am.commit.journal_error" || id == "am.commit.journal_version") mapped = "am.repo.journal_error";
     else if (id == "am.commit.out_of_memory" || (id.starts_with("am.zip.") && e.code == Errc::resource_exhausted)) mapped = "am.repo.limit_exceeded";
@@ -558,10 +561,12 @@ Result<VerificationReport> AssetRepository::verify(const AssetRef& ref, VerifyLe
     return impl_->check(ref,snap.archive(),snap.manifest(),level,ids,budget);
   });
 }
-Result<std::vector<commit::RecoveryItem>> AssetRepository::recover() {
+Result<std::vector<commit::RecoveryItem>> AssetRepository::recover(bool preserve_orphans, std::string orphan_reason) {
   return guard<std::vector<commit::RecoveryItem>>([&]() -> Result<std::vector<commit::RecoveryItem>> {
     impl_->require_write();
     commit::RecoveryOptions options;
+    options.preserve_orphans = preserve_orphans;
+    options.orphan_reason = std::move(orphan_reason);
     options.journal = impl_->journal;
     options.lock_timeout = impl_->options.lock_timeout;
     options.zip_limits = impl_->options.zip_limits;

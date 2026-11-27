@@ -1,4 +1,6 @@
 #include "am/storage/library/library.hpp"
+#include "am/storage/db/sqlite.hpp"
+#include "am/storage/asset_zip/sink.hpp"
 #include "am/foundation/paths.hpp"
 #include "am/foundation/uuid.hpp"
 #include "state_schema.hpp"
@@ -192,18 +194,26 @@ const char* name(DatabaseKind k) {
 const char* schema(DatabaseKind k) {
   switch (k) { case DatabaseKind::index: return index_schema_sql; case DatabaseKind::userdata: return userdata_schema_sql; default: return state_schema_sql; }
 }
+[[noreturn]] void database_failure(sqlite3* db, int rc) {
+  if (auto space = am::db::insufficient_space_error(db, rc)) throw *space;
+  const auto primary = rc & 0xff;
+  const auto kind = primary == SQLITE_CORRUPT || primary == SQLITE_NOTADB ? Errc::corrupt_data :
+                    primary == SQLITE_BUSY || primary == SQLITE_LOCKED ? Errc::locked :
+                    primary == SQLITE_READONLY ? Errc::read_only : Errc::io_error;
+  fail(kind,"am.library.db_error",db ? sqlite3_errmsg(db) : "SQLite connection unavailable");
+}
 void exec(sqlite3* db, const std::string& sql) {
-  if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) != SQLITE_OK)
-    fail(Errc::io_error, "am.library.db_error", sqlite3_errmsg(db));
+  const auto rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+  if (rc != SQLITE_OK) database_failure(db,rc);
 }
 std::string scalar(sqlite3* db, const std::string& sql) {
   sqlite3_stmt* raw = nullptr;
-  if (sqlite3_prepare_v2(db, sql.c_str(), -1, &raw, nullptr) != SQLITE_OK)
-    fail(Errc::io_error, "am.library.db_error", sqlite3_errmsg(db));
+  const auto prepared = sqlite3_prepare_v2(db, sql.c_str(), -1, &raw, nullptr);
+  if (prepared != SQLITE_OK) database_failure(db,prepared);
   std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> stmt(raw, sqlite3_finalize);
   const auto rc = sqlite3_step(raw);
   if (rc == SQLITE_DONE) return {};
-  if (rc != SQLITE_ROW) fail(Errc::io_error, "am.library.db_error", sqlite3_errmsg(db));
+  if (rc != SQLITE_ROW) database_failure(db,rc);
   const auto* text = sqlite3_column_text(raw, 0);
   return text ? reinterpret_cast<const char*>(text) : "";
 }
@@ -223,7 +233,7 @@ Connection connect(const Path& path, int flags, bool immutable = false) {
   sqlite3* raw = nullptr;
   const auto rc = sqlite3_open_v2(filename.c_str(), &raw, flags | SQLITE_OPEN_FULLMUTEX, nullptr);
   Connection connection(raw);
-  if (rc != SQLITE_OK) fail(Errc::io_error, "am.library.db_error", raw ? sqlite3_errmsg(raw) : "sqlite3_open_v2 failed");
+  if (rc != SQLITE_OK) database_failure(raw,rc);
   return connection;
 }
 std::string quote(const std::string& value) {
@@ -347,9 +357,16 @@ Database open_database(const Path& root, DatabaseKind kind, const OpenOptions& o
     out.info.state = DatabaseState::ok;
   }
   if (rw && out.handle) {
+    if (kind == DatabaseKind::state) {
+      if (sqlite3_db_readonly(out.handle.get(),"main") != 0)
+        fail(Errc::read_only,"am.library.db_error","state: database is read-only");
+      // Fail promptly on another SQLite writer before any recovery side effects.
+      exec(out.handle.get(),"BEGIN IMMEDIATE; ROLLBACK");
+    }
     exec(out.handle.get(), "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
     exec(out.handle.get(), kind == DatabaseKind::index ? "PRAGMA synchronous=NORMAL" : "PRAGMA synchronous=FULL");
     out.info.user_version = std::stoi(scalar(out.handle.get(), "PRAGMA user_version"));
+    if (kind == DatabaseKind::state && !exists) out.info.reason = "recreated";
   }
   if (out.handle) {
     exec(out.handle.get(), "PRAGMA foreign_keys=ON");
@@ -455,10 +472,20 @@ Result<Config> Library::init(const Path& path, const InitOptions& options) {
     if (options.before_config) take(options.before_config());
     const auto temporary = root / ".am/.am-tmp" / (Uuid::v7().to_string() + ".toml");
     {
-      std::ofstream file(paths::native(temporary), std::ios::binary);
-      file << toml::table{{"format", "am-library"}, {"schema_version", 1}, {"library_id", c.library_id}, {"name", c.name}, {"created_at", c.created_at}};
-      file.close();
-      if (!file) fail(Errc::io_error, "am.library.io_error", u8(temporary));
+      std::ostringstream text;
+      text << toml::table{{"format", "am-library"}, {"schema_version", 1}, {"library_id", c.library_id}, {"name", c.name}, {"created_at", c.created_at}};
+      const auto data = text.str();
+      auto file = take(asset_zip::file_sink(temporary));
+      auto written = file->write_at(0,std::as_bytes(std::span(data)));
+      if (written) written = file->flush();
+      if (written) written = file->close();
+      if (!written) {
+        const auto cause = written.error();
+        (void)file->discard();
+        auto failure = error(cause.code,cause.code == Errc::insufficient_space ? "am.library.insufficient_space" : "am.library.io_error",u8(temporary));
+        failure.actions = cause.actions;
+        throw std::move(failure).caused_by(cause);
+      }
     }
     fs::rename(paths::native(temporary), paths::native(root / "am-library.toml"));
     return c;
@@ -474,6 +501,20 @@ Result<Library> Library::open(const Path& path, const OpenOptions& options) {
       if (p->caps.mode == repository::StorageMode::read_only_default)
         throw error(Errc::read_only, "am.library.storage_read_only", p->caps.filesystem).allow(ErrorAction::open_read_only);
       if (!p->caps.writable) throw error(Errc::read_only, "am.library.not_writable").allow(ErrorAction::open_read_only);
+      // A damaged authoritative state database must fail before lock diagnostics,
+      // PRAGMA writes, disposable-index repair, or creation of another database.
+      const auto state_path = root / ".am/state.sqlite";
+      if (fs::exists(paths::native(state_path))) {
+        const auto wal = root / ".am/state.sqlite-wal";
+        const bool pending_wal = fs::exists(paths::native(wal)) && fs::file_size(paths::native(wal)) != 0;
+        auto state = connect(state_path,SQLITE_OPEN_READONLY,!pending_wal);
+        const auto version = std::stoi(scalar(state.get(),"PRAGMA user_version"));
+        if (!schema_present(state.get(),DatabaseKind::state))
+          fail(Errc::corrupt_data,"am.library.db_error","state: required schema missing");
+        if (version < 1) fail(Errc::corrupt_data,"am.library.db_error","state: invalid schema version");
+        if (version > supported(DatabaseKind::state,options))
+          throw error(Errc::unsupported,"am.library.db_version","state: newer schema version").allow(ErrorAction::open_read_only);
+      }
       p->lock = std::make_unique<OwnerLock>();
       if (!p->lock->open(lock_path, true)) throw error(Errc::read_only, "am.library.not_writable", u8(lock_path)).allow(ErrorAction::open_read_only);
       if (!p->lock->acquire()) throw error(Errc::locked, "am.library.locked", read(lock_path)).allow(ErrorAction::open_read_only);
@@ -484,6 +525,10 @@ Result<Library> Library::open(const Path& path, const OpenOptions& options) {
     }
     for (const auto kind : {DatabaseKind::userdata, DatabaseKind::state, DatabaseKind::index})
       p->databases[static_cast<std::size_t>(kind)] = open_database(root, kind, options, p->caps);
+    if (options.mode == Mode::read_write && p->databases[static_cast<std::size_t>(DatabaseKind::state)].info.reason == "recreated")
+      exec(p->databases[static_cast<std::size_t>(DatabaseKind::state)].handle.get(),
+           "INSERT INTO op_log(at,level,code,message,detail) VALUES("+quote(utc())+
+           ",'warn','am.library.state_recreated','State database recreated','{}')");
     repository::RepositoryOptions repo;
     repo.library_id = p->config.library_id; repo.mode = p->mode; repo.application_version = options.application_version;
     repo.capabilities = static_cast<const repository::StorageCapabilities&>(p->caps);
