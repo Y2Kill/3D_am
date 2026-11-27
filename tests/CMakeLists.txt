@@ -167,6 +167,9 @@ if(AM_PYTHON_TESTS)
     endif()
     message(WARNING "Python 3 not found: arch_check and schema_check are not registered")
   else()
+    add_test(NAME small_volume_driver
+      COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/unit/test_small_volume_driver.py)
+    set_tests_properties(small_volume_driver PROPERTIES LABELS "fault;req:K-117;req:K-122" TIMEOUT 60)
     if(WIN32)
       add_test(NAME small_volume_script
         COMMAND powershell.exe -NoProfile -NonInteractive -Command

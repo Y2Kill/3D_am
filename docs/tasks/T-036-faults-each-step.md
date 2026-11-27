@@ -187,16 +187,19 @@
    и полное равенство индекса после sync/rebuild. Классификатор возвращает
    read_only_default (число 2, filesystem пуст); тестовые capabilities задаются
    отдельно. Производственная политика Linux не менялась.
-   Windows small_volume: **SKIP**, AM_SMALL_VOLUME не задан. Скрипт VHDX
+   На исходной сдаче Windows small_volume: **SKIP**, AM_SMALL_VOLUME не задан;
+   последующая приёмка NTFS с уточнениями дала 7 PASS + 1 NOT_APPLICABLE, см. ниже.
+   Скрипт VHDX
    синтаксически проверен; Create/Remove не выполнялись исполнителем. Проверка
-   фактической идемпотентности NTFS и снятия mount остаётся владельцу при наличии
+   фактической идемпотентности Remove и снятия mount остаётся владельцу при наличии
    административного тома, как предусмотрено задачей. Политика PowerShell этой
    машины запрещает запуск .ps1 без отдельного process-level разрешения; обхода
    исполнителем не было. Команды для владельца — tests/fault/README.md.
 6. Sync.NewLibraryHasCompleteEmptyIndexAndSyncNeedsNoRebuild закрывает долг T-035
    в обоих CLI-пресетах с подставленными capabilities. Min остаётся без SQLite.
-7. Статус K-117 разделён по конфигурациям: tmpfs проверен на настоящем томе;
-   заполненный NTFS ещё не проверен. Отключение питания не проверялось,
+7. Статус K-117 разделён по конфигурациям: tmpfs и NTFS VHDX проверены на
+   настоящих томах; неприменимость диагностики на папке подключения записана явно.
+   Отключение питания не проверялось,
    внешних сессий/очистки кэша в P0 нет. Подробные границы — fault_matrix.md.
 8. Все шесть этапов повторной серии завершены с кодом 0. Фактические счётчики,
    пропуски, итоговые строки и логи — в таблице ниже; invalid IDs = 0.
@@ -445,3 +448,95 @@ Total Test time (real) = 1.07 sec
 исполнитель не изменял и не присваивал автоматически: штатная проверка
 владельца по-прежнему откажет для него; его дальнейшее использование или
 удаление требует отдельного решения владельца.
+
+### Приёмка малого тома NTFS: уточнения и повторный прогон
+
+Владелец проверил f67bd1a на своём NTFS VHDX: 6/8 PASS — ChangePreflight,
+ChangeDuringWrite, FullExport, ImportInput, DatabaseFull, ApplicationLogFull.
+DiagnosticExportFull отказал до записи с unsupported / am.diag.local_only из-за
+папки подключения IO_REPARSE_TAG_MOUNT_POINT. InitConfigurationFull успешно
+создал библиотеку после fill(0): маленький TOML на NTFS может быть резидентным
+в MFT. Данных не потеряно; оба отказа были неверными ожиданиями тестов.
+
+По решению приёмки изменены только тесты, драйвер и документация:
+
+- На Windows NTFS через папку подключения DiagnosticExportFull проверяет ровно
+  unsupported / am.diag.local_only, отсутствие результата и временных файлов,
+  неизменный SHA ZIP/userdata и подтверждённые пользовательские данные. Свойства
+  r_applicability=not_applicable, r_reason=ntfs_folder_mount_local_only отделяют
+  проверенный явный отказ от R-проверки ENOSPC. Классификатор и local_only не менялись.
+- На NTFS init допускает insufficient_space с отсутствующим TOML и пустой
+  .am-tmp либо успех. При успехе только для чтения проверяются конфигурация,
+  идентификатор библиотеки, схема и integrity_check всех трёх БД, полный пустой
+  индекс, assets/trash и временная область. Обе библиотеки также проходят внешний
+  оракул sync/rebuild. Факт записан в init_configuration_outcome; на tmpfs успех
+  по-прежнему считается ошибкой.
+- Драйвер выполняет все случаи и возвращает общий код только после сводки.
+  Отдельный известный родитель каждого случая очищается в finally, включая отказ
+  конструктора и таймаут без XML. Перед рекурсивным удалением проверяются
+  абсолютный разрешённый путь, принадлежность тому и отсутствие перенаправления.
+  Ошибка очистки делает случай неуспешным, но не останавливает следующие.
+  Полные результаты/свойства и состояние очистки сохраняются в summary.json.
+- small_volume_driver — постоянный CTest с шестью Python-тестами: отказ GTest,
+  отказ оракула, таймаут без XML, корректная неприменимость, сбой очистки с
+  продолжением, запрет удаления вне указанного тома и сохранение существующего
+  каталога при коллизии имени (не созданный драйвером каталог не удаляется).
+  Все 6 PASS.
+
+Повторные фактические результаты:
+
+| Конфигурация | Всего R-случаев | PASS | NOT_APPLICABLE | FAIL | Наблюдение init |
+|---|---:|---:|---:|---:|---|
+| NTFS VHDX владельца, папка подключения | 8 | 7 | 1 | 0 | succeeded; после fill(0) ФС сообщала 4096 свободных байт; библиотека полностью валидна |
+| WSL, tmpfs 32 MiB | 8 | 8 | 0 | 0 | insufficient_space; перед TOML доступно 0 байт; TOML и временных файлов нет |
+
+На NTFS неприменима только диагностика как ENOSPC-сценарий; её явный отказ и
+целостность данных проверены. Внутренний способ размещения TOML не измерялся.
+Все восемь каталогов каждого прогона очищены (cleanup=ok). Папка подключения
+NTFS осталась доступна с ёмкостью 65990656 байт. -Create, -Remove и отключение
+тома исполнителем не вызывались; том остаётся подключённым до приёмки управляющим.
+Старый образ без owner.json был разрешён владельцем до этой приёмки, автоматическое
+присвоение образа в скрипт не добавлялось.
+
+Команды и итоговые строки:
+
+```text
+AM_SMALL_VOLUME=<папка подключения владельца>
+tools\build_cli.cmd --offline --ci -R small_volume
+100% tests passed, 0 tests failed out of 3
+Total Test time (real) = 41.51 sec
+req_report: 84 IDs, 815 tests, 49 without req, 0 invalid IDs
+SUMMARY small_volume: total=8; passed=7; not_applicable=1; failed=0
+
+WSL tools/build_linux.sh cli --offline --ci -R small_volume
+100% tests passed, 0 tests failed out of 2
+Total Test time (real) = 27.19 sec
+req_report: 84 IDs, 811 tests, 71 without req, 0 invalid IDs
+SUMMARY small_volume: total=8; passed=8; not_applicable=0; failed=0
+
+tools\build_min.cmd --ci
+100% tests passed, 0 tests failed out of 159
+Total Test time (real) = 37.70 sec
+req_report: 28 IDs, 159 tests, 49 without req, 0 invalid IDs
+```
+
+Логи: `.cache/t036/small-ntfs-adjusted.log`, `small-tmpfs-adjusted.log`,
+`min-ntfs-adjusted-final.log`; подробные результаты: `ntfs-adjusted-detail.log`,
+`tmpfs-adjusted-detail.log`, `ntfs-adjusted-summary.json`,
+`tmpfs-adjusted-summary.json` в том же каталоге. Windows CTest включает драйвер,
+ASCII/CP866-тест скрипта и восемь R-случаев; Linux — драйвер и восемь R-случаев.
+
+После финальной защиты от коллизии имени отдельно повторена метка small_volume
+текущим драйвером на обоих томах: Windows **1/1 CTest PASS**, 43.66 с,
+`SUMMARY small_volume: total=8; passed=7; not_applicable=1; failed=0`;
+WSL **1/1 CTest PASS**, 27.22 с,
+`SUMMARY small_volume: total=8; passed=8; not_applicable=0; failed=0`.
+Логи: `.cache/t036/small-ntfs-adjusted-final.log` и
+`.cache/t036/small-tmpfs-adjusted-final.log`. Итоговые summary.json скопированы
+в указанные выше файлы доказательств; во всех случаях cleanup=ok.
+
+В fault_matrix.md записан **открытый пробел**: диагностика отклоняет локальный
+том, подключённый в папку. Отличать его от junction по цели
+`\??\Volume{GUID}\` предложено на будущее, без реализации в T-036. Настоящий
+ENOSPC диагностики остаётся покрыт tmpfs и S2. Статусы K-117 обновлены по этим
+фактам; отключение питания и долговечность контроллера не проверялись.

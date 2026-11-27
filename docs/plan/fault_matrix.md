@@ -12,7 +12,7 @@ K — реальное завершение дочернего процесса;
 
 | Операция | K | S1 | S2 | S3 | R |
 |---|---|---|---|---|---|
-| library init | FaultProcess.init | Не применимо: нет оценки свободного места; создание БД — S3 | SmallVolume.InitConfigurationFull (настоящий отказ записи конфигурации) | FaultSqlite.InitFullNeverPublishesConfiguration | SmallVolume.InitConfigurationFull |
+| library init | FaultProcess.init | Не применимо: нет оценки свободного места; создание БД — S3 | SmallVolume.InitConfigurationFull (tmpfs: отказ записи; NTFS: отказ либо валидный успех) | FaultSqlite.InitFullNeverPublishesConfiguration | SmallVolume.InitConfigurationFull, исход записан в init_configuration_outcome |
 | create/change репозитория | CommitProtocol.KillEveryCheckpointThreeTimesAndRecover; AssetRepository.KillEveryRepositoryCheckpointThreeTimesWithOpenSnapshot | AssetRepository.ReadOnlyCapabilitiesSizeAndSpaceAreCheckedBeforeCommit | CommitProtocol.SpaceBeforeAndDuringWriteLeavesNoOperation | FaultSqlitePipeline.JournalFullBeforeAndAfterReplacement | SmallVolume.ChangePreflight; SmallVolume.ChangeDuringWrite |
 | library add-ready | ImportReady.KillVerifiedAndReplacedForNewAndReplacementRecoverWithIndex; FaultProcess.ready; FaultProcess.ready_replace | FaultSpace.ReadyAndCopyPreflight | FaultSpace.ReadyAndCopyDuringWrite | FaultSqlitePipeline.JournalFullBeforeAndAfterReplacement | Общий потоковый протокол: SmallVolume.ChangeDuringWrite |
 | library copy | FaultProcess.copy | FaultSpace.ReadyAndCopyPreflight | FaultSpace.ReadyAndCopyDuringWrite | FaultSqlitePipeline.JournalFullBeforeAndAfterReplacement | Общий потоковый протокол: SmallVolume.ChangeDuringWrite |
@@ -30,7 +30,7 @@ K — реальное завершение дочернего процесса;
 | восстановление при открытии | OpenRecovery.CrashedChangeAtEveryFaultPointOpensWithoutExplicitRecovery; FaultProcess.recovery | Не применимо: готовый ZIP перемещается без упаковки | Не применимо: ZIP не переписывается | FaultSqlitePipeline.RecoveryFull | Представитель SQLite: SmallVolume.DatabaseFull |
 | журнал операций | FaultProcess.operation_log | Не применимо: только SQLite | Не применимо: только SQLite | FaultSqlitePipeline.OperationLogFull | Представитель SQLite: SmallVolume.DatabaseFull |
 | журнал приложения | FileLog.ErrorSurvivesKilledProcess | Не применимо: нет предварительной оценки места | FileLog.WriteFailureCountsDroppedAndRecoveryReportsItWithoutThrowing | Не применимо: JSON Lines, не SQLite | SmallVolume.ApplicationLogFull |
-| экспорт диагностики | FaultProcess.diagnostic | Не применимо: нет предварительной оценки места | FaultSpace.DiagnosticExportDuringWrite | Не применимо: базы читаются, не записываются | SmallVolume.DiagnosticExportFull |
+| экспорт диагностики | FaultProcess.diagnostic | Не применимо: нет предварительной оценки места | FaultSpace.DiagnosticExportDuringWrite | Не применимо: базы читаются, не записываются | SmallVolume.DiagnosticExportFull: tmpfs — ENOSPC; NTFS через папку подключения — R неприменим, проверяется явный local_only и сохранность данных |
 
 ## Оракул
 
@@ -88,3 +88,30 @@ journal_may_be_lost. Orphan-файлы сохраняются на одно ус
 checkpoint WAL: они допустимы в пользу сохранения данных. После закрытой
 сессии действует обычный orphan_age. Три случая проверяет
 FaultState.ClosedUnclosedWalAndNoWalUseDistinctOrphanPolicies.
+
+## Уточнения приёмки на NTFS VHDX
+
+На подключённом владельцем NTFS-томе: 7 PASS, 1 NOT_APPLICABLE, 0 FAIL.
+DiagnosticExportFull проверяет unsupported / am.diag.local_only до записи,
+отсутствие результата и временных файлов, неизменные ZIP/userdata. Это проверка
+явного отказа, а не ENOSPC диагностики: настоящий ENOSPC покрыт tmpfs и S2.
+
+InitConfigurationFull допускает на NTFS insufficient_space с отсутствующим
+am-library.toml и пустой .am-tmp либо успех с полной валидной библиотекой.
+Маленький TOML может быть резидентным в MFT и не требовать кластеров. Проверяются
+все три БД, конфигурация и полный индекс; исход записывается свойством теста.
+В текущем прогоне NTFS — succeeded, после fill(0) сообщалось 4096 свободных байт;
+внутренний способ хранения файла не измерялся. На tmpfs по-прежнему обязателен
+insufficient_space, текущий результат — 8/8 PASS при 0 свободных байт перед TOML.
+
+Драйвер выполняет все сценарии, формирует summary.json и общий код возврата.
+Каждый получает отдельный известный каталог внутри тома. Он очищается в finally
+и при ошибке/таймауте без XML; ошибка очистки регистрируется и не останавливает
+остальные случаи. Защиту удаления чужого каталога и продолжение после отказов
+проверяет small_volume_driver. Сам том остаётся подключённым.
+
+**Пробел / предложение на будущее:** экспорт диагностики отклоняет локальный
+том, подключённый в папку. IO_REPARSE_TAG_MOUNT_POINT классифицируется как ссылка,
+поэтому local_only запрещает такой путь. Точку подключения тома можно отличить
+от junction по цели `\??\Volume{GUID}\`. Это предложение для отдельного решения;
+классификатор и local_only в T-036 не изменялись.

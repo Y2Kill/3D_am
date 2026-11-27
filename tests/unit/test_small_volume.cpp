@@ -23,6 +23,7 @@ struct Volume {
   fs::path area,root,source,output,filler;
   am::repository::ChangeResult asset;
   std::optional<am::catalog::Catalog> catalog;
+  bool ntfs=false, folder_mount=false;
   Volume() {
     std::string environment;
 #ifdef _WIN32
@@ -49,6 +50,12 @@ struct Volume {
     auto user=am::db::Connection::borrow(catalog->library().database(am::library::DatabaseKind::userdata));
     take(user.exec("INSERT INTO collections(coll_id,name,kind,created_at) VALUES('confirmed','Favorite','favorites','2020-01-01T00:00:00Z')"));
     auto classified=take(am::repository::detect_storage_capabilities(root));
+#ifdef _WIN32
+    ntfs=classified.filesystem=="NTFS";
+    for (auto p=fs::absolute(base).lexically_normal();p.has_relative_path();p=p.parent_path()) {
+      if (take(am::paths::windows_node_data(p)).reparse_tag==IO_REPARSE_TAG_MOUNT_POINT) { folder_mount=true; break; }
+    }
+#endif
     testing::Test::RecordProperty("actual_storage_mode",static_cast<int>(classified.mode));
     testing::Test::RecordProperty("actual_filesystem",classified.filesystem);
     testing::Test::RecordProperty("volume_capacity_bytes",std::to_string(capacity));
@@ -168,14 +175,21 @@ TEST(SmallVolume, DatabaseFull) {
 }
 TEST(SmallVolume, DiagnosticExportFull) {
   RecordProperty("req","K-117|K-122|ADR-0033");
-  Volume v; const auto old=hash(v.zip());
+  Volume v; const auto old=hash(v.zip()),user=hash(v.root/".am/userdata.sqlite");
   v.fill(0);
   am::application::DiagnosticOptions options; options.library=v.root; options.output=v.output/"diagnostics.zip";
   auto result=am::application::export_diagnostics(options);
-  ASSERT_FALSE(result); v.space_error(result.error());
+  ASSERT_FALSE(result);
+  if (v.ntfs && v.folder_mount) {
+    EXPECT_EQ(result.error().code,am::Errc::unsupported);
+    EXPECT_EQ(result.error().message_id,"am.diag.local_only");
+    RecordProperty("r_applicability","not_applicable");
+    RecordProperty("r_reason","ntfs_folder_mount_local_only");
+  } else v.space_error(result.error());
   EXPECT_FALSE(fs::exists(options.output)); EXPECT_TRUE(fs::is_empty(v.output));
   EXPECT_EQ(hash(v.zip()),old);
   v.userdata();
+  EXPECT_EQ(hash(v.root/".am/userdata.sqlite"),user);
 }
 TEST(SmallVolume, ApplicationLogFull) {
   RecordProperty("req","K-117|K-122|NFR-14.4.9");
@@ -207,10 +221,30 @@ TEST(SmallVolume, InitConfigurationFull) {
   Volume v;const auto old=hash(v.zip());
   const auto target=v.area/"new-library";
   am::library::InitOptions options;
-  options.before_config=[&]()->am::Result<void>{v.fill(0);return {};};
+  options.before_config=[&]()->am::Result<void>{
+    v.fill(0);
+    RecordProperty("available_before_configuration",std::to_string(fs::space(v.area).available));
+    return {};
+  };
   const auto initialized=am::library::Library::init(target,options);
-  ASSERT_FALSE(initialized);v.space_error(initialized.error());
-  EXPECT_FALSE(fs::exists(target/"am-library.toml"));
+  if (initialized) {
+    RecordProperty("init_configuration_outcome","succeeded");
+    EXPECT_TRUE(v.ntfs)<<"Only NTFS may fit a resident configuration without free clusters";
+    auto read=writable(); read.mode=am::library::Mode::read_only; read.capabilities->writable=false;
+    auto valid=take(am::library::Library::open(target,read));
+    EXPECT_EQ(valid.config().library_id,initialized->library_id);
+    for (const auto kind:{am::library::DatabaseKind::index,am::library::DatabaseKind::userdata,am::library::DatabaseKind::state}) {
+      EXPECT_EQ(valid.database_info(kind).state,am::library::DatabaseState::ok);
+      EXPECT_EQ(take(valid.check_database(kind,am::library::DatabaseCheckLevel::full)).status,"ok");
+    }
+    EXPECT_FALSE(take(am::db::IndexStore(valid.database(am::library::DatabaseKind::index)).rebuild_required()));
+    EXPECT_TRUE(fs::is_empty(target/"assets")); EXPECT_TRUE(fs::is_empty(target/"trash"));
+    RecordProperty("libraries",Json::array({v.root.generic_string(),target.generic_string()}).dump());
+  } else {
+    RecordProperty("init_configuration_outcome","insufficient_space");
+    v.space_error(initialized.error());
+    EXPECT_FALSE(fs::exists(target/"am-library.toml"));
+  }
   EXPECT_TRUE(fs::is_empty(target/".am/.am-tmp"));
   EXPECT_EQ(hash(v.zip()),old);v.userdata();
 }

@@ -15,6 +15,89 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_fault_unit import check_indexes
 
 
+def cleanup_case(case, volume, expected):
+    if not case.exists():
+        return
+    resolved = case.resolve()
+    # Recheck the absolute target immediately before deletion, including on Windows
+    # where a folder-mounted volume resolves to its volume GUID rather than D:.
+    if (not case.name.startswith('am-t036-case-') or resolved != expected or
+            resolved == volume.resolve() or not resolved.is_relative_to(volume.resolve())):
+        raise AssertionError('/cleanup: case escaped its owned directory in the test volume')
+    shutil.rmtree(resolved)
+
+
+def run_cases(cases, tests, helper, work, volume):
+    results = []
+    for index, name in enumerate(cases):
+        case = volume / ('am-t036-case-' + str(uuid.uuid4()))
+        expected = volume.resolve() / case.name
+        xml = work / f'{index}.xml'
+        row = {'name': name, 'status': 'failed', 'return_code': None, 'errors': []}
+        created = False
+        try:
+            case.mkdir()
+            created = True
+            if case.resolve() != expected:
+                raise AssertionError('/case: test directory was redirected')
+            environment = os.environ.copy()
+            environment['AM_SMALL_VOLUME'] = str(case)
+            # A known per-case parent permits cleanup even if construction fails
+            # before GTest writes libraries[], or the child times out without XML.
+            result = subprocess.run([str(tests), '--gtest_filter=' + name, '--gtest_output=xml:' + str(xml)],
+                                    env=environment, timeout=300)
+            row['return_code'] = result.returncode
+            if result.returncode:
+                row['errors'].append('GTest exit code ' + str(result.returncode))
+            document = ET.parse(xml).getroot()
+            testcases = list(document.iter('testcase'))
+            if len(testcases) != 1 or testcases[0].get('classname') + '.' + testcases[0].get('name') != name:
+                raise AssertionError('/case: expected exactly the requested GTest')
+            if list(document.iter('failure')) or list(document.iter('error')) or list(document.iter('skipped')):
+                row['errors'].append('GTest reported failure or an unexpected skip')
+            properties = {p.get('name'): p.get('value') for p in document.iter('property')}
+            row['properties'] = properties
+            if result.returncode == 0 and not json.loads(properties.get('libraries', '[]')):
+                raise AssertionError('/case: successful test omitted its library integrity properties')
+            # Also inspect libraries from a failed test; a failed expectation must
+            # not hide a separate recovery/index problem.
+            check_indexes(xml, helper, volume=volume, snapshot_area=work)
+            print('Classifier mode=' + properties.get('actual_storage_mode', '?') +
+                  '; classifier filesystem=' + properties.get('actual_filesystem', '') +
+                  '; capacity=' + properties.get('volume_capacity_bytes', '?'), flush=True)
+            if not row['errors']:
+                if properties.get('r_applicability') == 'not_applicable':
+                    row['status'] = 'not_applicable'
+                    row['reason'] = properties['r_reason']
+                else:
+                    row['status'] = 'passed'
+        except (AssertionError, OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError, ET.ParseError) as error:
+            row['errors'].append(str(error))
+        finally:
+            try:
+                if created:
+                    cleanup_case(case, volume, expected)
+                row['cleanup'] = 'ok' if created else 'not_created'
+            except (AssertionError, OSError) as error:
+                row['errors'].append('Cleanup failed: ' + str(error))
+                row['cleanup'] = 'failed'
+            if row['errors']:
+                row['status'] = 'failed'
+        results.append(row)
+        status = {'passed': 'PASS', 'not_applicable': 'NOT_APPLICABLE', 'failed': 'FAIL'}[row['status']]
+        details = '; '.join(row['errors']) or row.get('reason', '')
+        outcome = row.get('properties', {}).get('init_configuration_outcome')
+        if outcome:
+            details += '; init_configuration_outcome=' + outcome
+        print(status + ' ' + name + (': ' + details if details else ': integrity and recovered index checked'), flush=True)
+    summary = {status: sum(row['status'] == status for row in results)
+               for status in ('passed', 'not_applicable', 'failed')}
+    summary.update(total=len(results), results=results)
+    (work / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf8')
+    print('SUMMARY small_volume: total={total}; passed={passed}; not_applicable={not_applicable}; failed={failed}'.format(**summary), flush=True)
+    return 1 if summary['failed'] else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tests', type=Path, required=True)
@@ -67,29 +150,7 @@ def main():
                 cases.append(suite + line.strip().split(' ')[0])
         if len(cases) < 5:
             raise AssertionError('/cases: real-volume minimum scenarios are missing')
-        for index, name in enumerate(cases):
-            xml = work / f'{index}.xml'
-            result = subprocess.run([str(args.tests.resolve()), '--gtest_filter=' + name, '--gtest_output=xml:' + str(xml)], timeout=300)
-            if result.returncode:
-                return result.returncode
-            check_indexes(xml, args.helper.resolve(), volume=volume, snapshot_area=work)
-            properties = {p.get('name'): p.get('value') for p in ET.parse(xml).getroot().iter('property')}
-            print('Classifier mode=' + properties.get('actual_storage_mode', '?') +
-                  '; classifier filesystem=' + properties.get('actual_filesystem', '') +
-                  '; capacity=' + properties.get('volume_capacity_bytes', '?'), flush=True)
-            for prop in ET.parse(xml).getroot().iter('property'):
-                if prop.get('name') != 'libraries':
-                    continue
-                for path in json.loads(prop.get('value')):
-                    area = Path(path).absolute().parent
-                    # Resolve immediately before recursive deletion; only this test's
-                    # uniquely named directory inside the explicit volume is eligible.
-                    if not area.name.startswith('am-t036-') or not area.resolve().is_relative_to(volume.resolve()):
-                        raise AssertionError('/cleanup: root escaped the intended test volume')
-                    shutil.rmtree(area)
-            print('PASS ' + name + ': real OS full-volume error and recovered full index equality')
-        print(f'PASS small_volume: {len(cases)} real-volume scenarios; no policy/classifier changes')
-        return 0
+        return run_cases(cases, args.tests.resolve(), args.helper.resolve(), work, volume)
     finally:
         if args.child:
             result = subprocess.run(['umount', str(args.mount)], capture_output=True, text=True)
