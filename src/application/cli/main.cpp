@@ -340,6 +340,10 @@ int main(int argc, char** argv) {
     code = static_cast<int>(result->status);
     if (json) {
       auto j = result->value;
+      Json state_warnings = Json::array();
+      for (const auto& diagnostic : result->diagnostics)
+        if (diagnostic.message_id == "am.library.state_recreated") state_warnings.push_back(error_value(diagnostic));
+      if (!state_warnings.empty()) j["warnings"] = std::move(state_warnings);
       if(command!="validate"&&command!="verify"&&command!="library verify"&&!result->diagnostics.empty()&&
          (result->status==app::ExitCode::check_failed||result->status==app::ExitCode::operation_failed))
         j["error"]=error_value(result->diagnostics.front());

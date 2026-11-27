@@ -6,6 +6,13 @@ All notable user-visible changes are recorded here.
 
 ### Fixed
 
+- Missing library state databases are recreated with a persistent warning and
+  historical timestamp. Recovery retains orphan files for one opening when the
+  journal was recreated or may have lost its WAL. Corrupt state is not recreated.
+- SQLite disk-full failures report insufficient space with recovery actions;
+  a confirmed ZIP survives a failed index update.
+- Library initialization reports disk-full configuration writes and removes
+  the unconfirmed temporary configuration.
 - A newly initialized library has a complete empty index and can synchronize
   without an initial rebuild. Recreated missing or damaged indexes still require one.
 - Full export preserves assets from newer format 1.x minor versions byte for byte;

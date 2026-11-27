@@ -252,18 +252,27 @@ TEST(Library, MigrationBackupSuccessAndRollback) {
     EXPECT_EQ(count, 1u);
   }
 }
-TEST(Library, EmptyDatabasesInitializeButNonemptyVersionZeroIsRejected) {
-  RecordProperty("req", "ADR-0007");
+TEST(Library, EmptyUserdataInitializesButInvalidStateAndVersionZeroAreRejected) {
+  RecordProperty("req", "ADR-0007|K-117|K-122");
   for (auto kind : {DatabaseKind::userdata, DatabaseKind::state}) {
     const auto root = initialized();
     const auto file = root / ".am" / (kind == DatabaseKind::userdata ? "userdata.sqlite" : "state.sqlite");
     { Raw db(file); db.exec("PRAGMA user_version=0"); }
     const auto before = bytes(file);
     auto rejected = lib::Library::open(root, options()); ASSERT_FALSE(rejected);
-    EXPECT_EQ(rejected.error().message_id, "am.library.db_version");
+    EXPECT_EQ(rejected.error().message_id, kind == DatabaseKind::state ? "am.library.db_error" : "am.library.db_version");
     EXPECT_FALSE(rejected.error().allows(am::ErrorAction::open_read_only)); EXPECT_EQ(bytes(file), before);
     fs::remove(file);
     { Raw empty(file); }
+    if (kind == DatabaseKind::state) {
+      // T-036 section 3: an existing invalid state file is not a missing journal.
+      const auto empty = bytes(file);
+      auto invalid = lib::Library::open(root, options()); ASSERT_FALSE(invalid);
+      EXPECT_EQ(invalid.error().code, am::Errc::corrupt_data);
+      EXPECT_EQ(invalid.error().message_id, "am.library.db_error");
+      EXPECT_EQ(bytes(file), empty);
+      continue;
+    }
     auto opened = value(lib::Library::open(root, options()));
     EXPECT_EQ(opened.database_info(kind).state, DatabaseState::ok); EXPECT_EQ(opened.database_info(kind).user_version, kind == DatabaseKind::index ? 2 : 1);
   }

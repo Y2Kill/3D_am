@@ -36,6 +36,22 @@ target_compile_definitions(am_unit_tests PRIVATE AM_NODE_INFO_ROOT="${PROJECT_SO
 target_compile_definitions(am_unit_tests PRIVATE
   AM_UNICODE_DATA_DIR="${PROJECT_SOURCE_DIR}/third_party/unicode/17.0.0")
 if(AM_WITH_CONTAINER)
+  target_sources(am_unit_tests PRIVATE unit/test_fault_sqlite.cpp unit/test_fault_state.cpp unit/test_fault_space.cpp unit/test_fault_pipeline.cpp)
+  target_compile_definitions(am_unit_tests PRIVATE AM_FAULT_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/fault-tests")
+  add_executable(am_fault_process_helper unit/fault_process_helper.cpp unit/zip_builder.cpp)
+  target_link_libraries(am_fault_process_helper PRIVATE am::application ZLIB::ZLIB)
+  target_compile_definitions(am_fault_process_helper PRIVATE
+    AM_FAULT_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/fault-tests"
+    AM_GOLDEN_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/golden")
+  am_apply_defaults(am_fault_process_helper)
+  add_executable(am_small_volume_tests unit/test_small_volume.cpp)
+  target_link_libraries(am_small_volume_tests PRIVATE am::application GTest::gtest_main)
+  target_compile_definitions(am_small_volume_tests PRIVATE AM_FAULT_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/fault-tests")
+  am_apply_defaults(am_small_volume_tests)
+  if(WIN32)
+    target_sources(am_fault_process_helper PRIVATE ${PROJECT_SOURCE_DIR}/src/application/common/am.manifest)
+    target_sources(am_small_volume_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/application/common/am.manifest)
+  endif()
   target_sources(am_unit_tests PRIVATE unit/test_export_selection.cpp)
   target_sources(am_unit_tests PRIVATE unit/test_export.cpp)
   target_compile_definitions(am_unit_tests PRIVATE AM_EXPORT_TEST_ROOT="${PROJECT_SOURCE_DIR}/.cache/export-tests")
@@ -120,7 +136,7 @@ if(AM_WITH_CONTAINER)
 endif()
 am_apply_defaults(am_unit_tests)
 gtest_discover_tests(am_unit_tests DISCOVERY_MODE PRE_TEST
-  TEST_FILTER "*-ExportStreaming.*"
+  TEST_FILTER "*-ExportStreaming.*:FaultSpace.*:FaultSqlitePipeline.*"
   XML_OUTPUT_DIR "${PROJECT_BINARY_DIR}/gtest-xml")
 
 if(AM_WITH_CONTAINER)
@@ -195,6 +211,13 @@ if(AM_PYTHON_TESTS)
           set_tests_properties(import_corpus.${_am_case_name} PROPERTIES LABELS "${_am_case_labels}" SKIP_RETURN_CODE 77 TIMEOUT 180)
         endif()
       endforeach()
+      foreach(_am_fault_unit JournalFullBeforeAndAfterReplacement IndexFullAfterConfirmedCommitWarnsAndRemainsRecoverable IndexTransactionFull OperationLogFull ImportJournalFull ExportCheckpointFull RecoveryFull)
+        add_test(NAME FaultSqlitePipeline.${_am_fault_unit}
+          COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/unit/run_fault_unit.py
+            --tests $<TARGET_FILE:am_unit_tests> --helper $<TARGET_FILE:am_fault_process_helper>
+            --name FaultSqlitePipeline.${_am_fault_unit} --work ${PROJECT_SOURCE_DIR}/.cache/fault-unit)
+        set_tests_properties(FaultSqlitePipeline.${_am_fault_unit} PROPERTIES LABELS "fault;req:K-117;req:K-122;req:ADR-0033" TIMEOUT 300)
+      endforeach()
       add_test(NAME import_corpus_regen_check
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/fixtures/make_import_cases.py
           --cases ${PROJECT_SOURCE_DIR}/tests/fixtures/import --work ${CMAKE_BINARY_DIR}/import_corpus_regen --check)
@@ -206,6 +229,32 @@ if(AM_PYTHON_TESTS)
         COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_export_cli.py
           --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/export-cli-tests --project ${PROJECT_SOURCE_DIR})
       set_tests_properties(cli_export PROPERTIES LABELS "req:K-10;req:K-46;req:K-127;req:NFR-14.5.6" TIMEOUT 180)
+      add_test(NAME cli_state_recovery
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/cli/test_state_recovery_cli.py
+          --am $<TARGET_FILE:am_cli> --root ${PROJECT_SOURCE_DIR}/.cache/fault-cli)
+      set_tests_properties(cli_state_recovery PROPERTIES LABELS "fault;req:K-117;req:K-122;req:ADR-0007" TIMEOUT 180)
+      add_test(NAME small_volume
+        COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/unit/run_small_volume.py
+          --tests $<TARGET_FILE:am_small_volume_tests> --helper $<TARGET_FILE:am_fault_process_helper>
+          --work ${PROJECT_SOURCE_DIR}/.cache/small-volume-runs)
+      set_tests_properties(small_volume PROPERTIES LABELS "periodic;small_volume;req:K-117;req:K-122" SKIP_RETURN_CODE 77 TIMEOUT 900)
+      foreach(_am_fault_unit ReadyAndCopyPreflight ReadyAndCopyDuringWrite ExportDuringWrite SelectiveExportPreflight DiagnosticExportDuringWrite ImportInputs)
+        add_test(NAME FaultSpace.${_am_fault_unit}
+          COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/unit/run_fault_unit.py
+            --tests $<TARGET_FILE:am_unit_tests> --helper $<TARGET_FILE:am_fault_process_helper>
+            --name FaultSpace.${_am_fault_unit} --work ${PROJECT_SOURCE_DIR}/.cache/fault-unit)
+        set_tests_properties(FaultSpace.${_am_fault_unit} PROPERTIES LABELS "fault;req:K-117;req:K-122;req:ADR-0033" TIMEOUT 300)
+      endforeach()
+      foreach(_am_fault_case init copy ready ready_replace lifecycle rebuild sync operation_log recovery state_lock state_readonly wal_loss import_folder import_zip import_nested import_between export_full export_files diagnostic)
+        add_test(NAME FaultProcess.${_am_fault_case}
+          COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/unit/run_fault_process.py
+            --helper $<TARGET_FILE:am_fault_process_helper> --work ${PROJECT_SOURCE_DIR}/.cache/fault-process --mode ${_am_fault_case})
+        # Hypothesis: generous stalled-process guard for three repetitions per checkpoint.
+        set_tests_properties(FaultProcess.${_am_fault_case} PROPERTIES LABELS "fault;req:K-117;req:K-122" TIMEOUT 900)
+        if(_am_fault_case STREQUAL "state_readonly")
+          set_tests_properties(FaultProcess.${_am_fault_case} PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
+      endforeach()
       foreach(_am_e2e_case import-transfer ready-transfer copy-transfer index-rebuild trash-roundtrip selective-export)
         add_test(NAME e2e-${_am_e2e_case}
           COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/e2e/run_e2e.py

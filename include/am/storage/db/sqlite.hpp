@@ -1,11 +1,14 @@
 #pragma once
 #include <filesystem>
+#include <optional>
 
 #include "am/foundation/result.hpp"
 
 struct sqlite3;
 struct sqlite3_stmt;
 namespace am::db {
+// Recognizes SQLite and native VFS disk-full errors without classifying other I/O failures.
+std::optional<Error> insufficient_space_error(sqlite3*, int sqlite_code);
 enum class Step { row, done };
 class Statement {
  public:

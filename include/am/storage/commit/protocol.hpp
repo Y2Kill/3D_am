@@ -116,6 +116,10 @@ struct RecoveryOptions {
   std::chrono::milliseconds lock_timeout{};
   asset_zip::ZipLimits zip_limits;
   FaultHooks hooks;
+  // The journal was lost in this opening: orphan identity cannot be reconstructed.
+  // Report these files without deleting them; ordinary retention applies next time.
+  bool preserve_orphans = false;
+  std::string orphan_reason = "journal_recreated";
 };
 Result<std::vector<RecoveryItem>> recover(const std::filesystem::path& library_root, const RecoveryOptions& options = {});
 }  // namespace am::commit

@@ -1,4 +1,5 @@
 #include "am/storage/db/commit_journal.hpp"
+#include "am/storage/db/sqlite.hpp"
 #include "am/foundation/paths.hpp"
 #include <sqlite3.h>
 #include "state_schema.hpp"
@@ -15,7 +16,10 @@ namespace {
 Error error(std::string detail, Errc code = Errc::io_error, std::string id = "am.commit.journal_error") {
   return Error::make(code, "Commit journal operation failed", std::move(detail)).in("storage.db").id(std::move(id));
 }
-[[noreturn]] void bad(sqlite3* db) { throw error(sqlite3_errmsg(db)); }
+[[noreturn]] void bad(sqlite3* db) {
+  if (auto space = insufficient_space_error(db, sqlite3_extended_errcode(db))) throw *space;
+  throw error(sqlite3_errmsg(db));
+}
 std::string utc_now() {
   const auto time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()); std::tm tm{};
 #ifdef _WIN32
@@ -29,20 +33,20 @@ std::string utf8(const std::filesystem::path& p) { auto value = p.u8string(); re
 std::filesystem::path path(std::string_view text) {
   std::u8string value(text.size(), u8'\0'); if (!text.empty()) std::memcpy(value.data(), text.data(), text.size()); return std::filesystem::path(value);
 }
-struct Statement {
+struct JournalStatement {
   sqlite3* db; sqlite3_stmt* value = nullptr;
-  Statement(sqlite3* database, const char* sql) : db(database) { if (sqlite3_prepare_v2(db, sql, -1, &value, nullptr) != SQLITE_OK) bad(db); }
-  ~Statement() { sqlite3_finalize(value); }
+  JournalStatement(sqlite3* database, const char* sql) : db(database) { if (sqlite3_prepare_v2(db, sql, -1, &value, nullptr) != SQLITE_OK) bad(db); }
+  ~JournalStatement() { sqlite3_finalize(value); }
   void text(int i, std::string_view v) { if (sqlite3_bind_text64(value, i, v.data(), v.size(), SQLITE_TRANSIENT, SQLITE_UTF8) != SQLITE_OK) bad(db); }
   void number(int i, std::int64_t v) { if (sqlite3_bind_int64(value, i, v) != SQLITE_OK) bad(db); }
   void number(int i, std::uint64_t v) { if (v > static_cast<std::uint64_t>(INT64_MAX)) throw error("Value exceeds SQLite signed INTEGER", Errc::invalid_argument); number(i, static_cast<std::int64_t>(v)); }
   void done() { if (sqlite3_step(value) != SQLITE_DONE) bad(db); }
 };
 void exec(sqlite3* db, const char* sql) { if (sqlite3_exec(db, sql, nullptr, nullptr, nullptr) != SQLITE_OK) bad(db); }
-struct Transaction {
+struct JournalTransaction {
   sqlite3* db; bool committed = false;
-  explicit Transaction(sqlite3* value) : db(value) { exec(db, "BEGIN IMMEDIATE"); }
-  ~Transaction() { if (!committed) sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr); }
+  explicit JournalTransaction(sqlite3* value) : db(value) { exec(db, "BEGIN IMMEDIATE"); }
+  ~JournalTransaction() { if (!committed) sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr); }
   void finish() { exec(db, "COMMIT"); committed = true; }
 };
 std::string column(sqlite3_stmt* p, int i) {
@@ -108,7 +112,7 @@ Result<std::shared_ptr<StateJournal>> StateJournal::open(const std::filesystem::
     if (sqlite3_open_v2(utf8(file).c_str(), &impl->db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) bad(impl->db);
     if (!existed) exec(impl->db, state_schema_sql);
     {
-      Statement version(impl->db, "PRAGMA user_version"); if (sqlite3_step(version.value) != SQLITE_ROW) bad(impl->db);
+      JournalStatement version(impl->db, "PRAGMA user_version"); if (sqlite3_step(version.value) != SQLITE_ROW) bad(impl->db);
       if (sqlite3_column_int(version.value, 0) != 1) return error("Unsupported state.sqlite user_version", Errc::unsupported, "am.commit.journal_version");
     }
     exec(impl->db, "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
@@ -120,8 +124,8 @@ Result<std::shared_ptr<StateJournal>> StateJournal::open(const std::filesystem::
 Result<void> StateJournal::insert(const PendingOperation& r) {
   return impl_->run<void>([&]() -> Result<void> {
     if (r.state != CommitState::prepared || r.verified) return error("Insert must be prepared without evidence", Errc::conflict);
-    Transaction tx(impl_->db);
-    Statement s(impl_->db, "INSERT INTO pending_ops(op_id,asset_id,kind,target_path,temp_path,backup_path,base_rev,base_size,base_mtime_ns,base_manifest_sha256,state,expected_rev,started_at,updated_at,job_id) VALUES(?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?)");
+    JournalTransaction tx(impl_->db);
+    JournalStatement s(impl_->db, "INSERT INTO pending_ops(op_id,asset_id,kind,target_path,temp_path,backup_path,base_rev,base_size,base_mtime_ns,base_manifest_sha256,state,expected_rev,started_at,updated_at,job_id) VALUES(?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?)");
     s.text(1, r.op_id);
     s.text(2, r.asset_id);
     s.text(3, r.kind);
@@ -135,10 +139,10 @@ Result<void> StateJournal::insert(const PendingOperation& r) {
 }
 Result<void> StateJournal::advance(std::string_view id, CommitState from, CommitState to, const std::optional<NewFileEvidence>& evidence) {
   return impl_->run<void>([&]() -> Result<void> {
-    Transaction tx(impl_->db);
+    JournalTransaction tx(impl_->db);
     bool location_transition = false;
     if ((from == CommitState::prepared && to == CommitState::committed) || to == CommitState::failed) {
-      Statement kind(impl_->db, "SELECT kind FROM pending_ops WHERE op_id=? AND state=?");
+      JournalStatement kind(impl_->db, "SELECT kind FROM pending_ops WHERE op_id=? AND state=?");
       kind.text(1, id);
       kind.text(2, state_name(from));
       if (sqlite3_step(kind.value) == SQLITE_ROW) {
@@ -151,7 +155,7 @@ Result<void> StateJournal::advance(std::string_view id, CommitState from, Commit
           (from == CommitState::committed && to == CommitState::indexed) || location_transition) ||
         ((to == CommitState::verified) != evidence.has_value()))
       return error("Invalid journal transition/evidence", Errc::conflict);
-    Statement s(impl_->db, "UPDATE pending_ops SET state=?,updated_at=? WHERE op_id=? AND state=?");
+    JournalStatement s(impl_->db, "UPDATE pending_ops SET state=?,updated_at=? WHERE op_id=? AND state=?");
     s.text(1, state_name(to));
     s.text(2, utc_now());
     s.text(3, id);
@@ -159,7 +163,7 @@ Result<void> StateJournal::advance(std::string_view id, CommitState from, Commit
     s.done();
     if (sqlite3_changes(impl_->db) != 1) return error("Journal compare-and-advance conflict", Errc::conflict);
     if (evidence) {
-      Statement n(impl_->db, "INSERT INTO pending_ops_new(op_id,new_size,new_file_sha256,new_manifest_sha256) VALUES(?,?,?,?)");
+      JournalStatement n(impl_->db, "INSERT INTO pending_ops_new(op_id,new_size,new_file_sha256,new_manifest_sha256) VALUES(?,?,?,?)");
       n.text(1, id);
       n.number(2, evidence->size);
       n.text(3, evidence->file_sha256);
@@ -171,17 +175,17 @@ Result<void> StateJournal::advance(std::string_view id, CommitState from, Commit
   });
 }
 Result<void> StateJournal::remove(std::string_view id) {
-  return impl_->run<void>([&]() -> Result<void> { Transaction tx(impl_->db); Statement s(impl_->db, "DELETE FROM pending_ops WHERE op_id=?"); s.text(1, id); s.done(); tx.finish(); return {}; });
+  return impl_->run<void>([&]() -> Result<void> { JournalTransaction tx(impl_->db); JournalStatement s(impl_->db, "DELETE FROM pending_ops WHERE op_id=?"); s.text(1, id); s.done(); tx.finish(); return {}; });
 }
 Result<std::vector<PendingOperation>> StateJournal::list() {
   return impl_->run<std::vector<PendingOperation>>([&]() -> Result<std::vector<PendingOperation>> {
-    Statement s(impl_->db, (std::string(select_rows) + " ORDER BY p.op_id").c_str()); std::vector<PendingOperation> rows;
+    JournalStatement s(impl_->db, (std::string(select_rows) + " ORDER BY p.op_id").c_str()); std::vector<PendingOperation> rows;
     int status; while ((status = sqlite3_step(s.value)) == SQLITE_ROW) rows.push_back(decode(s.value)); if (status != SQLITE_DONE) bad(impl_->db); return rows;
   });
 }
 Result<std::optional<PendingOperation>> StateJournal::find(std::string_view id) {
   return impl_->run<std::optional<PendingOperation>>([&]() -> Result<std::optional<PendingOperation>> {
-    Statement s(impl_->db, (std::string(select_rows) + " WHERE p.op_id=?").c_str()); s.text(1, id); const auto status = sqlite3_step(s.value);
+    JournalStatement s(impl_->db, (std::string(select_rows) + " WHERE p.op_id=?").c_str()); s.text(1, id); const auto status = sqlite3_step(s.value);
     if (status == SQLITE_DONE) return std::optional<PendingOperation>{}; if (status != SQLITE_ROW) bad(impl_->db); return std::optional<PendingOperation>{decode(s.value)};
   });
 }

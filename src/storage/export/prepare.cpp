@@ -23,7 +23,9 @@ namespace az = asset_zip;
 using Path = std::filesystem::path;
 using U64 = std::uint64_t;
 Error error(Errc code, std::string_view id, std::string detail = {}) {
-  return Error::make(code, "Asset export failed", std::move(detail)).in("storage.export").id(std::string(id));
+  auto result = Error::make(code, "Asset export failed", std::move(detail)).in("storage.export").id(std::string(id));
+  if (code == Errc::insufficient_space) result.actions = {ErrorAction::free_space,ErrorAction::abort};
+  return result;
 }
 template <class T> T take(Result<T> result) { if (!result) throw result.error(); return std::move(*result); }
 void take(Result<void> result) { if (!result) throw result.error(); }
@@ -222,7 +224,7 @@ Result<PreparedExport> prepare(const repository::AssetSnapshot& snapshot, const 
       throw error(Errc::insufficient_space, "am.export.insufficient_space");
     PreparedExport prepared;
     prepared.temporary = paths::native(options.target_dir / (".am-export-" + Uuid::v4().to_string() + ".tmp"));
-    auto sink = take(az::file_sink(prepared.temporary));
+    auto sink = take(options.hooks.create_sink ? options.hooks.create_sink(prepared.temporary) : az::file_sink(prepared.temporary));
     prepared.owned = true;
     prepared.lease_ = lease_temporary(prepared.temporary);
     if (options.hooks.before_copy) options.hooks.before_copy();

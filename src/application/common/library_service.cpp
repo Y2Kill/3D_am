@@ -113,6 +113,19 @@ Result<AssetOutcome> inspect_library(const std::filesystem::path& root) {
       Json db{{"state", state}, {"user_version", info.user_version ? Json(*info.user_version) : Json(nullptr)}};
       if (!info.read_mode.empty()) db["read_mode"] = info.read_mode;
       if (!info.reason.empty()) db["reason"] = info.reason;
+      if (kind == library::DatabaseKind::state && info.state == library::DatabaseState::ok) {
+        auto state_database = am::db::Connection::borrow(lib.database(kind));
+        auto event = state_database.prepare("SELECT at FROM op_log WHERE code='am.library.state_recreated' ORDER BY seq DESC LIMIT 1");
+        if (!event) return event.error();
+        auto row = event->step();
+        if (!row) return row.error();
+        if (*row == am::db::Step::row) {
+          db["reason"] = "recreated";
+          auto at = event->text(0);
+          if (!at) return at.error();
+          db["recreated_at"] = *at;
+        }
+      }
       if (!info.detail.empty()) db["detail"] = info.detail;
       if (info.rebuild_required) db["rebuild_required"] = *info.rebuild_required;
       j["databases"][name] = std::move(db);

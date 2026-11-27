@@ -2,8 +2,10 @@
 #include "zip_internal.hpp"
 namespace am::asset_zip::detail {
 inline Error write_error(Errc code, std::string_view id, std::string detail) {
-  return Error::make(code, "ZIP writer rejected input or operation", std::move(detail))
+  auto result = Error::make(code, "ZIP writer rejected input or operation", std::move(detail))
       .in("storage.asset_zip").op("zip.write").id(std::string(id));
+  if (code == Errc::insufficient_space) result.actions = {ErrorAction::free_space,ErrorAction::abort};
+  return result;
 }
 inline Error invalid_state() { return write_error(Errc::invalid_argument, "am.zip.write.invalid_state", "Writer state does not allow this operation"); }
 inline Error write_oom() { return write_error(Errc::resource_exhausted, "am.zip.out_of_memory", "Allocation failed"); }

@@ -4,6 +4,7 @@
 #include <sqlite3.h>
 
 #include <climits>
+#include <cerrno>
 #include <exception>
 
 #include "am/foundation/paths.hpp"
@@ -11,6 +12,7 @@
 namespace am::db {
 namespace {
 Error error(sqlite3* db, std::string id, int code = SQLITE_ERROR) {
+  if (auto space = insufficient_space_error(db, code)) return *space;
   const auto primary = code & 0xff;
   const auto kind = primary == SQLITE_CORRUPT || primary == SQLITE_NOTADB ? Errc::corrupt_data
                     : code == SQLITE_READONLY                        ? Errc::read_only
@@ -37,6 +39,26 @@ Result<T> guard(F&& f) {
   }
 }
 }  // namespace
+std::optional<Error> insufficient_space_error(sqlite3* db, int code) {
+  const auto primary = code & 0xff;
+  const auto native = db ? sqlite3_system_errno(db) : 0;
+  bool full = primary == SQLITE_FULL;
+  if (primary == SQLITE_IOERR) {
+    full = native == ENOSPC;
+#ifdef EDQUOT
+    full = full || native == EDQUOT;
+#endif
+#ifdef _WIN32
+    // sqlite3_system_errno returns the Windows VFS error, not a CRT errno.
+    full = full || native == 112 /* ERROR_DISK_FULL */ || native == 39 /* ERROR_HANDLE_DISK_FULL */;
+#endif
+  }
+  if (!full) return {};
+  return Error::make(Errc::insufficient_space, "Insufficient space for database operation",
+                     db ? sqlite3_errmsg(db) : "SQLite database is full")
+      .in("storage.db").id("am.db.insufficient_space")
+      .allow(ErrorAction::free_space).allow(ErrorAction::abort);
+}
 Statement::Statement(sqlite3_stmt* s) noexcept : stmt_(s) {}
 Statement::Statement(Statement&& s) noexcept : stmt_(std::exchange(s.stmt_, nullptr)) {}
 Statement& Statement::operator=(Statement&& s) noexcept {
