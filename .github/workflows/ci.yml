@@ -183,7 +183,17 @@ jobs:
       - name: Build and test
         run: tools/build_linux.sh cli --ci -LE periodic
       - name: Real disk-full tests in an isolated tmpfs
-        run: TMPDIR="$GITHUB_WORKSPACE/.cache/tmp-linux" ctest --preset linux-cli -L small_volume --output-on-failure --output-junit "$GITHUB_WORKSPACE/build/linux-cli/small_volume.xml"
+        run: |
+          # Ubuntu 24.04 runners restrict unprivileged user namespaces through AppArmor;
+          # the driver then skips (77) and CTest would count the skip as success.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          TMPDIR="$GITHUB_WORKSPACE/.cache/tmp-linux" ctest --preset linux-cli -L small_volume --output-on-failure --output-junit "$GITHUB_WORKSPACE/build/linux-cli/small_volume.xml"
+          if grep -q 'status="notrun"' "$GITHUB_WORKSPACE/build/linux-cli/small_volume.xml"; then
+            echo "::error::small_volume was skipped in CI; the real disk-full check did not run"
+            exit 1
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
