@@ -42,7 +42,8 @@ SOURCE = {'source': [
 # are replaced by row contents, not dropped together with their relationships.
 LOCAL_FIELDS = {
     'transfer': {'assets': {'rel_path', 'in_trash', 'zip_mtime_ns'}},
-    'rebuild': {'assets': {'rel_path', 'in_trash'}},
+    # Within one library rebuild must restore location and trash state from ZIP placement.
+    'rebuild': {},
 }
 LOCAL_META = {'rebuilt_at', 'writer_session'}
 FTS_TABLES = {'fts_assets', 'fts_names', 'fts_docs'}
@@ -421,6 +422,8 @@ def run_case(am, work, name):
         if name == 'e2e-index-rebuild':
             # Include rich, distinct-ID metadata alongside the imported fixture.
             cli('library', 'add-ready', a, ROOT / 'tests/fixtures/golden/pos-full/asset.zip')
+            trashed = manifest(ROOT / 'tests/fixtures/golden/pos-full/asset.zip')['asset']['id']
+            cli('library', 'trash', a, trashed)  # rel_path/in_trash must survive rebuild
             cli('library', 'sync', a)
             original = snapshot(cli, a, 'rebuild')
             cli('library', 'rebuild', a)
@@ -435,6 +438,9 @@ def run_case(am, work, name):
             equal(original, snapshot(cli, a, 'rebuild'), '/missing-index-open')
             cli('library', 'sync', a, '--full')
             equal(original, snapshot(cli, a, 'rebuild'), '/sync-full')
+            with closing(sqlite3.connect(index.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+                equal([(1,)], db.execute('SELECT in_trash FROM assets WHERE asset_id=?', (trashed,)).fetchall(), '/rebuild/in_trash')
+            cli('library', 'restore', a, trashed)
         if name == 'e2e-selective-export':
             selective(cli, a, work / 'selected')
         transfer(cli, work, a, source)

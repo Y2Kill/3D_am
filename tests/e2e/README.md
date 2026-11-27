@@ -28,7 +28,8 @@
 Адресные исключения находятся в `LOCAL_FIELDS`/`LOCAL_META`:
 
 - A ↔ B: `assets.rel_path`, `in_trash`, `zip_mtime_ns`;
-- внутри A: `assets.rel_path`, `in_trash`; **mtime сравнивается**;
+- внутри A: ничего из `assets`; путь, признак корзины и **mtime сравниваются**
+  (в `e2e-index-rebuild` один ассет лежит в корзине на всех снимках);
 - в обоих случаях: строки `meta.rebuilt_at`, `meta.writer_session`;
 - локальный INTEGER PRIMARY KEY `suggestions.id`;
 - физические таблицы FTS5 с типом `shadow` заменены видимыми строками FTS и
