@@ -2,7 +2,7 @@
 
 **Исполнение:** по `AGENTS.md` в ветке `codex/T-036`. Если у Codex нулевой лимит, задачу выполняет управляющий (Claude Code) по процедуре T-032/T-033: самопроверка по критериям и `/code-review` по diff вместо независимой приёмки.
 
-**Статус:** ready · **Веха:** P0.8 (итоговые испытания ядра) · **Основание:** ТЗ v1.8 §15 п. 117, 122; ADR-0006, ADR-0007, ADR-0025, ADR-0031, ADR-0033; `fs_support.md`; `roadmap.md` раздел P0.8; приёмка T-035 (замечание 1)
+**Статус:** review · **Веха:** P0.8 (итоговые испытания ядра) · **Основание:** ТЗ v1.8 §15 п. 117, 122; ADR-0006, ADR-0007, ADR-0025, ADR-0031, ADR-0033; `fs_support.md`; `roadmap.md` раздел P0.8; приёмка T-035 (замечание 1)
 
 ## Место в P0.8
 
@@ -147,4 +147,199 @@
 
 ## Отчёт исполнителя
 
-*(заполняет исполнитель)*
+Ветка: `codex/T-036`. Матрица: [fault_matrix.md](../plan/fault_matrix.md).
+Коммит реализации: `4fc186bbb3cb9037c4e11f9361843361fa31af45`.
+Повторные обязательные прогоны по запросу владельца от 2026-11-27 выполнены
+на этом SHA. Их поэтапный журнал — `.cache/t036/gates-final.json`.
+
+### Реализация и критерии приёмки
+
+1. Матрица содержит все 19 строк и пять классов отказов. Для каждого указано
+   точное имя GTest/CTest или причина неприменимости. R общего механизма явно
+   отличается от покомандных K/S1–S3. Прежние тесты неоднозначности и запрета
+   перезаписи перечислены отдельно; их ожидания не изменены.
+2. Новые K-тесты запускают отдельный тестовый процесс, убивают его через
+   TerminateProcess/SIGKILL, затем выполняют обычное открытие, sync, полную
+   проверку и rebuild. На точку три повтора, независимые библиотеки допускают
+   параллелизм три (гипотеза прогонщика). Покрыты оставшиеся точки add-ready,
+   независимое копирование, корзина/restore/purge, импорт папки/ZIP/Deflate-вложения
+   и между кандидатами, публикация двух видов экспорта, init, транзакции индекса
+   и журнала, повторный сбой recovery, блокировка state и потеря WAL.
+   По JUnit каждого полного CLI-прогона: 18 групп K, **282 убийства процесса**;
+   отдельная 19-я группа проверяет реальный readonly state без убийства.
+   Оракул использует неизменённый index_snapshot T-035 в режиме rebuild:
+   сравниваются все логические таблицы/FTS, zip_mtime_ns и rebuild_required.
+   Сохранность подтверждённых ZIP/userdata проверяется до и после восстановления.
+3. FaultState.* и cli_state_recovery проверяют пересоздание state с предупреждением,
+   историческим здоровым info и временем из op_log; нечистую и чистую порчу страниц;
+   повреждённый заголовок/схему; реальную блокировку и readonly. Новая ревизия ZIP
+   сохраняется и переиндексируется после настоящего удаления непустого WAL.
+   Без доказанного журнала orphan-файлы сохраняются на одно открытие. Метка
+   journal_may_be_lost означает подозрение. Политика clean-open T-022 сохранена.
+4. Делегирующий тестовый SQLite VFS возвращает настоящий SQLITE_FULL из xWrite.
+   Транзакции index/userdata/state откатываются; ядро возвращает
+   am.db.insufficient_space с free_space/abort. Дополнительно проверены журнал
+   до/после replace, индекс после подтверждённого ZIP, rebuild/sync, op_log,
+   import run, checkpoint экспорта и recovery. Исполнитель заданий не менялся:
+   нехватка места checkpoint остаётся resource_error с явной причиной.
+5. Изолированный tmpfs 32 MiB: **8/8 R-сценариев PASS** после исправления init.
+   Настоящие записи получают ENOSPC/SQLITE_FULL, затем проверяются ZIP, userdata
+   и полное равенство индекса после sync/rebuild. Классификатор возвращает
+   read_only_default (число 2, filesystem пуст); тестовые capabilities задаются
+   отдельно. Производственная политика Linux не менялась.
+   Windows small_volume: **SKIP**, AM_SMALL_VOLUME не задан. Скрипт VHDX
+   синтаксически проверен; Create/Remove не выполнялись исполнителем. Проверка
+   фактической идемпотентности NTFS и снятия mount остаётся владельцу при наличии
+   административного тома, как предусмотрено задачей. Политика PowerShell этой
+   машины запрещает запуск .ps1 без отдельного process-level разрешения; обхода
+   исполнителем не было. Команды для владельца — tests/fault/README.md.
+6. Sync.NewLibraryHasCompleteEmptyIndexAndSyncNeedsNoRebuild закрывает долг T-035
+   в обоих CLI-пресетах с подставленными capabilities. Min остаётся без SQLite.
+7. Статус K-117 разделён по конфигурациям: tmpfs проверен на настоящем томе;
+   заполненный NTFS ещё не проверен. Отключение питания не проверялось,
+   внешних сессий/очистки кэша в P0 нет. Подробные границы — fault_matrix.md.
+8. Все шесть этапов повторной серии завершены с кодом 0. Фактические счётчики,
+   пропуски, итоговые строки и логи — в таблице ниже; invalid IDs = 0.
+9. Формат 1.0, схемы, golden, expected.v1, корпус T-034 и сценарии T-035
+   не изменены: git diff main по соответствующим каталогам пуст.
+   Используется только их существующий оракул индекса.
+
+### Локальные исправления и отклонения от раздела «Файлы»
+
+- SQLite-обёртка и state_journal используют общий классификатор SQLITE_FULL /
+  IOERR с native disk-full. В state_journal локальные Statement/Transaction
+  механически переименованы, чтобы включить sqlite.hpp без конфликта имён.
+- include/am/storage/commit/protocol.hpp и repository/repository.hpp: параметры
+  сохранения orphan на одно открытие, значения по умолчанию сохраняют прежнюю
+  политику прямого recover. Это реализация согласованных В-2/В-4.
+- src/services/catalog/indexer.cpp: readonly-проверка авторитетных БД до writer
+  изменений, предупреждение state_recreated, политика journal_may_be_lost;
+  предупреждения после SQLITE_FULL сохраняют причину и действия освобождения места.
+- src/application/common/library_service.cpp и cli/main.cpp: исторический
+  reason/time и обязательный warnings[] первого writer-открытия (В-2).
+- repository.cpp, commit/protocol.cpp, asset_zip/writer_internal.hpp,
+  storage/export/prepare.cpp и storage/fs/publish.cpp: ошибки нехватки места
+  сохраняют insufficient_space и free_space/abort. Ранее репозиторий мог
+  переименовать ошибку ZIP sink в общий I/O. Регрессии FaultSpace.* и R.
+- По В-5: include/am/storage/export/prepare.hpp и include/am/application/logging.hpp,
+  prepare.cpp и application/common/diagnostics.cpp получили внутренние request-local
+  create_sink. Это **расширение тестовой поверхности**, не исправление дефекта.
+  Без hook путь file_sink прежний, флагов CLI/окружения/конфигурации не добавлено.
+- Настоящий R нашёл дефект init: ENOSPC записи TOML превращался в общий I/O и
+  оставлял временный TOML. Library::init использует существующий файловый sink,
+  возвращает am.library.insufficient_space и удаляет неподтверждённый файл.
+  SmallVolume.InitConfigurationFull сначала воспроизвёл отказ, затем прошёл.
+- tests/unit/test_library.cpp: прежний тест T-016 ожидал молчаливую инициализацию
+  **существующего пустого state** и db_version для его версии 0. Это противоречит
+  п. 3 T-036 и В-3 (всегда проверять заголовок/схему, не пересоздавать повреждённую
+  state). Для state теперь проверяются corrupt_data / am.library.db_error и
+  неизменность байтов; поведение и ожидания userdata сохранены. Тест переименован
+  в Library.EmptyUserdataInitializesButInvalidStateAndVersionZeroAreRejected.
+  Первый общий WSL-прогон обнаружил это устаревшее ожидание и был остановлен;
+  после адаптации выполнен заново целиком.
+- Полный Linux-прогон затем выявил потерю free_space у
+  am.jobs.recovery_failed при SQLITE_FULL (единственный отказ среди 807 выбранных
+  CTest, включая пропуски по ОС).
+  Исправлена передача действия в этой ветке предупреждения с сохранением
+  прежних Errc::incomplete, severity и семантики исполнителя. Регрессия —
+  FaultSqlitePipeline.RecoveryFull. После исправления все обязательные прогоны
+  выполнены заново; прежний неуспешный лог сохранён отдельно.
+- CI: только дополнительный tmpfs-шаг существующего linux-cli и его JUnit-артефакт.
+  YAML разобран существующим PyYAML: **5 заданий**, один новый шаг. Публичный CI
+  исполнитель не запускал, push не выполняется. Передача артефактов не менялась.
+
+Предварительные неуспешные прогоны сохранены: sandbox min не мог прочитать
+jsonschema из .cache/pylib, повтор с доступом прошёл; новые ожидания checkpoint
+уточнены по существующему resource_error, а оракул повторного recovery сохраняет
+SHA, доказанный до первого убийства. Новые дефекты init и отсутствующих действий
+free_space у index warning закреплены отдельными регрессионными тестами.
+
+### Повторные обязательные прогоны на 4fc186b
+
+Все запущены заново по запросу владельца от 2026-11-27. Время ниже — фактический
+`Total Test time (real)` CTest, без конфигурации и компиляции. Подробные времена
+этапов, код возврата и полный проверенный SHA — `.cache/t036/gates-final.json`.
+
+| Команда | Выбрано CTest | PASS | SKIP | FAIL | CTest, с | Лог в .cache/t036/ |
+|---|---:|---:|---:|---:|---:|---|
+| `tools\build_min.cmd --ci` | 157 | 157 | 0 | 0 | 54.20 | min-final.log |
+| `tools\build_cli.cmd --ci -LE periodic` | 810 | 809 | 1 | 0 | 3114.78 | win-cli-final.log |
+| `tools\build_cli.cmd --offline --ci -LE periodic` | 810 | 809 | 1 | 0 | 3064.00 | win-cli-offline-final.log |
+| WSL `tools/build_linux.sh cli --offline --ci -LE periodic` | 807 | 750 | 57 | 0 | 3195.47 | linux-cli-final.log |
+| Windows `ctest --test-dir build/win-cli -L small_volume -V` | 1 | 0 | 1 | 0 | 0.26 | small-windows-final.log |
+| WSL `ctest --preset linux-cli -L small_volume -V` | 1 | 1 | 0 | 0 | 25.11 | small-linux-final.log |
+
+Оба Windows CLI-прогона: единственный SKIP — `import_corpus.ch-links`
+(нет возможности создать требуемую ссылку); остальные выбранные тесты выполнены.
+`golden_zip`, `golden_regen_check`, `arch_check`, `schema_check`, `sql_check`,
+все выбранные import_corpus и e2e без отказов. Полные JUnit и req_report обычного
+и offline-прогона сохранены в `.cache/t036/win-cli[-offline]-final-*`.
+Linux JUnit/req_report — `.cache/t036/linux-cli-final-*`.
+
+Linux: 57 штатных SKIP по ограничениям ОС/рабочего режима записи; ни один новый
+Fault*, cli_state_recovery или тест долга init/sync не пропущен. Проверки формата,
+архитектуры, схем и SQL прошли. Small-volume Linux — один CTest, запускающий
+**восемь отдельных GTest: все 8 PASS**. В логе фактическая ФС `tmpfs`, ёмкость
+`33554432` байта, классификатор `mode=2` (read_only_default), его filesystem пуст.
+Проверены в том числе сохранность точного подтверждённого префикса журнала и
+исправленный ENOSPC записи конфигурации init. Small-volume Windows — явный SKIP
+из-за отсутствия AM_SMALL_VOLUME; это не положительная проверка заполненного NTFS.
+
+Серия шла 2026-11-27 **15:42:17–18:26:23 Europe/Kiev**, около 2 ч 44 мин,
+включая конфигурацию и компиляцию. Все шесть кодов возврата — 0. JUnit малого
+тома: `build/win-cli/small_volume.xml`, `build/linux-cli/small_volume.xml`.
+Дополнительно: все **54** различных имени теста в fault_matrix.md сверены со
+списком зарегистрированных CTest/GTest, отсутствующих имён — 0; AST-разбор
+small_volume.ps1 — 0 синтаксических ошибок; CI YAML — 5 заданий.
+
+Фактические итоговые строки:
+
+```text
+min: 100% tests passed, 0 tests failed out of 157
+req_report: 26 IDs, 157 tests, 49 without req, 0 invalid IDs
+win-cli: 100% tests passed, 0 tests failed out of 810
+req_report: 84 IDs, 813 tests, 49 without req, 0 invalid IDs
+win-cli offline: 100% tests passed, 0 tests failed out of 810
+req_report: 84 IDs, 813 tests, 49 without req, 0 invalid IDs
+linux-cli offline: 100% tests passed, 0 tests failed out of 807
+req_report: 84 IDs, 810 tests, 71 without req, 0 invalid IDs
+Windows small_volume: SKIP, AM_SMALL_VOLUME is unset
+Linux small_volume: PASS small_volume: 8 real-volume scenarios; no policy/classifier changes
+```
+
+Вопросов по реализации не осталось. Проверка фактического Create/Remove VHDX
+владельцем и опубликованного CI остаётся приёмке; локальных провалов нет.
+Все изменения задачи закоммичены в ветке, статус — review. Предсуществующий
+неотслеживаемый ZIP владельца оставлен без изменений.
+
+### Уточнения и вопросы
+
+- **В-1, решён.** Init/sync проверяются unit-тестом в win-cli/linux-cli с
+  подставленными capabilities. Min остаётся без SQLite/vcpkg, отдельный
+  обязательный прогон min сохранён. Противоречие п. 6 уточнено управляющим.
+- **В-2, решён.** Readonly library info показывает исторический reason=recreated
+  из последнего события am.library.state_recreated в существующем op_log и
+  время события. databases.state.state остаётся ok. Событие доступно в library
+  log; предупреждение первого writer-открытия обязательно. Только это открытие
+  запрещает уборку файлов без журнала, будущие открытия используют обычный возраст.
+- **В-3, решён.** Сохраняется дешёвый clean-open T-022. При нечистой сессии
+  авторитетные БД проверяются только для чтения до writer-изменений. После
+  чистой сессии порча страницы даёт явную ошибку при её чтении, не приводит
+  к пересозданию и не повреждает ZIP. Тест FaultState.ClosedCorruptPageIsExplicitAtUseRollsBackAndVerifyFindsIt
+  подтвердил corrupt_data, откат транзакции и обнаружение state через quick_check
+  и integrity_check обоих уровней library verify; пробела проверки state нет.
+- **В-4, решён.** Незакрытая сессия без непустого WAL даёт консервативное
+  сохранение orphan-файлов в одном открытии, с причиной journal_may_be_lost
+  (подозрение, не факт потери WAL). Строки журнала обрабатываются как раньше.
+  После штатного закрытия возвращается orphan_age. Ложные срабатывания допустимы.
+- **В-5, решён.** Разрешены внутренние request-local create_sink в ExportHooks
+  и DiagnosticOptions для детерминированных S2 и kill после частичной записи.
+  Это расширение тестовой поверхности, не исправление дефекта. Заголовки
+  prepare.hpp и application/logging.hpp; реализации prepare.cpp и diagnostics.cpp.
+  Обычные вызовы остаются на file_sink; hooks пусты по умолчанию, недоступны
+  через CLI, конфигурацию, окружение или плагины. Зависимости уровней прежние.
+- **В-6, решён.** О-3 «ничего не опубликовано» относится к отказу до replace.
+  После replace подтверждённый ZIP сохраняется; предупреждение содержит cause
+  insufficient_space и действие free_space, код CLI — по прежнему предупреждению
+  индекса. Для настоящего SQLITE_FULL нужны отдельные регрессии. После освобождения
+  места — согласованный индекс и отсутствие незавершённой строки журнала.
