@@ -81,14 +81,25 @@ if ($Remove) {
     exit 0
 }
 Assert-Administrator
+if ($projectRoot -match '[^\x00-\x7F]') {
+    throw 'DiskPart requires an ASCII project path for its command file. Use a project path containing only ASCII characters.'
+}
 [IO.Directory]::CreateDirectory($volumeArea) | Out-Null
 if (-not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
     if (Test-Path -LiteralPath $ownershipPath) { throw 'Ownership record exists without its image; run -Remove first.' }
     # DiskPart is installed with Windows; Hyper-V/New-VHD is not required.
     $commandPath = Join-Path $volumeArea 'create.txt'
-    [IO.File]::WriteAllText($commandPath, "create vdisk file=`"$imagePath`" maximum=64 type=expandable`r`nexit`r`n", [Text.Encoding]::Unicode)
-    $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/diskpart.exe') -ArgumentList @('/s', ('"' + $commandPath + '"')) -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $volumeArea 'diskpart.log')
-    if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $imagePath -PathType Leaf)) { throw 'DiskPart did not create the test image; see diskpart.log.' }
+    [IO.File]::WriteAllText($commandPath, "create vdisk file=`"$imagePath`" maximum=64 type=expandable`r`nexit`r`n", [Text.Encoding]::ASCII)
+    $logPath = Join-Path $volumeArea 'diskpart.log'
+    $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/diskpart.exe') -ArgumentList @('/s', ('"' + $commandPath + '"')) -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $logPath
+    $exitCode = $process.ExitCode
+    $logText = if (Test-Path -LiteralPath $logPath -PathType Leaf) { [IO.File]::ReadAllText($logPath) } else { '' }
+    # Numeric progress and command keywords survive localized/OEM log encodings.
+    $completed = $logText -match '(?:^|[\r\n])\s*100(?:\s|%)'
+    $helpOutput = $logText -match '(?:^|[\r\n])\s*CREATE\s+-'
+    if ($null -eq $exitCode -or $exitCode -ne 0 -or -not $completed -or $helpOutput -or -not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
+        throw "DiskPart did not create the test image (exit code: $exitCode; completion marker: $completed; help output: $helpOutput); see diskpart.log."
+    }
     $record = [ordered]@{ task = 'T-036'; image = $imagePath; mount = $mountPath } | ConvertTo-Json -Compress
     [IO.File]::WriteAllText($ownershipPath, $record, (New-Object Text.UTF8Encoding($false)))
 }
