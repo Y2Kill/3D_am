@@ -321,4 +321,4 @@ SHA `actions/download-artifact` 37930b1c… сверен с тегом v7.0.0 ч
 
 **Замечания.**
 1. Не добавлен юнит-тест из дополнения к В-5 «новая библиотека → `sync` без `rebuild`»: все тесты `test_sync.cpp` вызывают `rebuild()` перед `sync`. Флаг `false` после init проверяет `Library.InitLayoutConfigAndDatabasePragmas` (min и Linux), проход `sync` — CLI и e2e только на Windows. Не блокирует (`sync` проверяет лишь флаг); кандидат на добавление в T-036.
-2. Межзаданийная передача артефакта и `needs` подтверждаются публичным CI (ниже).
+2. Межзаданийная передача артефакта и `needs` подтверждены публичным CI: публикация 51b3940, run 45916937250 — пять заданий success (win-debug-min, win-cli, linux-min, linux-cli, portability-linux). `portability-linux` пока не входит в обязательные проверки защиты ветки (4 из 4) — настройка владельца.
